@@ -601,32 +601,79 @@ function addBubble(role,text){
   box.appendChild(div);box.scrollTop=box.scrollHeight;
 }
 
+// ═══════════ STT — DIPERBAIKI ═══════════
 function toggleMic(){if(isPlayingAudio)return;if(isRecording)stopRec();else startRec();}
+
 function startRec(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){alert('Sila guna Google Chrome untuk fungsi mikrofon.');return;}
-  recognition=new SR();recognition.lang='ms-MY';recognition.continuous=false;recognition.interimResults=true;
-  recognition.onstart=()=>{isRecording=true;setMicState('recording','🎙','Sedang rakam...');setStatus('red','Anda sedang bercakap...');};
+  recognition=new SR();
+  recognition.lang='ms-MY';
+  recognition.continuous=true;       // ← tak auto-stop bila senyap sekejap
+  recognition.interimResults=true;
+
+  let silenceTimer=null;
+  let lastFinal='';
+
+  recognition.onstart=()=>{
+    isRecording=true;
+    setMicState('recording','🎙','Sedang rakam...');
+    setStatus('red','Anda sedang bercakap...');
+  };
+
   recognition.onresult=(e)=>{
     let interim='',final='';
-    for(let i=e.resultIndex;i<e.results.length;i++){if(e.results[i].isFinal)final+=e.results[i][0].transcript;else interim+=e.results[i][0].transcript;}
-    const lt=document.getElementById('liveText');if(lt)lt.textContent=final||interim;
-    if(final){recognition.stop();processSpeech(final);}
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      if(e.results[i].isFinal)final+=e.results[i][0].transcript;
+      else interim+=e.results[i][0].transcript;
+    }
+    const lt=document.getElementById('liveText');
+    if(lt)lt.textContent=lastFinal+' '+(final||interim);
+
+    if(final){
+      lastFinal+=' '+final;
+      // Reset timer setiap kali ada perkataan baru
+      clearTimeout(silenceTimer);
+      silenceTimer=setTimeout(()=>{
+        if(lastFinal.trim().length>1){
+          recognition.stop();
+          processSpeech(lastFinal.trim());
+          lastFinal='';
+        }
+      },1500); // Tunggu 1.5s senyap baru hantar — naikkan ke 2000 kalau masih terpotong
+    }
   };
+
   recognition.onerror=(e)=>{
-    isRecording=false;resetMicBtn();
+    clearTimeout(silenceTimer);
+    isRecording=false;
+    resetMicBtn();
     const m={'not-allowed':'Mic tidak dibenarkan. Allow akses mikrofon.','no-speech':'Tiada suara. Cuba lagi.','network':'Ralat rangkaian.'};
     setStatus('','⚠ '+(m[e.error]||'Ralat: '+e.error));
   };
-  recognition.onend=()=>{isRecording=false;};
+
+  recognition.onend=()=>{
+    isRecording=false;
+    // Kalau ada teks terkumpul tapi timer belum fire, hantar sekarang
+    if(lastFinal.trim().length>1){
+      clearTimeout(silenceTimer);
+      processSpeech(lastFinal.trim());
+      lastFinal='';
+    }
+  };
+
   recognition.start();
 }
+
 function stopRec(){
-  if(recognition)recognition.stop();isRecording=false;
+  if(recognition)recognition.stop();
+  isRecording=false;
   const lt=document.getElementById('liveText');
-  const text=lt?lt.textContent:'';
-  if(text&&text.trim().length>1)processSpeech(text);else resetMicBtn();
+  const text=lt?lt.textContent.trim():'';
+  if(text&&text.length>1)processSpeech(text);
+  else resetMicBtn();
 }
+
 async function processSpeech(text){
   const lt=document.getElementById('liveText');if(lt)lt.textContent='';
   setMicState('thinking','⏳','AI sedang berfikir...');setStatus('','AI sedang berfikir...');
