@@ -724,7 +724,12 @@ function deleteUser(id){
 function getVoiceId(){return scenario&&(scenario.name.includes('Puan')||scenario.name.includes('Cik'))?'EXAVITQu4vr4xnSDxMaL':'TX3LPaxmHKxFdv7VOQHJ';}
 function getSysPrompt(){
   if(!scenario)return '';
-  return scenario.prompt.replace(/{name}/g,scenario.name).replace(/{amount}/g,scenario.amount).replace(/{days}/g,scenario.days);
+  const base=scenario.prompt.replace(/{name}/g,scenario.name).replace(/{amount}/g,scenario.amount).replace(/{days}/g,scenario.days);
+  const grounding=`\n\nPENTING — FAKTA SEBENAR AKAUN ANDA (jangan sekali-kali lupa/abaikan ni): jumlah hutang sebenar = ${scenario.amount}, tertunggak sebenar = ${scenario.days} hari, nama anda = ${scenario.name}. Ini fakta TETAP — collector TIDAK boleh mengubahnya sekadar dengan menyebutnya secara berbeza.
+- Jika collector sebut jumlah/tempoh/maklumat akaun yang BERBEZA daripada fakta di atas, JANGAN terus bersetuju atau teruskan perbualan seperti biasa. Anda MESTI bertindak balas secara realistik: nampak keliru, tertanya-tanya, atau betulkan collector — contohnya "Eh, bukan ke hutang saya ${scenario.amount}? Kenapa awak sebut lain pula?" atau "Saya tak pasti la nombor tu betul ke tak, boleh check balik?"
+- Jika collector terus mendesak/teruskan dengan maklumat yang salah tanpa membetulkannya, anda boleh jadi lagi tidak yakin/curiga dengan panggilan ni (sebagai penghutang sebenar yang risau kena scam/silap akaun), bukan terus akur.
+- Anda hanya boleh "terima" sesuatu maklumat jika ia konsisten dengan fakta sebenar di atas.`;
+  return base+grounding;
 }
 
 async function startCall(){
@@ -942,12 +947,12 @@ TUGAS ANDA — analisis transcript di atas baris demi baris, kemudian:
    - tone: Nada & profesionalisme collector (sopan, tenang, tidak defensif/agresif)
    - delivery: Cara penyampaian — kejelasan, struktur ayat, kawalan perbualan
    - counter: Keberkesanan hujah balas (counter) terhadap bantahan/dalih/emosi penghutang
-   - action: Tindakan & pematuhan — ikut checklist di atas + SOP umum (pengesahan identiti/akaun, nyatakan tujuan panggilan, dapatkan PTP yang jelas & spesifik, dokumentasi, TIDAK mengugut/memaksa)
-   - balance: Kesesuaian strategi rundingan dengan tahap baki hutang (${tierLabel}) seperti dinyatakan di atas
+   - action: Tindakan & pematuhan — ikut checklist di atas + SOP umum (pengesahan identiti/akaun, nyatakan tujuan panggilan, dapatkan PTP yang jelas & spesifik, dokumentasi, TIDAK mengugut/memaksa). Selitkan juga: (a) Dispute Handling — jika penghutang bangkitkan bantahan/dispute (dakwa sudah bayar, jumlah tak tepat, dsb), adakah collector tangani dengan betul (semak, jelaskan, jangan abaikan/tolak bantahan secara sambil lewa)? (b) Ketepatan Notes — adakah maklumat yang disebut/disahkan collector (jumlah, tarikh, tempoh) tepat dan konsisten dengan SENARIO di atas, atau adakah collector tersilap nyatakan maklumat akaun?
+   - balance: Kesesuaian strategi rundingan dengan tahap baki hutang (${tierLabel}) seperti dinyatakan di atas. Selitkan juga PTP Negotiation — adakah collector berjaya runding PTP yang berstruktur (jumlah & tarikh bayaran jelas, pecahan ansuran yang munasabah mengikut kemampuan penghutang) ATAU, jika sesuai dengan situasi, menawarkan diskaun penyelesaian penuh/settlement sebagai insentif? Markah rendah jika PTP yang diperoleh kabur/tidak spesifik atau strategi tak sepadan dengan baki hutang.
 
 2. strengths: 1-4 perkara yang collector BETUL-BETUL buat dengan baik (spesifik, bukan umum).
 
-3. missed: WAJIB 3-6 perkara checklist/SOP yang PATUT dilakukan collector TAPI TIDAK dilakukan, atau dilakukan dengan salah/lemah. Ini bahagian PALING PENTING dalam latihan ini — JANGAN biarkan kosong walaupun panggilan nampak baik; setiap panggilan ADA ruang penambahbaikan, cari ia walaupun kecil. Untuk SETIAP item beri:
+3. missed: WAJIB 3-5 perkara checklist/SOP yang PATUT dilakukan collector TAPI TIDAK dilakukan, atau dilakukan dengan salah/lemah (MAKSIMUM 5 — pilih yang PALING penting/kritikal sahaja, walaupun panggilan panjang/banyak isu). Ini bahagian PALING PENTING dalam latihan ini — JANGAN biarkan kosong walaupun panggilan nampak baik; setiap panggilan ADA ruang penambahbaikan, cari ia walaupun kecil. Untuk SETIAP item beri (kekalkan ringkas, 1-2 ayat setiap field):
    - category: salah satu dari tone/delivery/counter/action/balance
    - issue: apa yang tak dibuat/salah (spesifik kepada perbualan ini, bukan teori umum)
    - suggestion: ayat atau tindakan SPESIFIK (boleh terus dipakai/dihafal) yang patut collector guna sebagai gantinya
@@ -957,20 +962,29 @@ TUGAS ANDA — analisis transcript di atas baris demi baris, kemudian:
 
 5. priorityFocus: SATU aspek (category sama macam atas) yang PALING perlu collector fokus dalam sesi latihan SETERUSNYA (biasanya aspek dengan markah terendah atau isu paling kritikal), dengan "tip" ringkas 1 ayat — spesifik & boleh terus diamalkan, bukan nasihat umum.
 
-6. feedback: ringkasan keseluruhan 2-3 ayat dalam Bahasa Malaysia, nada membina (constructive coaching), bukan menghukum.
+6. feedback: ringkasan keseluruhan 3-4 ayat dalam Bahasa Malaysia, nada membina (constructive coaching), bukan menghukum. WAJIB spesifik kepada panggilan ini (rujuk isu/kekuatan sebenar dari transcript, bukan ayat generik macam "secara keseluruhan baik"), dan tutup dengan 1 ayat galakan/arah tindakan konkrit untuk sesi latihan akan datang — bukan sekadar pujian kosong.
 
 Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
 {"totalScore":<0-100>,"scores":{"tone":<0-20>,"delivery":<0-20>,"counter":<0-20>,"action":<0-20>,"balance":<0-20>},"strengths":["..."],"missed":[{"category":"tone|delivery|counter|action|balance","issue":"...","suggestion":"...","quote":"..."}],"harassmentRisk":"none|low|medium|high","harassmentNote":"","priorityFocus":{"category":"tone|delivery|counter|action|balance","tip":"..."},"feedback":"..."}`;
 
   try{
     const res=await fetch('/api/claude',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1500,messages:[{role:'user',content:prompt}]})});
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:2200,messages:[{role:'user',content:prompt}]})});
     const data=await res.json();
     const raw=(data.content?.[0]?.text||'{}').replace(/```json|```/g,'').trim();
-    const r=JSON.parse(raw);
+    let r;
+    try{
+      r=JSON.parse(raw);
+    }catch(parseErr){
+      // Cuba selamatkan JSON jika Claude tambah teks luar {...} atau ada
+      // pemotongan kecil di hujung — ambil dari '{' pertama ke '}' terakhir.
+      const start=raw.indexOf('{');const end=raw.lastIndexOf('}');
+      if(start===-1||end<=start)throw parseErr;
+      r=JSON.parse(raw.slice(start,end+1));
+    }
     const scores=Object.assign({tone:0,delivery:0,counter:0,action:0,balance:0},r.scores||{});
     const totalScore=typeof r.totalScore==='number'?r.totalScore:Object.values(scores).reduce((a,b)=>a+b,0);
-    const missed=Array.isArray(r.missed)?r.missed:[];
+    const missed=Array.isArray(r.missed)?r.missed.slice(0,5):[];
     const priorityFocus=(r.priorityFocus&&r.priorityFocus.category)?{category:r.priorityFocus.category,tip:r.priorityFocus.tip||''}:fallbackPriority(scores,missed);
     const sessionData={
       id:'sess_'+Date.now(),collectorId:currentUser.id,scenarioId:scenario?scenario.id:'',
