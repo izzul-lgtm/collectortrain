@@ -115,6 +115,7 @@ function doLogin(){
   if(!users[id]){showAlert('loginAlert','ID Pekerja tidak dijumpai.','err');return;}
   if(users[id].pass!==pass){showAlert('loginAlert','Kata laluan salah.','err');return;}
   currentUser=users[id];
+  localStorage.setItem('ct_session_id',id); // supaya refresh page tak terus logout
   document.getElementById('authScreen').classList.remove('active');
   document.getElementById('mainApp').classList.add('active');
   initApp();
@@ -139,6 +140,7 @@ function doRegister(){
 
 function doLogout(){
   currentUser=null;
+  localStorage.removeItem('ct_session_id');
   stopCall();
   document.getElementById('mainApp').classList.remove('active');
   document.getElementById('authScreen').classList.add('active');
@@ -1126,3 +1128,28 @@ function closeModal(e){if(!e||e.target===document.getElementById('modalOverlay')
 
 // ═══════════ UTILS ═══════════
 function setContent(html){document.getElementById('mainContent').innerHTML=html;}
+
+// ═══════════ RESTORE SESSION ═══════════
+// PUNCA BUG "refresh page = logout": currentUser sebelum ni cuma variable
+// JavaScript dalam memori — bila page refresh, semua variable JS reset ke
+// kosong, dan HTML #authScreen sentiasa "active" secara default (tengok
+// app/page.js) — jadi user SENTIASA terbaling balik ke skrin login bila
+// refresh, walaupun baru je login. Fix: simpan ID pengguna (BUKAN
+// password) dalam localStorage semasa login, dan cuba restore sesi tu
+// secara automatik setiap kali app.js load.
+(function restoreSession(){
+  try{
+    const savedId=localStorage.getItem('ct_session_id');
+    if(!savedId)return;
+    const users=DB.getUsers();
+    const u=users[savedId];
+    if(!u)return; // ID dah tak wujud (cth akaun dipadam) — kekal di skrin login
+    currentUser=u;
+    document.getElementById('authScreen').classList.remove('active');
+    document.getElementById('mainApp').classList.add('active');
+    initApp();
+  }catch(e){
+    // localStorage tak available (cth private/incognito browsing yang sekat storage)
+    // — biar fallback senyap ke skrin login biasa, jangan crash app.
+  }
+})();
