@@ -25,7 +25,15 @@ export async function POST(request) {
 
   // Small server-side guardrail so a stray/abusive request can't run away
   // with token usage — this is NOT a substitute for real auth, see README.
-  const safeMaxTokens = Math.min(Number(max_tokens) || 200, 500);
+  //
+  // PENTING: cap ni dulu 500, tapi evalCall() di app.js minta 1300+ token
+  // untuk JSON penilaian penuh (scores + strengths + missed[] + priorityFocus
+  // + feedback). Bila request kena cap kat 500, jawapan Claude terputus
+  // separuh jalan → JSON tak lengkap → JSON.parse() gagal → sistem fallback
+  // ke mesej generik "Tidak dapat menganalisis sesi ini". Ini sebab komen
+  // & cadangan penambahbaikan collector nampak kosong/generik — bukan AI
+  // tak boleh buat, tapi jawapannya dipotong sebelum sempat habis tulis.
+  const safeMaxTokens = Math.min(Number(max_tokens) || 200, 1600);
 
   try {
     const upstream = await fetch("https://api.anthropic.com/v1/messages", {

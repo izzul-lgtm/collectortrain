@@ -17,10 +17,38 @@ const DB = {
   },
   defaultScenarios(){
     const s=[
-      {id:'s1',name:'Encik Razif',emoji:'😊',title:'Penghutang Bekerjasama',desc:'Lupa bayar, mudah dibujuk, minta tempoh.',level:'easy',amount:'RM3,200',days:45,prompt:'Anda berlakon sebagai {name}, penghutang yang lupa bayar pinjaman {amount} tertunggak {days} hari. Terkejut bila dihubungi tapi bersedia bekerjasama. Minta tempoh 2 minggu. Bahasa Malaysia natural. Jawab 1-3 ayat sahaja.'},
-      {id:'s2',name:'Puan Sarina', emoji:'😤',title:'Penghutang Defensif',  desc:'Mendakwa sudah bayar, marah bila dihubungi.',level:'med', amount:'RM5,800',days:60,prompt:'Anda berlakon sebagai {name}, penghutang yang mendakwa sudah bayar {amount}. Marah dan rasa difitnah. Minta bukti. Bahasa Malaysia emosional tapi sopan. Jawab 1-3 ayat.'},
-      {id:'s3',name:'Encik Faizal',emoji:'😔',title:'Kesusahan Kewangan',  desc:'Kehilangan kerja, ikhlas nak bayar tapi tak mampu.',level:'med', amount:'RM8,500',days:90,prompt:'Anda berlakon sebagai {name}, penghutang yang hilang kerja 2 bulan. Hutang {amount} tertunggak {days} hari. Ada isteri dan 2 anak. Nada sedih. Bahasa Malaysia. Jawab 1-3 ayat.'},
-      {id:'s4',name:'Encik Darwis',emoji:'😡',title:'Penghutang Agresif',  desc:'Marah, mengugut, cuba menakutkan collector.',level:'hard',amount:'RM12,000',days:120,prompt:'Anda berlakon sebagai {name}, penghutang sangat agresif. Hutang {amount}. Ugut nak adukan ke AKPK. Agresif tapi TANPA bahasa kesat. Bahasa Malaysia. Jawab 1-3 ayat.'}
+      {id:'s1',name:'Encik Razif',emoji:'😊',title:'Penghutang Bekerjasama',desc:'Lupa bayar, mudah dibujuk, minta tempoh.',level:'easy',amount:'RM3,200',days:45,balanceTier:'low',prompt:'Anda berlakon sebagai {name}, penghutang yang lupa bayar pinjaman {amount} tertunggak {days} hari. Terkejut bila dihubungi tapi bersedia bekerjasama. Minta tempoh 2 minggu. Bahasa Malaysia natural. Jawab 1-3 ayat sahaja.',
+        checklist:[
+          {cat:'tone',text:'Kekal mesra tapi tegas — jangan terlalu lembut sampai tiada komitmen jelas diperoleh.'},
+          {cat:'delivery',text:'Sebut tujuan panggilan & jumlah tertunggak dengan jelas dalam 2 ayat pertama.'},
+          {cat:'counter',text:'Jika minta tempoh panjang, kemukakan tarikh spesifik (bukan "nanti saya bayar") dan tawar ansuran kecil jika tempoh ditolak.'},
+          {cat:'action',text:'Sahkan semula nombor akaun & jumlah tepat, dapatkan tarikh PTP (Promise to Pay) yang spesifik sebelum tamat panggilan.'},
+          {cat:'balance',text:'Baki RENDAH (<RM5,000) — dorong bayaran penuh sekaligus dahulu sebelum tawar ansuran.'}
+        ]},
+      {id:'s2',name:'Puan Sarina', emoji:'😤',title:'Penghutang Defensif',  desc:'Mendakwa sudah bayar, marah bila dihubungi.',level:'med', amount:'RM5,800',days:60,balanceTier:'high',prompt:'Anda berlakon sebagai {name}, penghutang yang mendakwa sudah bayar {amount}. Marah dan rasa difitnah. Minta bukti. Bahasa Malaysia emosional tapi sopan. Jawab 1-3 ayat.',
+        checklist:[
+          {cat:'tone',text:'Jangan defensif balik bila penghutang marah — validasi kekecewaan dia dahulu sebelum jelaskan rekod.'},
+          {cat:'delivery',text:'Minta nombor resit/rujukan bayaran yang didakwa, jangan terus menafikan tanpa bertanya.'},
+          {cat:'counter',text:'Bila didakwa "sudah bayar", tawar semak rekod bersama dan beri tempoh hantar bukti.'},
+          {cat:'action',text:'Catat tarikh & cara bayaran yang didakwa untuk verifikasi back-office.'},
+          {cat:'balance',text:'Baki TINGGI (RM5,800) — selepas isu dakwaan bayar selesai, tawar pelan ansuran berstruktur, bukan sekaligus.'}
+        ]},
+      {id:'s3',name:'Encik Faizal',emoji:'😔',title:'Kesusahan Kewangan',  desc:'Kehilangan kerja, ikhlas nak bayar tapi tak mampu.',level:'med', amount:'RM8,500',days:90,balanceTier:'high',prompt:'Anda berlakon sebagai {name}, penghutang yang hilang kerja 2 bulan. Hutang {amount} tertunggak {days} hari. Ada isteri dan 2 anak. Nada sedih. Bahasa Malaysia. Jawab 1-3 ayat.',
+        checklist:[
+          {cat:'tone',text:'Tunjuk empati genuine — elak nada formal/robotic bila penghutang kongsi kesusahan.'},
+          {cat:'delivery',text:'Elak terus tekan bayar penuh; tanya dahulu kapasiti kewangan semasa penghutang.'},
+          {cat:'counter',text:'Tawar penjadualan semula (restructuring) atau ansuran kecil yang realistik berdasarkan situasi kerja penghutang.'},
+          {cat:'action',text:'Dokumenkan status "kehilangan pekerjaan" dalam nota akaun dan maklumkan langkah seterusnya dengan jelas.'},
+          {cat:'balance',text:'Baki TINGGI (RM8,500) — fokus pelan jangka panjang berperingkat, bukan desakan bayaran segera.'}
+        ]},
+      {id:'s4',name:'Encik Darwis',emoji:'😡',title:'Penghutang Agresif',  desc:'Marah, mengugut, cuba menakutkan collector.',level:'hard',amount:'RM12,000',days:120,balanceTier:'high',prompt:'Anda berlakon sebagai {name}, penghutang sangat agresif. Hutang {amount}. Ugut nak adukan ke AKPK. Agresif tapi TANPA bahasa kesat. Bahasa Malaysia. Jawab 1-3 ayat.',
+        checklist:[
+          {cat:'tone',text:'Kekal profesional & tenang walaupun penghutang agresif — JANGAN naikkan nada/balas secara agresif.'},
+          {cat:'delivery',text:'Guna ayat menenangkan ("saya faham kekecewaan encik...") sebelum kembali ke isu hutang.'},
+          {cat:'counter',text:'Jika diugut nak lapor AKPK, jelaskan hak penghutang dengan tepat & tenang, bukan bertahan/defensif.'},
+          {cat:'action',text:'JANGAN gunakan ugutan balas atau bahasa yang boleh dianggap harassment — ini kesalahan pematuhan serius.'},
+          {cat:'balance',text:'Baki SANGAT TINGGI (RM12,000) — cadangkan rundingan/penjadualan semula formal, elak desak bayaran sekaligus.'}
+        ]}
     ];
     this.set('scenarios',s); return s;
   },
@@ -28,6 +56,47 @@ const DB = {
   saveScenarios(s){this.set('scenarios',s);},
   saveUsers(u){this.set('users',u);}
 };
+
+// ═══════════ KATEGORI PENILAIAN ═══════════
+const SCORE_CATS = ['tone','delivery','counter','action','balance'];
+function catLabel(cat){
+  return {tone:'Tone / Nada',delivery:'Cara Penyampaian',counter:'Hujah Balas (Counter)',action:'Tindakan & Pematuhan',balance:'Strategi Baki Hutang'}[cat]||cat;
+}
+function catIcon(cat){
+  return {tone:'🗣',delivery:'📣',counter:'🛡',action:'✅',balance:'⚖️'}[cat]||'•';
+}
+// Sokong sesi lama (format communication/empathy/compliance/effectiveness) & sesi baru (format scores{})
+function scoreRows(s){
+  if(s.scores){
+    return SCORE_CATS.map(c=>[catLabel(c),s.scores[c]||0,20]);
+  }
+  return [['Komunikasi',s.communication||0,25],['Empati',s.empathy||0,25],['Pematuhan',s.compliance||0,25],['Keberkesanan',s.effectiveness||0,25]];
+}
+function harassmentBadge(risk){
+  if(!risk||risk==='none')return '';
+  const map={low:{label:'Risiko Rendah',cls:'chip-amber'},medium:{label:'Risiko Sederhana',cls:'chip-amber'},high:{label:'Risiko Tinggi',cls:'chip-red'}};
+  const m=map[risk]||{label:risk,cls:'chip-red'};
+  return `<span class="chip ${m.cls}" style="margin-left:6px">⚠ Harassment: ${m.label}</span>`;
+}
+// Kira aspek mana paling kerap tersilap, daripada senarai sesi (tally s.missed[].category)
+function tallyWeakness(sessions){
+  const tally={};
+  sessions.forEach(s=>(s.missed||[]).forEach(m=>{tally[m.category]=(tally[m.category]||0)+1;}));
+  return Object.entries(tally).sort((a,b)=>b[1]-a[1]);
+}
+function topWeaknessLabel(sessions){
+  const t=tallyWeakness(sessions);
+  return t.length?catLabel(t[0][0]):'-';
+}
+// Kalau AI tak return priorityFocus (cth versi lama/response tak sempurna),
+// kira sendiri dari skor 5 aspek paling rendah + cadangan "missed" yang sepadan
+function fallbackPriority(scores,missed){
+  const entries=Object.entries(scores||{});
+  if(!entries.length)return null;
+  const lowestCat=entries.sort((a,b)=>a[1]-b[1])[0][0];
+  const match=(missed||[]).find(m=>m.category===lowestCat);
+  return {category:lowestCat,tip:match?match.suggestion:('Fokus perbaiki aspek '+catLabel(lowestCat)+' dalam latihan akan datang.')};
+}
 
 // ═══════════ STATE ═══════════
 let currentUser=null, currentPage='';
@@ -96,23 +165,21 @@ function initApp(){
 
 function buildNav(){
   const nav=document.getElementById('sidebarNav');
+  const adminItems=[
+    {page:'dashboard',icon:'📈',label:'Dashboard'},
+    {page:'collectors',icon:'👥',label:'Semua Collector'},
+    {page:'sessions',icon:'📋',label:'Sesi Latihan'},
+    {page:'scenarios',icon:'🎭',label:'Urus Senario'},
+    {page:'users',icon:'👤',label:'Urus Pengguna'},
+  ];
   const items={
     collector:[
       {page:'training',icon:'🎯',label:'Latihan Suara'},
       {page:'my-history',icon:'📊',label:'Rekod Saya'},
     ],
-    manager:[
-      {page:'dashboard',icon:'📈',label:'Dashboard'},
-      {page:'collectors',icon:'👥',label:'Semua Collector'},
-      {page:'sessions',icon:'📋',label:'Sesi Latihan'},
-    ],
-    admin:[
-      {page:'dashboard',icon:'📈',label:'Dashboard'},
-      {page:'collectors',icon:'👥',label:'Semua Collector'},
-      {page:'sessions',icon:'📋',label:'Sesi Latihan'},
-      {page:'scenarios',icon:'🎭',label:'Urus Senario'},
-      {page:'users',icon:'👤',label:'Urus Pengguna'},
-    ]
+    // Manager: akses penuh sama macam admin ("manager support can access all")
+    manager:adminItems,
+    admin:adminItems
   };
   const myItems=items[currentUser.role]||items.collector;
   nav.innerHTML=myItems.map(i=>`<div class="nav-item" id="nav-${i.page}" onclick="navigate('${i.page}')"><span class="nav-icon">${i.icon}</span>${i.label}</div>`).join('');
@@ -148,6 +215,10 @@ function renderDashboard(){
   const topCollector=collectors.map(c=>{const cs=sessions.filter(s=>s.collectorId===c.id);const avg=cs.length?Math.round(cs.reduce((a,s)=>a+s.totalScore,0)/cs.length):0;return{...c,avg,count:cs.length};}).sort((a,b)=>b.avg-a.avg)[0];
 
   const recentSessions=sessions.slice(-10).reverse();
+  const flaggedSessions=sessions.filter(s=>s.harassmentRisk&&s.harassmentRisk!=='none');
+  const recentFlagged=flaggedSessions.slice(-6).reverse();
+  const weakness=tallyWeakness(sessions);
+  const weaknessTotal=weakness.reduce((a,[,c])=>a+c,0);
 
   setContent(`
   <div class="page-header"><div class="page-title">Dashboard</div><div class="page-sub">Overview prestasi collector</div></div>
@@ -156,6 +227,7 @@ function renderDashboard(){
     <div class="stat-card"><div class="stat-label">Purata Markah</div><div class="stat-val">${avgScore}</div><div class="stat-sub">/ 100 mata</div></div>
     <div class="stat-card"><div class="stat-label">Sesi Hari Ini</div><div class="stat-val">${todaySessions}</div><div class="stat-sub">Latihan hari ini</div></div>
     <div class="stat-card"><div class="stat-label">Jumlah Collector</div><div class="stat-val">${collectors.length}</div><div class="stat-sub">Collector aktif</div></div>
+    <div class="stat-card"><div class="stat-label">Isu Pematuhan</div><div class="stat-val" style="color:${flaggedSessions.length?'var(--red)':'inherit'}">${flaggedSessions.length}</div><div class="stat-sub">Sesi berisiko harassment</div></div>
   </div>
   <div class="two-col">
     <div class="card">
@@ -185,6 +257,38 @@ function renderDashboard(){
         return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-size:13px;font-weight:500">${u?u.name:'—'}</div><div style="font-size:11px;color:var(--text3)">${s.scenarioName} · ${s.duration}</div></div>
           <span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>
+  <div class="two-col">
+    <div class="card">
+      <div class="card-title">🎯 Aspek Paling Kerap Tersilap (Seluruh Pasukan)</div>
+      ${weakness.length===0?`<div class="empty-state"><div class="es-icon">📊</div><p>Belum cukup data sesi.</p></div>`:
+      weakness.slice(0,5).map(([cat,count])=>{
+        const pct=weaknessTotal?Math.round(count/weaknessTotal*100):0;
+        return`<div style="margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+            <span style="font-size:13px">${catIcon(cat)} ${catLabel(cat)}</span>
+            <span style="font-size:12px;color:var(--text3)">${count}x dikesan</span>
+          </div>
+          <div style="background:var(--bg);border-radius:3px;height:6px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:var(--amber);border-radius:3px"></div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    <div class="card">
+      <div class="card-title">⚠ Isu Pematuhan / Harassment Terkini</div>
+      ${recentFlagged.length===0?`<div class="empty-state"><div class="es-icon">✅</div><p>Tiada isu pematuhan dikesan setakat ini.</p></div>`:
+      recentFlagged.map(s=>{
+        const u=Object.values(users).find(u=>u.id===s.collectorId);
+        return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div><div style="font-size:13px;font-weight:500">${u?u.name:'—'}</div><div style="font-size:11px;color:var(--text3)">${s.scenarioName}</div></div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="chip ${s.harassmentRisk==='high'?'chip-red':'chip-amber'}">⚠ ${s.harassmentRisk}</span>
+            <button class="btn btn-secondary" style="padding:3px 8px;font-size:11px" onclick="viewSession('${s.id}')">Lihat</button>
+          </div>
         </div>`;
       }).join('')}
     </div>
@@ -250,7 +354,7 @@ function renderScoreScreen(){
   if(!window._lastScore)return navigate('training');
   const s=window._lastScore;
   setContent(`
-  <div style="max-width:560px;margin:0 auto">
+  <div style="max-width:640px;margin:0 auto">
     <div class="page-header"><div class="page-title">Keputusan Latihan</div><div class="page-sub">${s.scenarioName} · ${s.duration}</div></div>
     <div class="card">
       <div class="score-hero">
@@ -258,13 +362,15 @@ function renderScoreScreen(){
         <div style="font-size:16px;font-weight:600;color:${s.totalScore>=70?'var(--green)':s.totalScore>=50?'var(--amber)':'var(--red)'}">
           ${s.totalScore>=70?'Cemerlang! 🏆':s.totalScore>=50?'Baik! Teruskan 💪':'Perlu Latihan Lagi 📚'}
         </div>
+        ${harassmentBadge(s.harassmentRisk)}
       </div>
+      ${s.harassmentRisk&&s.harassmentRisk!=='none'?`<div class="alert alert-err" style="display:block;margin-top:0">⚠ <strong>Isu Pematuhan/Harassment:</strong> ${s.harassmentNote||'Nada/ayat berisiko dikesan dalam panggilan ini.'}</div>`:''}
       <div class="score-rows">
-        ${[['Komunikasi',s.communication,25],['Empati',s.empathy,25],['Pematuhan',s.compliance,25],['Keberkesanan',s.effectiveness,25]].map(([l,v,m])=>`
+        ${scoreRows(s).map(([l,v,m])=>`
         <div class="score-row">
           <span>${l}</span>
           <div style="display:flex;align-items:center;gap:10px">
-            <div class="score-bar-wrap"><div class="score-bar" style="width:${v/m*100}%"></div></div>
+            <div class="score-bar-wrap"><div class="score-bar" style="width:${m?v/m*100:0}%;background:${v/m<0.5?'#E24B4A':v/m<0.75?'#F0AD4E':'var(--purple)'}"></div></div>
             <span style="font-weight:600;color:var(--purple);min-width:40px;text-align:right">${v}/${m}</span>
           </div>
         </div>`).join('')}
@@ -274,6 +380,30 @@ function renderScoreScreen(){
       <div class="card-title">💬 Maklum Balas AI</div>
       <p style="font-size:13px;color:var(--text2);line-height:1.7">${s.feedback}</p>
     </div>
+    ${(s.strengths&&s.strengths.length)?`
+    <div class="card">
+      <div class="card-title">✅ Apa Yang Anda Sudah Buat Dengan Baik</div>
+      ${s.strengths.map(t=>`<div style="display:flex;gap:8px;padding:6px 0;font-size:13px;color:var(--text2)"><span style="color:var(--green)">●</span><span>${t}</span></div>`).join('')}
+    </div>`:''}
+    ${(s.missed&&s.missed.length)?`
+    <div class="card">
+      <div class="card-title">🛠 Apa Yang Perlu Diperbaiki</div>
+      ${s.missed.map(m=>`
+      <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+          <span class="chip chip-red">${catIcon(m.category)} ${catLabel(m.category)}</span>
+        </div>
+        <div style="font-size:13px;color:var(--text);margin-bottom:3px"><strong>Isu:</strong> ${m.issue||''}</div>
+        ${m.quote?`<div style="font-size:12px;color:var(--text3);font-style:italic;margin-bottom:3px">"${m.quote}"</div>`:''}
+        <div style="font-size:13px;color:var(--purple)"><strong>Cadangan:</strong> ${m.suggestion||''}</div>
+      </div>`).join('')}
+    </div>`:''}
+    ${s.priorityFocus?`
+    <div class="card" style="border-left:4px solid var(--purple)">
+      <div class="card-title">🎯 Fokus Latihan Akan Datang</div>
+      <span class="chip chip-purple">${catIcon(s.priorityFocus.category)} ${catLabel(s.priorityFocus.category)}</span>
+      <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-top:8px">${s.priorityFocus.tip||''}</p>
+    </div>`:''}
     <div class="card">
       <div class="card-title">📝 Transcript Perbualan</div>
       <div style="max-height:300px;overflow-y:auto">
@@ -290,6 +420,8 @@ function renderScoreScreen(){
 
 function renderMyHistory(){
   const sessions=DB.getSessions().filter(s=>s.collectorId===currentUser.id).reverse();
+  const weakness=tallyWeakness(sessions);
+  const latestFocus=sessions.length?sessions[0].priorityFocus:null; // sessions[0] = sesi terbaru (list dah reverse)
   setContent(`
   <div class="page-header"><div class="page-title">Rekod Latihan Saya</div><div class="page-sub">${sessions.length} sesi latihan</div></div>
   ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📊</div><p>Belum ada sesi latihan. Mulakan latihan pertama anda!</p></div></div>`:''}
@@ -299,6 +431,21 @@ function renderMyHistory(){
     <div class="stat-card"><div class="stat-label">Purata Markah</div><div class="stat-val">${Math.round(sessions.reduce((a,s)=>a+s.totalScore,0)/sessions.length)}</div><div class="stat-sub">/ 100</div></div>
     <div class="stat-card"><div class="stat-label">Markah Tertinggi</div><div class="stat-val">${Math.max(...sessions.map(s=>s.totalScore))}</div></div>
     <div class="stat-card"><div class="stat-label">Sesi Terbaru</div><div class="stat-val">${sessions[0].totalScore}</div><div class="stat-sub">mata</div></div>
+  </div>
+  ${latestFocus?`
+  <div class="card" style="border-left:4px solid var(--purple)">
+    <div class="card-title">🎯 Fokus Latihan Akan Datang</div>
+    <span class="chip chip-purple">${catIcon(latestFocus.category)} ${catLabel(latestFocus.category)}</span>
+    <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-top:8px">${latestFocus.tip||''}</p>
+  </div>`:''}
+  <div class="card">
+    <div class="card-title">🛠 Aspek Paling Kerap Perlu Diperbaiki</div>
+    ${weakness.length===0?`<div style="font-size:13px;color:var(--text3)">Belum cukup data — teruskan latihan untuk lihat corak kesilapan anda.</div>`:
+    weakness.slice(0,5).map(([cat,count])=>`
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+        <span style="font-size:13px">${catIcon(cat)} ${catLabel(cat)}</span>
+        <span class="chip chip-red">${count}x dikesan</span>
+      </div>`).join('')}
   </div>
   <div class="card">
     <div class="card-title">Trend Markah</div>
@@ -336,18 +483,22 @@ function renderCollectors(){
   <div class="page-header"><div class="page-title">Semua Collector</div><div class="page-sub">${collectors.length} collector berdaftar</div></div>
   <div class="card">
     <div class="table-wrap"><table>
-      <tr><th>Nama</th><th>ID</th><th>Sesi</th><th>Purata</th><th>Tertinggi</th><th>Terakhir</th></tr>
+      <tr><th>Nama</th><th>ID</th><th>Sesi</th><th>Purata</th><th>Tertinggi</th><th>Aspek Lemah</th><th>Harassment</th><th>Terakhir</th></tr>
       ${collectors.map(c=>{
         const cs=sessions.filter(s=>s.collectorId===c.id);
         const avg=cs.length?Math.round(cs.reduce((a,s)=>a+s.totalScore,0)/cs.length):'-';
         const best=cs.length?Math.max(...cs.map(s=>s.totalScore)):'-';
         const last=cs.length?cs[cs.length-1]:null;
+        const weakLabel=cs.length?topWeaknessLabel(cs):'-';
+        const harassCount=cs.filter(s=>s.harassmentRisk&&s.harassmentRisk!=='none').length;
         return`<tr>
           <td><div style="font-weight:500">${c.name}</div></td>
           <td><span class="chip chip-purple">${c.id}</span></td>
           <td>${cs.length}</td>
           <td>${typeof avg==='number'?`<span class="score-pill ${avg>=70?'score-high':avg>=50?'score-mid':'score-low'}">${avg}</span>`:'-'}</td>
           <td>${typeof best==='number'?`<span class="score-pill score-high">${best}</span>`:'-'}</td>
+          <td>${weakLabel!=='-'?`<span class="chip chip-amber">${weakLabel}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
+          <td>${harassCount>0?`<span class="chip chip-red">⚠ ${harassCount}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
           <td style="font-size:12px;color:var(--text3)">${last?new Date(last.date).toLocaleDateString('ms-MY'):'-'}</td>
         </tr>`;
       }).join('')}
@@ -363,18 +514,16 @@ function renderSessions(){
   ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📋</div><p>Belum ada sesi latihan.</p></div></div>`:''}
   ${sessions.length>0?`<div class="card">
     <div class="table-wrap"><table>
-      <tr><th>Collector</th><th>Senario</th><th>Masa</th><th>Komunikasi</th><th>Empati</th><th>Pematuhan</th><th>Keberkesanan</th><th>Markah</th><th></th></tr>
+      <tr><th>Collector</th><th>Senario</th><th>Masa</th><th>Markah</th><th>Risiko Harassment</th><th>Tarikh</th><th></th></tr>
       ${sessions.map(s=>{
         const u=Object.values(users).find(u=>u.id===s.collectorId);
         return`<tr>
           <td><div style="font-weight:500">${u?u.name:'—'}</div><div style="font-size:11px;color:var(--text3)">${s.collectorId}</div></td>
           <td>${s.scenarioName}</td>
           <td>${s.duration}</td>
-          <td>${s.communication}/25</td>
-          <td>${s.empathy}/25</td>
-          <td>${s.compliance}/25</td>
-          <td>${s.effectiveness}/25</td>
           <td><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span></td>
+          <td>${s.harassmentRisk&&s.harassmentRisk!=='none'?`<span class="chip chip-red">⚠ ${s.harassmentRisk}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
+          <td style="font-size:12px;color:var(--text3)">${s.date?new Date(s.date).toLocaleDateString('ms-MY'):'-'}</td>
           <td><button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="viewSession('${s.id}')">Lihat</button></td>
         </tr>`;
       }).join('')}
@@ -396,9 +545,10 @@ function viewSession(id){
     <div><div style="font-size:12px;color:var(--text3)">Masa</div><div style="font-weight:500">${s.duration}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Markah</div><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}/100</span></div>
   </div>
+  ${s.harassmentRisk&&s.harassmentRisk!=='none'?`<div class="alert alert-err" style="display:block">⚠ <strong>Isu Pematuhan/Harassment (${s.harassmentRisk}):</strong> ${s.harassmentNote||''}</div>`:''}
   <hr class="divider"/>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:1rem">
-    ${[['Komunikasi',s.communication,25],['Empati',s.empathy,25],['Pematuhan',s.compliance,25],['Keberkesanan',s.effectiveness,25]].map(([l,v,m])=>`
+    ${scoreRows(s).map(([l,v,m])=>`
     <div style="background:var(--bg);border-radius:6px;padding:8px 12px">
       <div style="font-size:11px;color:var(--text3)">${l}</div>
       <div style="font-size:18px;font-weight:600;color:var(--purple)">${v}<span style="font-size:12px;color:var(--text3)">/${m}</span></div>
@@ -406,7 +556,27 @@ function viewSession(id){
   </div>
   <hr class="divider"/>
   <div style="font-size:13px;font-weight:500;margin-bottom:8px">💬 Maklum Balas AI</div>
-  <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:1rem">${s.feedback}</p>
+  <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:1rem">${s.feedback||''}</p>
+  ${(s.strengths&&s.strengths.length)?`
+  <div style="font-size:13px;font-weight:500;margin-bottom:8px">✅ Kekuatan</div>
+  ${s.strengths.map(t=>`<div style="font-size:12px;color:var(--text2);margin-bottom:4px">• ${t}</div>`).join('')}
+  <hr class="divider"/>`:''}
+  ${(s.missed&&s.missed.length)?`
+  <div style="font-size:13px;font-weight:500;margin-bottom:8px">🛠 Perlu Diperbaiki (untuk coaching)</div>
+  ${s.missed.map(m=>`
+  <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+    <span class="chip chip-red" style="font-size:11px">${catIcon(m.category)} ${catLabel(m.category)}</span>
+    <div style="font-size:12px;color:var(--text);margin-top:4px"><strong>Isu:</strong> ${m.issue||''}</div>
+    <div style="font-size:12px;color:var(--purple)"><strong>Cadangan:</strong> ${m.suggestion||''}</div>
+  </div>`).join('')}
+  <hr class="divider"/>`:''}
+  ${s.priorityFocus?`
+  <div style="font-size:13px;font-weight:500;margin-bottom:8px">🎯 Fokus Latihan Akan Datang</div>
+  <div style="margin-bottom:1rem">
+    <span class="chip chip-purple" style="font-size:11px">${catIcon(s.priorityFocus.category)} ${catLabel(s.priorityFocus.category)}</span>
+    <div style="font-size:12px;color:var(--text2);margin-top:4px">${s.priorityFocus.tip||''}</div>
+  </div>
+  <hr class="divider"/>`:''}
   <div style="font-size:13px;font-weight:500;margin-bottom:8px">📝 Transcript</div>
   <div style="max-height:220px;overflow-y:auto;background:var(--bg);border-radius:6px;padding:10px">
     ${(s.transcript||[]).map(m=>`<div style="margin-bottom:8px"><div style="font-size:10px;color:var(--text3)">${m.role==='user'?(u?u.name:'Collector'):'Penghutang'}</div>
@@ -416,7 +586,7 @@ function viewSession(id){
 }
 
 function renderScenarios(){
-  if(currentUser.role!=='admin')return;
+  if(currentUser.role==='collector')return;
   const scenarios=DB.getScenarios();
   setContent(`
   <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start">
@@ -425,13 +595,15 @@ function renderScenarios(){
   </div>
   <div class="card">
     <div class="table-wrap"><table>
-      <tr><th>Emoji</th><th>Nama</th><th>Tajuk</th><th>Hutang</th><th>Aras</th><th>Tindakan</th></tr>
+      <tr><th>Emoji</th><th>Nama</th><th>Tajuk</th><th>Hutang</th><th>Baki</th><th>Aras</th><th>Checklist</th><th>Tindakan</th></tr>
       ${scenarios.map(s=>`<tr>
         <td style="font-size:20px">${s.emoji}</td>
         <td><div style="font-weight:500">${s.name}</div></td>
         <td>${s.title}</td>
         <td>${s.amount}</td>
+        <td><span class="chip ${s.balanceTier==='high'?'chip-red':'chip-green'}">${s.balanceTier==='high'?'Tinggi':'Rendah'}</span></td>
         <td><span class="level-badge level-${s.level}">${s.level==='easy'?'Mudah':s.level==='med'?'Sederhana':'Sukar'}</span></td>
+        <td style="font-size:12px;color:var(--text3)">${(s.checklist||[]).length} item</td>
         <td><div class="action-row">
           <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="editScenario('${s.id}')">Edit</button>
           <button class="btn btn-danger" style="padding:4px 10px;font-size:12px" onclick="deleteScenario('${s.id}')">Padam</button>
@@ -454,21 +626,51 @@ function openAddScenario(existingId){
     <div class="form-row"><label>Jumlah Hutang</label><input id="scAmount" value="${s?s.amount:'RM5,000'}" /></div>
     <div class="form-row"><label>Hari Tertunggak</label><input id="scDays" value="${s?s.days:30}" type="number" /></div>
   </div>
-  <div class="form-row"><label>Aras Kesukaran</label>
-    <select id="scLevel"><option value="easy" ${s&&s.level==='easy'?'selected':''}>Mudah</option><option value="med" ${s&&s.level==='med'?'selected':''}>Sederhana</option><option value="hard" ${s&&s.level==='hard'?'selected':''}>Sukar</option></select>
+  <div class="two-col">
+    <div class="form-row"><label>Aras Kesukaran</label>
+      <select id="scLevel"><option value="easy" ${s&&s.level==='easy'?'selected':''}>Mudah</option><option value="med" ${s&&s.level==='med'?'selected':''}>Sederhana</option><option value="hard" ${s&&s.level==='hard'?'selected':''}>Sukar</option></select>
+    </div>
+    <div class="form-row"><label>Tahap Baki Hutang</label>
+      <select id="scBalanceTier"><option value="low" ${s&&s.balanceTier==='low'?'selected':''}>Rendah (Low Balance)</option><option value="high" ${!s||s.balanceTier==='high'?'selected':''}>Tinggi (High Balance)</option></select>
+    </div>
   </div>
   <div class="form-row"><label>Prompt AI (gunakan {name}, {amount}, {days})</label>
     <textarea id="scPrompt" rows="4" placeholder="Anda berlakon sebagai {name}...">${s?s.prompt:'Anda berlakon sebagai {name}, penghutang yang berhutang {amount} tertunggak {days} hari. Bercakap dalam Bahasa Malaysia. Jawab 1-3 ayat sahaja.'}</textarea>
+  </div>
+  <div class="form-row">
+    <label>Checklist Penilaian (apa yang collector PATUT lakukan dalam senario ini)</label>
+    <div id="checklistRows"></div>
+    <button type="button" class="btn btn-secondary" style="margin-top:6px;font-size:12px;padding:6px 10px" onclick="addChecklistRow('tone','')">+ Tambah Item Checklist</button>
   </div>
   <div class="modal-footer">
     <button class="btn btn-secondary" onclick="closeModal()">Batal</button>
     <button class="btn btn-primary" onclick="saveScenario('${existingId||''}')">Simpan</button>
   </div>`);
+  const existingChecklist=(s&&s.checklist&&s.checklist.length)?s.checklist:SCORE_CATS.map(c=>({cat:c,text:''}));
+  existingChecklist.forEach(c=>addChecklistRow(c.cat,c.text));
+}
+
+function addChecklistRow(cat,text){
+  const wrap=document.getElementById('checklistRows');
+  if(!wrap)return;
+  const row=document.createElement('div');
+  row.className='checklist-row';
+  row.style.cssText='display:flex;gap:6px;margin-bottom:6px;align-items:flex-start';
+  row.innerHTML=`
+    <select class="cl-cat" style="max-width:150px;flex-shrink:0">
+      ${SCORE_CATS.map(c=>`<option value="${c}" ${c===cat?'selected':''}>${catLabel(c)}</option>`).join('')}
+    </select>
+    <input class="cl-text" value="${(text||'').replace(/"/g,'&quot;')}" placeholder="Cth: Dapatkan tarikh PTP yang spesifik..." />
+    <button type="button" class="btn btn-danger" style="padding:6px 10px;flex-shrink:0" onclick="this.parentElement.remove()">✕</button>`;
+  wrap.appendChild(row);
 }
 
 function editScenario(id){openAddScenario(id);}
 function saveScenario(existingId){
   const scenarios=DB.getScenarios();
+  const checklist=Array.from(document.querySelectorAll('#checklistRows .checklist-row'))
+    .map(r=>({cat:r.querySelector('.cl-cat').value,text:r.querySelector('.cl-text').value.trim()}))
+    .filter(c=>c.text);
   const data={
     id:existingId||'s'+Date.now(),
     emoji:document.getElementById('scEmoji').value||'😐',
@@ -478,7 +680,9 @@ function saveScenario(existingId){
     amount:document.getElementById('scAmount').value.trim(),
     days:parseInt(document.getElementById('scDays').value)||30,
     level:document.getElementById('scLevel').value,
-    prompt:document.getElementById('scPrompt').value.trim()
+    balanceTier:document.getElementById('scBalanceTier').value,
+    prompt:document.getElementById('scPrompt').value.trim(),
+    checklist
   };
   if(!data.name||!data.title||!data.prompt){alert('Sila isi semua maklumat.');return;}
   if(existingId){const i=scenarios.findIndex(s=>s.id===existingId);if(i>=0)scenarios[i]=data;}
@@ -493,7 +697,7 @@ function deleteScenario(id){
 }
 
 function renderUsers(){
-  if(currentUser.role!=='admin')return;
+  if(currentUser.role==='collector')return;
   const users=DB.getUsers();
   const all=Object.values(users);
   setContent(`
@@ -612,8 +816,34 @@ function startRec(){
   recognition.continuous=true;       // ← tak auto-stop bila senyap sekejap
   recognition.interimResults=true;
 
+  // PUNCA BUG "system detect lambat & cut sebelum habis cakap":
+  // dulu timer senyap ni HANYA reset bila ada hasil "final" — tapi engine STT
+  // Chrome kadang lambat finalize ayat panjang/bercampur BM-Inggeris (kena
+  // round-trip ke server Google). Bila gap antara satu "final" dengan "final"
+  // seterusnya lagi panjang dari 1.5s — walaupun collector tengah aktif
+  // bercakap (nampak pada "interim") — sistem silap anggap dah senyap, terus
+  // recognition.stop(), dan apa-apa yang belum "final" hilang terus (tak
+  // sempat masuk transcript pun). Fix: reset timer pada SETIAP hasil (final
+  // ATAU interim), dan bila timer fire, hantar gabungan final+interim supaya
+  // tak ada perkataan terakhir yang hilang.
+  const SILENCE_MS=2200; // naik dari 1500ms → lebih ruang utk pause natural
   let silenceTimer=null;
   let lastFinal='';
+  let lastInterim='';
+
+  function currentText(){return (lastFinal+' '+lastInterim).trim();}
+
+  function armSilenceTimer(){
+    clearTimeout(silenceTimer);
+    silenceTimer=setTimeout(()=>{
+      const text=currentText();
+      if(text.length>1){
+        recognition.stop();
+        processSpeech(text);
+        lastFinal='';lastInterim='';
+      }
+    },SILENCE_MS);
+  }
 
   recognition.onstart=()=>{
     isRecording=true;
@@ -627,21 +857,12 @@ function startRec(){
       if(e.results[i].isFinal)final+=e.results[i][0].transcript;
       else interim+=e.results[i][0].transcript;
     }
+    if(final)lastFinal+=' '+final;
+    lastInterim=interim;
     const lt=document.getElementById('liveText');
-    if(lt)lt.textContent=lastFinal+' '+(final||interim);
-
-    if(final){
-      lastFinal+=' '+final;
-      // Reset timer setiap kali ada perkataan baru
-      clearTimeout(silenceTimer);
-      silenceTimer=setTimeout(()=>{
-        if(lastFinal.trim().length>1){
-          recognition.stop();
-          processSpeech(lastFinal.trim());
-          lastFinal='';
-        }
-      },1500); // Tunggu 1.5s senyap baru hantar — naikkan ke 2000 kalau masih terpotong
-    }
+    if(lt)lt.textContent=currentText();
+    // Reset timer pada SETIAP event STT (final ATAU interim) — bukan final sahaja
+    armSilenceTimer();
   };
 
   recognition.onerror=(e)=>{
@@ -654,11 +875,14 @@ function startRec(){
 
   recognition.onend=()=>{
     isRecording=false;
-    // Kalau ada teks terkumpul tapi timer belum fire, hantar sekarang
-    if(lastFinal.trim().length>1){
-      clearTimeout(silenceTimer);
-      processSpeech(lastFinal.trim());
-      lastFinal='';
+    // Kalau ada teks terkumpul (final ATAU interim) tapi timer belum fire —
+    // cth browser stop recognition tiba-tiba (network blip) — hantar sekarang
+    // supaya tak ada perkataan terakhir yang hilang.
+    clearTimeout(silenceTimer);
+    const text=currentText();
+    if(text.length>1){
+      processSpeech(text);
+      lastFinal='';lastInterim='';
     }
   };
 
@@ -689,23 +913,85 @@ async function processSpeech(text){
 
 async function evalCall(duration){
   const transcript=callHistory.map(m=>`${m.role==='user'?'Collector':'Penghutang'}: ${m.content}`).join('\n');
-  const prompt=`Anda pengurus latihan debt collection. Analisis perbualan ini dan berikan markah dalam Bahasa Malaysia.\n\nPerbualan:\n${transcript}\n\nSenario: ${scenario?scenario.title:''} — ${scenario?scenario.desc:''}\nMasa: ${duration}\n\nJawab JSON SAHAJA tanpa markdown:\n{"totalScore":<0-100>,"communication":<0-25>,"empathy":<0-25>,"compliance":<0-25>,"effectiveness":<0-25>,"feedback":"<2-3 ayat maklum balas>"}`;
+  const checklist=(scenario&&scenario.checklist)||[];
+  const checklistText=checklist.length
+    ?checklist.map(c=>`- [${catLabel(c.cat)}] ${c.text}`).join('\n')
+    :'(Tiada checklist khusus — nilai berdasarkan standard umum debt collection.)';
+  const tierLabel=scenario&&scenario.balanceTier==='low'?'RENDAH':'TINGGI';
+  const tierHint=scenario&&scenario.balanceTier==='low'
+    ?'Strategi sesuai: dorong bayaran PENUH sekaligus dahulu sebelum tawar ansuran.'
+    :'Strategi sesuai: tawar pelan ansuran/penjadualan semula berstruktur, bukan desak bayaran sekaligus.';
+
+  const prompt=`Anda seorang Quality Assurance Manager pakar debt collection di Malaysia. Tugas anda menilai prestasi COLLECTOR (BUKAN penghutang) dalam perbualan latihan di bawah secara KRITIKAL, SPESIFIK dan membina — fokus mencari kesilapan sebenar dan perkara yang sepatutnya dibuat tapi TIDAK dibuat, bukan pujian generik kosong.
+
+SENARIO: ${scenario?scenario.title:''} — ${scenario?scenario.desc:''}
+Nama Penghutang: ${scenario?scenario.name:''} | Jumlah Hutang: ${scenario?scenario.amount:''} | Tertunggak: ${scenario?scenario.days:''} hari
+Tahap Baki Hutang: ${tierLabel}. ${tierHint}
+
+CHECKLIST TINDAKAN YANG DIJANGKA UNTUK SENARIO INI:
+${checklistText}
+
+PERBUALAN PENUH (Collector vs Penghutang):
+${transcript}
+
+Masa Panggilan: ${duration}
+
+TUGAS ANDA — analisis transcript di atas baris demi baris, kemudian:
+
+1. Markah 5 aspek (setiap satu 0-20, jumlah maksimum 100):
+   - tone: Nada & profesionalisme collector (sopan, tenang, tidak defensif/agresif)
+   - delivery: Cara penyampaian — kejelasan, struktur ayat, kawalan perbualan
+   - counter: Keberkesanan hujah balas (counter) terhadap bantahan/dalih/emosi penghutang
+   - action: Tindakan & pematuhan — ikut checklist di atas + SOP umum (pengesahan identiti/akaun, nyatakan tujuan panggilan, dapatkan PTP yang jelas & spesifik, dokumentasi, TIDAK mengugut/memaksa)
+   - balance: Kesesuaian strategi rundingan dengan tahap baki hutang (${tierLabel}) seperti dinyatakan di atas
+
+2. strengths: 1-4 perkara yang collector BETUL-BETUL buat dengan baik (spesifik, bukan umum).
+
+3. missed: WAJIB 3-6 perkara checklist/SOP yang PATUT dilakukan collector TAPI TIDAK dilakukan, atau dilakukan dengan salah/lemah. Ini bahagian PALING PENTING dalam latihan ini — JANGAN biarkan kosong walaupun panggilan nampak baik; setiap panggilan ADA ruang penambahbaikan, cari ia walaupun kecil. Untuk SETIAP item beri:
+   - category: salah satu dari tone/delivery/counter/action/balance
+   - issue: apa yang tak dibuat/salah (spesifik kepada perbualan ini, bukan teori umum)
+   - suggestion: ayat atau tindakan SPESIFIK (boleh terus dipakai/dihafal) yang patut collector guna sebagai gantinya
+   - quote: petikan ringkas (≤15 patah perkataan) dari ayat collector dalam transcript yang berkaitan isu ini, atau "" jika tiada ayat spesifik berkaitan
+
+4. harassmentRisk: "none" jika tiada isu langsung, "low"/"medium"/"high" jika collector menggunakan nada mengugut/memaksa/mendesak melampau, malu-malukan, atau melanggar etika debt collection. Jika bukan "none", isi harassmentNote (1 ayat ringkas, rujuk contoh dari transcript) — ini akan dipaparkan kepada manager untuk semakan pematuhan.
+
+5. priorityFocus: SATU aspek (category sama macam atas) yang PALING perlu collector fokus dalam sesi latihan SETERUSNYA (biasanya aspek dengan markah terendah atau isu paling kritikal), dengan "tip" ringkas 1 ayat — spesifik & boleh terus diamalkan, bukan nasihat umum.
+
+6. feedback: ringkasan keseluruhan 2-3 ayat dalam Bahasa Malaysia, nada membina (constructive coaching), bukan menghukum.
+
+Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
+{"totalScore":<0-100>,"scores":{"tone":<0-20>,"delivery":<0-20>,"counter":<0-20>,"action":<0-20>,"balance":<0-20>},"strengths":["..."],"missed":[{"category":"tone|delivery|counter|action|balance","issue":"...","suggestion":"...","quote":"..."}],"harassmentRisk":"none|low|medium|high","harassmentNote":"","priorityFocus":{"category":"tone|delivery|counter|action|balance","tip":"..."},"feedback":"..."}`;
+
   try{
     const res=await fetch('/api/claude',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:400,messages:[{role:'user',content:prompt}]})});
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1500,messages:[{role:'user',content:prompt}]})});
     const data=await res.json();
-    const r=JSON.parse(data.content[0].text.replace(/```json|```/g,'').trim());
+    const raw=(data.content?.[0]?.text||'{}').replace(/```json|```/g,'').trim();
+    const r=JSON.parse(raw);
+    const scores=Object.assign({tone:0,delivery:0,counter:0,action:0,balance:0},r.scores||{});
+    const totalScore=typeof r.totalScore==='number'?r.totalScore:Object.values(scores).reduce((a,b)=>a+b,0);
+    const missed=Array.isArray(r.missed)?r.missed:[];
+    const priorityFocus=(r.priorityFocus&&r.priorityFocus.category)?{category:r.priorityFocus.category,tip:r.priorityFocus.tip||''}:fallbackPriority(scores,missed);
     const sessionData={
       id:'sess_'+Date.now(),collectorId:currentUser.id,scenarioId:scenario?scenario.id:'',
       scenarioName:scenario?scenario.title:'',duration,date:new Date().toISOString(),
-      totalScore:r.totalScore,communication:r.communication,empathy:r.empathy,
-      compliance:r.compliance,effectiveness:r.effectiveness,feedback:r.feedback,transcript:callHistory
+      totalScore,scores,
+      strengths:Array.isArray(r.strengths)?r.strengths:[],
+      missed,priorityFocus,
+      harassmentRisk:r.harassmentRisk||'none',
+      harassmentNote:r.harassmentNote||'',
+      feedback:r.feedback||'',transcript:callHistory
     };
     DB.addSession(sessionData);
     window._lastScore={...sessionData};
     navigate('score');
   }catch(e){
-    window._lastScore={totalScore:0,communication:0,empathy:0,compliance:0,effectiveness:0,feedback:'Tidak dapat menganalisis sesi ini.',scenarioName:scenario?scenario.title:'',duration,transcript:callHistory};
+    window._lastScore={
+      totalScore:0,scores:{tone:0,delivery:0,counter:0,action:0,balance:0},
+      strengths:[],missed:[],priorityFocus:null,harassmentRisk:'none',harassmentNote:'',
+      feedback:'Tidak dapat menganalisis sesi ini — sila cuba sekali lagi.',
+      scenarioName:scenario?scenario.title:'',duration,transcript:callHistory
+    };
     navigate('score');
   }
 }

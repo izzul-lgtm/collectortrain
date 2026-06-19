@@ -1,5 +1,59 @@
 # CollectorTrain — Next.js + Vercel
 
+## 🆕 Apa yang diperbaiki/upgrade (sesi ini)
+
+**Bug fix #1 — suara collector "cut" sebelum habis cakap (Latihan Suara LIVE)**
+Punca sebenar: timer "senyap" untuk auto-hantar ke AI cuma reset bila Chrome
+dah confirm satu ayat sebagai "final". Tapi engine STT Chrome kadang lambat
+finalize ayat panjang/bercampur BM-Inggeris (kena round-trip ke server Google).
+Bila gap antara "final" jadi lebih lama dari 1.5 saat — walaupun collector
+masih aktif bercakap — sistem silap anggap dah senyap, terus stop dan hantar
+teks yang ada, jadi ada bahagian hujung ayat yang collector sempat cakap
+tapi tak masuk transcript langsung. Fix (`public/app.js`, fungsi `startRec`):
+- Timer senyap sekarang reset pada **setiap** hasil STT (final ATAU interim),
+  bukan final sahaja.
+- Tempoh senyap naik dari 1.5s → 2.2s, bagi lebih ruang utk pause natural.
+- Bila timer fire / recognition terhenti tiba-tiba, sistem hantar gabungan
+  final+interim yang ada — bukan final sahaja — supaya tiada perkataan
+  terakhir yang hilang.
+
+**Bug fix #2 — komen/cadangan penambahbaikan nampak kosong/generik**
+Punca: proxy `app/api/claude/route.js` cap `max_tokens` kat 500, tapi fungsi
+penilaian (`evalCall`) di `app.js` minta sampai 1300+ token untuk satu
+JSON penuh (markah 5 aspek + kekuatan + senarai kesilapan + fokus latihan +
+maklum balas). Bila kena cap, jawapan Claude terputus separuh jalan → JSON
+tak sah → sistem fallback ke mesej generik "Tidak dapat menganalisis sesi
+ini". Fix: naikkan cap server ke 1600 token.
+
+**Upgrade — coaching lebih mendalam, bukan sekadar simulasi nego**
+Struktur penilaian 5 aspek (tone / cara penyampaian / hujah counter /
+tindakan & pematuhan / strategi baki rendah-tinggi) + risiko harassment dah
+sedia ada dalam kod asal — tapi dua isu di atas menyebabkan ia tak
+berfungsi penuh. Tambahan baru:
+- `priorityFocus` — AI sekarang wajib bagi SATU aspek paling kritikal untuk
+  collector fokus pada sesi latihan akan datang, lengkap dengan tip
+  spesifik. Dipaparkan terus di skrin keputusan & rekod collector.
+- Senarai "Apa Yang Perlu Diperbaiki" (`missed[]`) sekarang **wajib** ada
+  3-6 item walaupun panggilan nampak baik — supaya AI sentiasa cari ruang
+  penambahbaikan, bukan bagi pujian generik kosong.
+- **Trend kesilapan berulang** — fungsi `tallyWeakness`/`topWeaknessLabel`
+  yang dulu wujud dalam kod tapi tak pernah digunakan, sekarang dipaparkan:
+  - Collector (Rekod Saya): "Aspek Paling Kerap Perlu Diperbaiki" merentas
+    semua sesi sendiri.
+  - Admin/Manager (Semua Collector): lajur "Aspek Lemah" + "Harassment"
+    setiap collector.
+  - Admin/Manager (Dashboard): breakdown aspek lemah seluruh pasukan +
+    panel "Isu Pematuhan/Harassment Terkini" untuk semakan compliance.
+- Badge harassment sekarang ada warna berbeza ikut tahap (amber utk
+  rendah/sederhana, merah utk tinggi) supaya lebih senang scan di dashboard.
+
+Struktur role (admin buat senario + tengok skor, manager akses penuh sama
+macam admin, collector hanya latihan + rekod sendiri) sudah wujud dalam kod
+asal (`buildNav()`) — tak perlu rombak, cuma manfaatkan data baru di atas.
+
+---
+
+
 Port dari `collectortrain.html` ke struktur Next.js (App Router), dengan
 ElevenLabs + Claude key dipindah ke server-side proxy. Auth dan database
 buat masa ni KEKAL macam asal (localStorage, role-based, scenario/session
