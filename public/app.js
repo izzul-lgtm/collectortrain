@@ -4,7 +4,6 @@ const DB = {
   set(k,v){localStorage.setItem('ct_'+k,JSON.stringify(v));},
   getUsers(){return this.get('users')||this.defaultUsers();},
   getSessions(){return this.get('sessions')||[];},
-  getScenarios(){return this.get('scenarios')||this.defaultScenarios();},
   defaultUsers(){
     const u={
       'ADMIN':  {id:'ADMIN', name:'Admin Sistem', pass:'admin123', role:'admin', registeredAt:new Date().toISOString()},
@@ -15,46 +14,41 @@ const DB = {
     };
     this.set('users',u); return u;
   },
-  defaultScenarios(){
-    const s=[
-      {id:'s1',name:'Encik Razif',gender:'male',voiceId:'TX3LPaxmHKxFdv7VOQHJ',emoji:'😊',title:'Penghutang Bekerjasama',desc:'Lupa bayar, mudah dibujuk, minta tempoh.',level:'easy',amount:'RM3,200',days:45,balanceTier:'low',prompt:'Anda berlakon sebagai {name}, penghutang yang lupa bayar pinjaman {amount} tertunggak {days} hari. Terkejut bila dihubungi tapi bersedia bekerjasama. Minta tempoh 2 minggu. Bahasa Malaysia natural. Jawab 1-3 ayat sahaja.',
-        checklist:[
-          {cat:'tone',text:'Kekal mesra tapi tegas — jangan terlalu lembut sampai tiada komitmen jelas diperoleh.'},
-          {cat:'delivery',text:'Sebut tujuan panggilan & jumlah tertunggak dengan jelas dalam 2 ayat pertama.'},
-          {cat:'counter',text:'Jika minta tempoh panjang, kemukakan tarikh spesifik (bukan "nanti saya bayar") dan tawar ansuran kecil jika tempoh ditolak.'},
-          {cat:'action',text:'Sahkan semula nombor akaun & jumlah tepat, dapatkan tarikh PTP (Promise to Pay) yang spesifik sebelum tamat panggilan.'},
-          {cat:'balance',text:'Baki RENDAH (<RM5,000) — dorong bayaran penuh sekaligus dahulu sebelum tawar ansuran.'}
-        ]},
-      {id:'s2',name:'Puan Sarina',gender:'female',voiceId:'EXAVITQu4vr4xnSDxMaL', emoji:'😤',title:'Penghutang Defensif',  desc:'Mendakwa sudah bayar, marah bila dihubungi.',level:'med', amount:'RM5,800',days:60,balanceTier:'high',prompt:'Anda berlakon sebagai {name}, penghutang yang mendakwa sudah bayar {amount}. Marah dan rasa difitnah. Minta bukti. Bahasa Malaysia emosional tapi sopan. Jawab 1-3 ayat.',
-        checklist:[
-          {cat:'tone',text:'Jangan defensif balik bila penghutang marah — validasi kekecewaan dia dahulu sebelum jelaskan rekod.'},
-          {cat:'delivery',text:'Minta nombor resit/rujukan bayaran yang didakwa, jangan terus menafikan tanpa bertanya.'},
-          {cat:'counter',text:'Bila didakwa "sudah bayar", tawar semak rekod bersama dan beri tempoh hantar bukti.'},
-          {cat:'action',text:'Catat tarikh & cara bayaran yang didakwa untuk verifikasi back-office.'},
-          {cat:'balance',text:'Baki TINGGI (RM5,800) — selepas isu dakwaan bayar selesai, tawar pelan ansuran berstruktur, bukan sekaligus.'}
-        ]},
-      {id:'s3',name:'Encik Faizal',gender:'male',voiceId:'TX3LPaxmHKxFdv7VOQHJ',emoji:'😔',title:'Kesusahan Kewangan',  desc:'Kehilangan kerja, ikhlas nak bayar tapi tak mampu.',level:'med', amount:'RM8,500',days:90,balanceTier:'high',prompt:'Anda berlakon sebagai {name}, penghutang yang hilang kerja 2 bulan. Hutang {amount} tertunggak {days} hari. Ada isteri dan 2 anak. Nada sedih. Bahasa Malaysia. Jawab 1-3 ayat.',
-        checklist:[
-          {cat:'tone',text:'Tunjuk empati genuine — elak nada formal/robotic bila penghutang kongsi kesusahan.'},
-          {cat:'delivery',text:'Elak terus tekan bayar penuh; tanya dahulu kapasiti kewangan semasa penghutang.'},
-          {cat:'counter',text:'Tawar penjadualan semula (restructuring) atau ansuran kecil yang realistik berdasarkan situasi kerja penghutang.'},
-          {cat:'action',text:'Dokumenkan status "kehilangan pekerjaan" dalam nota akaun dan maklumkan langkah seterusnya dengan jelas.'},
-          {cat:'balance',text:'Baki TINGGI (RM8,500) — fokus pelan jangka panjang berperingkat, bukan desakan bayaran segera.'}
-        ]},
-      {id:'s4',name:'Encik Darwis',gender:'male',voiceId:'TX3LPaxmHKxFdv7VOQHJ',emoji:'😡',title:'Penghutang Agresif',  desc:'Marah, mengugut, cuba menakutkan collector.',level:'hard',amount:'RM12,000',days:120,balanceTier:'high',prompt:'Anda berlakon sebagai {name}, penghutang sangat agresif. Hutang {amount}. Ugut nak adukan ke AKPK. Agresif tapi TANPA bahasa kesat. Bahasa Malaysia. Jawab 1-3 ayat.',
-        checklist:[
-          {cat:'tone',text:'Kekal profesional & tenang walaupun penghutang agresif — JANGAN naikkan nada/balas secara agresif.'},
-          {cat:'delivery',text:'Guna ayat menenangkan ("saya faham kekecewaan encik...") sebelum kembali ke isu hutang.'},
-          {cat:'counter',text:'Jika diugut nak lapor AKPK, jelaskan hak penghutang dengan tepat & tenang, bukan bertahan/defensif.'},
-          {cat:'action',text:'JANGAN gunakan ugutan balas atau bahasa yang boleh dianggap harassment — ini kesalahan pematuhan serius.'},
-          {cat:'balance',text:'Baki SANGAT TINGGI (RM12,000) — cadangkan rundingan/penjadualan semula formal, elak desak bayaran sekaligus.'}
-        ]}
-    ];
-    this.set('scenarios',s); return s;
-  },
+  // Nota: defaultScenarios() (localStorage) dah dibuang — senario sekarang
+  // hidup di Supabase (jadual `scenarios`, lihat supabase/schema.sql untuk
+  // seed data 4 senario default) dan diakses melalui scenarioApi di bawah,
+  // bukan DB.getScenarios()/saveScenarios() lagi.
   addSession(s){const arr=this.getSessions();arr.push(s);this.set('sessions',arr);},
-  saveScenarios(s){this.set('scenarios',s);},
   saveUsers(u){this.set('users',u);}
+};
+
+// ═══════════ SCENARIOS API (Supabase, via /api/scenarios) ═══════════
+// PUNCA PERUBAHAN: scenarios dulu hidup dalam localStorage (DB.getScenarios/
+// saveScenarios) — bermakna setiap collector/manager nampak senario yang
+// tersimpan di BROWSER MASING-MASING, tak shared, hilang kalau cache clear.
+// Sekarang scenarios disimpan dalam Supabase (jadual `scenarios`), diakses
+// melalui /api/scenarios — SATU sumber data untuk semua orang, semua device.
+// Nota: fungsi-fungsi ni async (perlu `await`) sebab kini panggilan network,
+// bukan baca localStorage yang instant — semua caller pun ditukar jadi async.
+const scenarioApi = {
+  async list(){
+    const res=await fetch('/api/scenarios');
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Gagal ambil senario.');
+    return data.scenarios||[];
+  },
+  async save(scenario){
+    const res=await fetch('/api/scenarios',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(scenario)});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Gagal simpan senario.');
+    return data.scenario;
+  },
+  async remove(id){
+    const res=await fetch('/api/scenarios',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Gagal padam senario.');
+    return true;
+  }
 };
 
 // ═══════════ KATEGORI PENILAIAN ═══════════
@@ -295,8 +289,25 @@ function renderDashboard(){
   </div>`);
 }
 
-function renderTraining(){
-  const scenarios=DB.getScenarios();
+// Cache senario dalam memory supaya selectScenario() (klik kad senario) tak
+// perlu refetch network setiap kali — cuma reload bila benar-benar perlu
+// (first load, atau lepas simpan/padam senario di halaman manager).
+let scenariosCache=null;
+async function loadScenarios(force){
+  if(scenariosCache&&!force)return scenariosCache;
+  scenariosCache=await scenarioApi.list();
+  return scenariosCache;
+}
+
+async function renderTraining(){
+  setContent('<div class="page-header"><div class="page-title">Latihan Suara</div></div><div class="card">Memuatkan senario...</div>');
+  let scenarios;
+  try{
+    scenarios=await loadScenarios();
+  }catch(e){
+    setContent(`<div class="page-header"><div class="page-title">Latihan Suara</div></div><div class="card">⚠ Gagal memuatkan senario: ${e.message}</div>`);
+    return;
+  }
   if(!scenario&&scenarios.length)scenario=scenarios[0];
   setContent(`
   <div class="page-header"><div class="page-title">Latihan Suara</div><div class="page-sub">Pilih senario dan mulakan panggilan latihan</div></div>
@@ -320,7 +331,7 @@ function renderTraining(){
 }
 
 function selectScenario(id){
-  const scenarios=DB.getScenarios();
+  const scenarios=scenariosCache||[];
   scenario=scenarios.find(s=>s.id===id)||scenarios[0];
   renderTraining();
 }
@@ -585,9 +596,16 @@ function viewSession(id){
   <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Tutup</button></div>`);
 }
 
-function renderScenarios(){
+async function renderScenarios(){
   if(currentUser.role==='collector')return;
-  const scenarios=DB.getScenarios();
+  setContent('<div class="page-header"><div class="page-title">Urus Senario</div></div><div class="card">Memuatkan senario...</div>');
+  let scenarios;
+  try{
+    scenarios=await loadScenarios(true); // force=true: manager perlu data terkini, bukan cache lama
+  }catch(e){
+    setContent(`<div class="page-header"><div class="page-title">Urus Senario</div></div><div class="card">⚠ Gagal memuatkan senario: ${e.message}</div>`);
+    return;
+  }
   setContent(`
   <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start">
     <div><div class="page-title">Urus Senario</div><div class="page-sub">${scenarios.length} senario tersedia</div></div>
@@ -613,8 +631,8 @@ function renderScenarios(){
   </div>`);
 }
 
-function openAddScenario(existingId){
-  const scenarios=DB.getScenarios();
+async function openAddScenario(existingId){
+  const scenarios=await loadScenarios();
   const s=existingId?scenarios.find(x=>x.id===existingId):null;
   openModal(`
   <div class="modal-title">${s?'Edit':'Tambah'} Senario</div>
@@ -678,8 +696,7 @@ function addChecklistRow(cat,text){
 }
 
 function editScenario(id){openAddScenario(id);}
-function saveScenario(existingId){
-  const scenarios=DB.getScenarios();
+async function saveScenario(existingId){
   const checklist=Array.from(document.querySelectorAll('#checklistRows .checklist-row'))
     .map(r=>({cat:r.querySelector('.cl-cat').value,text:r.querySelector('.cl-text').value.trim()}))
     .filter(c=>c.text);
@@ -701,15 +718,27 @@ function saveScenario(existingId){
     checklist
   };
   if(!data.name||!data.title||!data.prompt){alert('Sila isi semua maklumat.');return;}
-  if(existingId){const i=scenarios.findIndex(s=>s.id===existingId);if(i>=0)scenarios[i]=data;}
-  else{scenarios.push(data);}
-  DB.saveScenarios(scenarios);
-  closeModal();renderScenarios();
+  const btn=document.querySelector('.modal-footer .btn-primary');
+  if(btn){btn.disabled=true;btn.textContent='Menyimpan...';}
+  try{
+    await scenarioApi.save(data);
+    await loadScenarios(true); // refresh cache supaya semua page (training/manager) nampak data terkini
+    closeModal();
+    renderScenarios();
+  }catch(e){
+    alert('Gagal simpan senario: '+e.message);
+    if(btn){btn.disabled=false;btn.textContent='Simpan';}
+  }
 }
-function deleteScenario(id){
+async function deleteScenario(id){
   if(!confirm('Padam senario ini?'))return;
-  const scenarios=DB.getScenarios().filter(s=>s.id!==id);
-  DB.saveScenarios(scenarios);renderScenarios();
+  try{
+    await scenarioApi.remove(id);
+    await loadScenarios(true);
+    renderScenarios();
+  }catch(e){
+    alert('Gagal padam senario: '+e.message);
+  }
 }
 
 function renderUsers(){
