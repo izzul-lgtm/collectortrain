@@ -17,7 +17,7 @@ const DB = {
   },
   defaultScenarios(){
     const s=[
-      {id:'s1',name:'Encik Razif',emoji:'😊',title:'Penghutang Bekerjasama',desc:'Lupa bayar, mudah dibujuk, minta tempoh.',level:'easy',amount:'RM3,200',days:45,balanceTier:'low',prompt:'Anda berlakon sebagai {name}, penghutang yang lupa bayar pinjaman {amount} tertunggak {days} hari. Terkejut bila dihubungi tapi bersedia bekerjasama. Minta tempoh 2 minggu. Bahasa Malaysia natural. Jawab 1-3 ayat sahaja.',
+      {id:'s1',name:'Encik Razif',gender:'male',voiceId:'TX3LPaxmHKxFdv7VOQHJ',emoji:'😊',title:'Penghutang Bekerjasama',desc:'Lupa bayar, mudah dibujuk, minta tempoh.',level:'easy',amount:'RM3,200',days:45,balanceTier:'low',prompt:'Anda berlakon sebagai {name}, penghutang yang lupa bayar pinjaman {amount} tertunggak {days} hari. Terkejut bila dihubungi tapi bersedia bekerjasama. Minta tempoh 2 minggu. Bahasa Malaysia natural. Jawab 1-3 ayat sahaja.',
         checklist:[
           {cat:'tone',text:'Kekal mesra tapi tegas — jangan terlalu lembut sampai tiada komitmen jelas diperoleh.'},
           {cat:'delivery',text:'Sebut tujuan panggilan & jumlah tertunggak dengan jelas dalam 2 ayat pertama.'},
@@ -25,7 +25,7 @@ const DB = {
           {cat:'action',text:'Sahkan semula nombor akaun & jumlah tepat, dapatkan tarikh PTP (Promise to Pay) yang spesifik sebelum tamat panggilan.'},
           {cat:'balance',text:'Baki RENDAH (<RM5,000) — dorong bayaran penuh sekaligus dahulu sebelum tawar ansuran.'}
         ]},
-      {id:'s2',name:'Puan Sarina', emoji:'😤',title:'Penghutang Defensif',  desc:'Mendakwa sudah bayar, marah bila dihubungi.',level:'med', amount:'RM5,800',days:60,balanceTier:'high',prompt:'Anda berlakon sebagai {name}, penghutang yang mendakwa sudah bayar {amount}. Marah dan rasa difitnah. Minta bukti. Bahasa Malaysia emosional tapi sopan. Jawab 1-3 ayat.',
+      {id:'s2',name:'Puan Sarina',gender:'female',voiceId:'EXAVITQu4vr4xnSDxMaL', emoji:'😤',title:'Penghutang Defensif',  desc:'Mendakwa sudah bayar, marah bila dihubungi.',level:'med', amount:'RM5,800',days:60,balanceTier:'high',prompt:'Anda berlakon sebagai {name}, penghutang yang mendakwa sudah bayar {amount}. Marah dan rasa difitnah. Minta bukti. Bahasa Malaysia emosional tapi sopan. Jawab 1-3 ayat.',
         checklist:[
           {cat:'tone',text:'Jangan defensif balik bila penghutang marah — validasi kekecewaan dia dahulu sebelum jelaskan rekod.'},
           {cat:'delivery',text:'Minta nombor resit/rujukan bayaran yang didakwa, jangan terus menafikan tanpa bertanya.'},
@@ -33,7 +33,7 @@ const DB = {
           {cat:'action',text:'Catat tarikh & cara bayaran yang didakwa untuk verifikasi back-office.'},
           {cat:'balance',text:'Baki TINGGI (RM5,800) — selepas isu dakwaan bayar selesai, tawar pelan ansuran berstruktur, bukan sekaligus.'}
         ]},
-      {id:'s3',name:'Encik Faizal',emoji:'😔',title:'Kesusahan Kewangan',  desc:'Kehilangan kerja, ikhlas nak bayar tapi tak mampu.',level:'med', amount:'RM8,500',days:90,balanceTier:'high',prompt:'Anda berlakon sebagai {name}, penghutang yang hilang kerja 2 bulan. Hutang {amount} tertunggak {days} hari. Ada isteri dan 2 anak. Nada sedih. Bahasa Malaysia. Jawab 1-3 ayat.',
+      {id:'s3',name:'Encik Faizal',gender:'male',voiceId:'TX3LPaxmHKxFdv7VOQHJ',emoji:'😔',title:'Kesusahan Kewangan',  desc:'Kehilangan kerja, ikhlas nak bayar tapi tak mampu.',level:'med', amount:'RM8,500',days:90,balanceTier:'high',prompt:'Anda berlakon sebagai {name}, penghutang yang hilang kerja 2 bulan. Hutang {amount} tertunggak {days} hari. Ada isteri dan 2 anak. Nada sedih. Bahasa Malaysia. Jawab 1-3 ayat.',
         checklist:[
           {cat:'tone',text:'Tunjuk empati genuine — elak nada formal/robotic bila penghutang kongsi kesusahan.'},
           {cat:'delivery',text:'Elak terus tekan bayar penuh; tanya dahulu kapasiti kewangan semasa penghutang.'},
@@ -41,7 +41,7 @@ const DB = {
           {cat:'action',text:'Dokumenkan status "kehilangan pekerjaan" dalam nota akaun dan maklumkan langkah seterusnya dengan jelas.'},
           {cat:'balance',text:'Baki TINGGI (RM8,500) — fokus pelan jangka panjang berperingkat, bukan desakan bayaran segera.'}
         ]},
-      {id:'s4',name:'Encik Darwis',emoji:'😡',title:'Penghutang Agresif',  desc:'Marah, mengugut, cuba menakutkan collector.',level:'hard',amount:'RM12,000',days:120,balanceTier:'high',prompt:'Anda berlakon sebagai {name}, penghutang sangat agresif. Hutang {amount}. Ugut nak adukan ke AKPK. Agresif tapi TANPA bahasa kesat. Bahasa Malaysia. Jawab 1-3 ayat.',
+      {id:'s4',name:'Encik Darwis',gender:'male',voiceId:'TX3LPaxmHKxFdv7VOQHJ',emoji:'😡',title:'Penghutang Agresif',  desc:'Marah, mengugut, cuba menakutkan collector.',level:'hard',amount:'RM12,000',days:120,balanceTier:'high',prompt:'Anda berlakon sebagai {name}, penghutang sangat agresif. Hutang {amount}. Ugut nak adukan ke AKPK. Agresif tapi TANPA bahasa kesat. Bahasa Malaysia. Jawab 1-3 ayat.',
         checklist:[
           {cat:'tone',text:'Kekal profesional & tenang walaupun penghutang agresif — JANGAN naikkan nada/balas secara agresif.'},
           {cat:'delivery',text:'Guna ayat menenangkan ("saya faham kekecewaan encik...") sebelum kembali ke isu hutang.'},
@@ -620,6 +620,18 @@ function openAddScenario(existingId){
   <div class="modal-title">${s?'Edit':'Tambah'} Senario</div>
   <div class="form-row"><label>Emoji</label><input id="scEmoji" value="${s?s.emoji:'😐'}" placeholder="😐" /></div>
   <div class="form-row"><label>Nama Penghutang</label><input id="scName" value="${s?s.name:''}" placeholder="Encik Ahmad" /></div>
+  <div class="two-col">
+    <div class="form-row"><label>Jantina (untuk pilih suara AI yang betul)</label>
+      <select id="scGender"><option value="male" ${!s||s.gender==='male'?'selected':''}>Lelaki</option><option value="female" ${s&&s.gender==='female'?'selected':''}>Perempuan</option></select>
+    </div>
+    <div class="form-row"><label>Loghat / Bangsa Suara</label>
+      <select id="scAccent">
+        <option value="melayu" ${!s||!s.accent||s.accent==='melayu'?'selected':''}>Melayu</option>
+        <option value="cina" ${s&&s.accent==='cina'?'selected':''}>Cina</option>
+        <option value="india" ${s&&s.accent==='india'?'selected':''}>India</option>
+      </select>
+    </div>
+  </div>
   <div class="form-row"><label>Tajuk Senario</label><input id="scTitle" value="${s?s.title:''}" placeholder="Penghutang Bekerjasama" /></div>
   <div class="form-row"><label>Keterangan Ringkas</label><input id="scDesc" value="${s?s.desc:''}" placeholder="Lupa bayar, mudah dibujuk..." /></div>
   <div class="two-col">
@@ -671,10 +683,14 @@ function saveScenario(existingId){
   const checklist=Array.from(document.querySelectorAll('#checklistRows .checklist-row'))
     .map(r=>({cat:r.querySelector('.cl-cat').value,text:r.querySelector('.cl-text').value.trim()}))
     .filter(c=>c.text);
+  const gender=document.getElementById('scGender').value;
+  const accent=document.getElementById('scAccent').value;
   const data={
     id:existingId||'s'+Date.now(),
     emoji:document.getElementById('scEmoji').value||'😐',
     name:document.getElementById('scName').value.trim(),
+    gender,accent,
+    voiceId:resolveVoiceId(gender,accent),
     title:document.getElementById('scTitle').value.trim(),
     desc:document.getElementById('scDesc').value.trim(),
     amount:document.getElementById('scAmount').value.trim(),
@@ -721,7 +737,42 @@ function deleteUser(id){
 }
 
 // ═══════════ CALL LOGIC ═══════════
-function getVoiceId(){return scenario&&(scenario.name.includes('Puan')||scenario.name.includes('Cik'))?'EXAVITQu4vr4xnSDxMaL':'TX3LPaxmHKxFdv7VOQHJ';}
+// PUNCA BUG "nama wanita jadi suara lelaki" / "nama bangsa lain tetap suara
+// Melayu": getVoiceId() dulu CUMA teka jantina dengan check substring
+// "Puan"/"Cik" dalam scenario.name, dan cuma ada 2 ID suara total (1
+// perempuan, 1 lelaki — kedua-dua loghat Melayu) — jadi nama tanpa gelaran
+// tu (cth nama Cina/India, atau nama wanita tanpa "Puan/Cik") semua jatuh ke
+// fallback lelaki Melayu yang sama. Fix: scenario sekarang simpan `gender`
+// & `voiceId` SECARA EXPLICIT (dipilih semasa cipta/edit senario, bukan
+// teka dari nama). VOICE_LIBRARY di bawah ialah tempat untuk tambah suara
+// loghat/bangsa lain — ganti placeholder dengan Voice ID sebenar dari
+// ElevenLabs (Voice Library → cari loghat yang sesuai → copy Voice ID).
+const VOICE_LIBRARY = {
+  male_melayu:   'TX3LPaxmHKxFdv7VOQHJ',
+  female_melayu: 'EXAVITQu4vr4xnSDxMaL',
+  // TODO: ganti dua ID di bawah dengan Voice ID sebenar dari ElevenLabs
+  // Voice Library sebelum pilihan ni digunakan — sementara ni ia fallback
+  // ke suara Melayu mengikut jantina supaya app tak rosak.
+  male_cina:     'REPLACE_WITH_ELEVENLABS_VOICE_ID',
+  female_cina:   'REPLACE_WITH_ELEVENLABS_VOICE_ID',
+  male_india:    'REPLACE_WITH_ELEVENLABS_VOICE_ID',
+  female_india:  'REPLACE_WITH_ELEVENLABS_VOICE_ID',
+};
+function resolveVoiceId(gender,accent){
+  const key=(accent||'melayu')+'_'+(gender==='female'?'female':'male');
+  const lookupKey=(gender==='female'?'female':'male')+'_'+(accent||'melayu');
+  const id=VOICE_LIBRARY[lookupKey];
+  if(id&&!id.startsWith('REPLACE_WITH'))return id;
+  // Belum ada voice ID sebenar utk loghat ni — fallback ikut jantina sahaja
+  return gender==='female'?VOICE_LIBRARY.female_melayu:VOICE_LIBRARY.male_melayu;
+}
+function getVoiceId(){
+  if(!scenario)return VOICE_LIBRARY.male_melayu;
+  if(scenario.voiceId)return scenario.voiceId; // disimpan secara explicit semasa cipta senario
+  // Senario lama (sebelum fix ni) tiada voiceId/gender disimpan — guna
+  // heuristik lama sebagai fallback supaya senario sedia ada tak rosak.
+  return (scenario.name.includes('Puan')||scenario.name.includes('Cik'))?VOICE_LIBRARY.female_melayu:VOICE_LIBRARY.male_melayu;
+}
 function getSysPrompt(){
   if(!scenario)return '';
   const base=scenario.prompt.replace(/{name}/g,scenario.name).replace(/{amount}/g,scenario.amount).replace(/{days}/g,scenario.days);
@@ -813,7 +864,8 @@ function addBubble(role,text){
 // ═══════════ STT — DIPERBAIKI ═══════════
 function toggleMic(){if(isPlayingAudio)return;if(isRecording)stopRec();else startRec();}
 
-function startRec(){
+function startRec(retryCount){
+  retryCount=retryCount||0;
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){alert('Sila guna Google Chrome untuk fungsi mikrofon.');return;}
   recognition=new SR();
@@ -832,6 +884,21 @@ function startRec(){
   // ATAU interim), dan bila timer fire, hantar gabungan final+interim supaya
   // tak ada perkataan terakhir yang hilang.
   const SILENCE_MS=2200; // naik dari 1500ms → lebih ruang utk pause natural
+
+  // PUNCA BUG "suara tak detect / ralat / tak stable":
+  // webkitSpeechRecognition Chrome bergantung pada round-trip rangkaian ke
+  // server STT cloud Google — bukan diproses lokal. Bila ada network blip
+  // sekejap atau Chrome anggap tiada suara (silap detect, especially dengan
+  // mic murah/headset bluetooth), ia throw 'network'/'no-speech'/'aborted'
+  // dan DULU terus mati ke idle + buang apa-apa teks yang dah capture, force
+  // collector tekan mic semula dari kosong. Fix: (a) kalau ralat ni jenis
+  // recoverable & BELUM ada teks dicapture, auto-restart sendiri (senyap,
+  // collector tak perasan) sehingga 2 kali sebelum mengalah; (b) kalau dah
+  // ada teks yang sempat capture sebelum ralat, hantar je teks tu (jangan
+  // buang) — collector boleh sambung cakap dalam giliran seterusnya.
+  const MAX_RETRY=2;
+  const RECOVERABLE=['no-speech','network','aborted'];
+
   let silenceTimer=null;
   let lastFinal='';
   let lastInterim='';
@@ -873,8 +940,22 @@ function startRec(){
   recognition.onerror=(e)=>{
     clearTimeout(silenceTimer);
     isRecording=false;
+    const text=currentText();
+    if(text.length>1){
+      // Ada teks yang sempat ditangkap sebelum ralat — jangan buang, hantar.
+      recognition.stop();
+      processSpeech(text);
+      return;
+    }
+    if(RECOVERABLE.includes(e.error)&&retryCount<MAX_RETRY){
+      // Cuba sendiri semula tanpa kacau collector — ralat sekejap macam ni
+      // selalunya hilang sendiri pada cubaan seterusnya.
+      setStatus('','Mendengar semula...');
+      setTimeout(()=>startRec(retryCount+1),300);
+      return;
+    }
     resetMicBtn();
-    const m={'not-allowed':'Mic tidak dibenarkan. Allow akses mikrofon.','no-speech':'Tiada suara. Cuba lagi.','network':'Ralat rangkaian.'};
+    const m={'not-allowed':'Mic tidak dibenarkan. Allow akses mikrofon.','no-speech':'Tiada suara dikesan. Cuba cakap lebih dekat dengan mic, atau tekan mikrofon sekali lagi.','network':'Ralat rangkaian. Sila semak sambungan internet & cuba lagi.'};
     setStatus('','⚠ '+(m[e.error]||'Ralat: '+e.error));
   };
 
