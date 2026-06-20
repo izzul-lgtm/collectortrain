@@ -1,14 +1,16 @@
 -- ═══════════════════════════════════════════════════════════════════
--- CollectorTrain — Supabase schema, Fasa 1: jadual `scenarios`
+-- CollectorTrain — Supabase schema
+-- Fasa 1: jadual `scenarios`
+-- Fasa 3: jadual `users` (lihat bahagian bawah fail ni)
 -- ═══════════════════════════════════════════════════════════════════
 -- Cara guna:
 -- 1. Buka Supabase dashboard → project anda → SQL Editor → New query
 -- 2. Copy-paste SEMUA fail ni → Run
--- 3. Pergi Table Editor, sahkan jadual `scenarios` wujud dengan 4 baris
---    (4 senario default yang sama macam dalam app.js sekarang)
+-- 3. Pergi Table Editor, sahkan jadual `scenarios` (4 baris) dan
+--    `users` (5 baris) wujud
 --
--- Nota: jadual users/sessions + storage bucket audio akan ditambah dalam
--- fail/fasa migration seterusnya — fail ni khusus untuk scenarios dahulu.
+-- Nota: jadual sessions + storage bucket audio akan ditambah dalam
+-- fasa migration seterusnya.
 
 create table if not exists scenarios (
   id            text primary key,
@@ -97,4 +99,40 @@ alter table scenarios enable row level security;
 
 drop policy if exists "scenarios_read_all" on scenarios;
 create policy "scenarios_read_all" on scenarios
+  for select using (true);
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Fasa 3: jadual `users` (gantikan localStorage DB.getUsers/saveUsers)
+-- ═══════════════════════════════════════════════════════════════════
+-- PENTING: `password_hash` ialah bcrypt hash (10 rounds), BUKAN plain
+-- text — jangan sekali-kali simpan password mentah dalam jadual ni.
+-- Hashing & verify dibuat di server (app/api/auth/*) guna `bcryptjs`,
+-- password mentah TIDAK PERNAH sampai/simpan dalam browser/JS source
+-- lagi (beza besar dengan sebelum ni, yang password plaintext ADMIN/
+-- MGR001/COL001-3 boleh terus dibaca dalam app.js source code).
+create table if not exists users (
+  id             text primary key,
+  name           text not null,
+  password_hash  text not null,
+  role           text not null default 'collector' check (role in ('admin','manager','collector')),
+  registered_at  timestamptz not null default now()
+);
+
+-- ── Seed 5 akaun default (password sama macam sebelum ni, tapi kini
+--    hashed — ADMIN/admin123, MGR001/mgr123, COL001-3/col123) ──
+insert into users (id, name, password_hash, role)
+values
+  ('ADMIN', 'Admin Sistem',  '$2b$10$lQHXd74aC6jYD8S9GTWZxOWpHosRfbDa/mjvHQ7TFItJpAy5XzgYS', 'admin'),
+  ('MGR001','Puan Rashidah', '$2b$10$GBFrj3LpI1F8UCr6WNkE4OdKUmhAFvMDpyWGSUpH5oVUp1cTr3Ou6', 'manager'),
+  ('COL001','Ahmad Faris',   '$2b$10$D.VDe01PPC.7UPIxpj0v4.KbgXxZdiiYlZz9Y6PUrw8UmVkhPDLju', 'collector'),
+  ('COL002','Siti Nabilah',  '$2b$10$i.bu7S.r3A28cNrsclRZfuWtRN3mZiAK.6SX6LKG2d31wcA1rYu4m', 'collector'),
+  ('COL003','Rizwan Hakim',  '$2b$10$JUIU1AbK/aS4Ta63xXfe8O8LE9h26bByOEzn9nVwF3oxqrwI3p3ke', 'collector')
+on conflict (id) do nothing;
+
+-- RLS: sama macam scenarios, API routes guna service role key (bypass),
+-- enable + policy permisif sebagai asas untuk masa depan.
+alter table users enable row level security;
+
+drop policy if exists "users_read_all" on users;
+create policy "users_read_all" on users
   for select using (true);

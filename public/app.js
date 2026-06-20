@@ -1,25 +1,16 @@
-// ═══════════ DATABASE (localStorage) ═══════════
+// ═══════════ DATABASE (localStorage — sessions je tinggal di sini, Fasa 4 nanti) ═══════════
 const DB = {
   get(k){try{return JSON.parse(localStorage.getItem('ct_'+k)||'null');}catch{return null;}},
   set(k,v){localStorage.setItem('ct_'+k,JSON.stringify(v));},
-  getUsers(){return this.get('users')||this.defaultUsers();},
   getSessions(){return this.get('sessions')||[];},
-  defaultUsers(){
-    const u={
-      'ADMIN':  {id:'ADMIN', name:'Admin Sistem', pass:'admin123', role:'admin', registeredAt:new Date().toISOString()},
-      'MGR001': {id:'MGR001',name:'Puan Rashidah',pass:'mgr123',  role:'manager',registeredAt:new Date().toISOString()},
-      'COL001': {id:'COL001',name:'Ahmad Faris',  pass:'col123',  role:'collector',registeredAt:new Date().toISOString()},
-      'COL002': {id:'COL002',name:'Siti Nabilah', pass:'col123',  role:'collector',registeredAt:new Date().toISOString()},
-      'COL003': {id:'COL003',name:'Rizwan Hakim', pass:'col123',  role:'collector',registeredAt:new Date().toISOString()}
-    };
-    this.set('users',u); return u;
-  },
+  // Nota: defaultUsers()/getUsers()/saveUsers() (localStorage) dah dibuang —
+  // users sekarang hidup di Supabase (jadual `users`, password di-hash
+  // bcrypt), diakses melalui userApi di bawah, bukan DB.getUsers() lagi.
   // Nota: defaultScenarios() (localStorage) dah dibuang — senario sekarang
   // hidup di Supabase (jadual `scenarios`, lihat supabase/schema.sql untuk
   // seed data 4 senario default) dan diakses melalui scenarioApi di bawah,
   // bukan DB.getScenarios()/saveScenarios() lagi.
-  addSession(s){const arr=this.getSessions();arr.push(s);this.set('sessions',arr);},
-  saveUsers(u){this.set('users',u);}
+  addSession(s){const arr=this.getSessions();arr.push(s);this.set('sessions',arr);}
 };
 
 // ═══════════ SCENARIOS API (Supabase, via /api/scenarios) ═══════════
@@ -50,6 +41,52 @@ const scenarioApi = {
     return true;
   }
 };
+
+// ═══════════ USERS API (Supabase, via /api/users + /api/auth/*) ═══════
+// Sama sebab macam scenarios di atas — users (admin/manager/collector)
+// dulu hidup dalam localStorage (plaintext password pun di situ, boleh
+// terus dibaca dalam app.js source!). Sekarang password di-hash (bcrypt)
+// dan disimpan di Supabase; verify password buat di SERVER (app/api/
+// auth/login) — password mentah tak pernah sampai balik ke browser lagi.
+const userApi = {
+  async list(){
+    const res=await fetch('/api/users');
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Gagal ambil senarai pengguna.');
+    return data.users||[];
+  },
+  async remove(id){
+    const res=await fetch('/api/users',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Gagal padam pengguna.');
+    return true;
+  },
+  async login(id,pass){
+    const res=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,pass})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Gagal log masuk.');
+    return data.user;
+  },
+  async register(id,name,pass,role){
+    const res=await fetch('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,name,pass,role})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Gagal daftar pengguna.');
+    return data.user;
+  },
+  async session(id){
+    const res=await fetch('/api/auth/session?id='+encodeURIComponent(id));
+    const data=await res.json();
+    if(!res.ok)return null; // sesi tak sah/ID dah dipadam — biar fallback ke login screen
+    return data.user;
+  }
+};
+let usersCache=null;
+async function loadUsers(force){
+  if(usersCache&&!force)return usersCache;
+  usersCache=await userApi.list();
+  return usersCache;
+}
+function findUserById(usersArr,id){return (usersArr||[]).find(u=>u.id===id);}
 
 // ═══════════ KATEGORI PENILAIAN ═══════════
 const SCORE_CATS = ['tone','delivery','counter','action','balance'];
@@ -107,21 +144,27 @@ function switchAuthTab(tab){
 function togglePw(id,btn){const i=document.getElementById(id);i.type=i.type==='password'?'text':'password';btn.textContent=i.type==='password'?'👁':'🙈';}
 function showAlert(id,msg,type){const el=document.getElementById(id);el.className='alert alert-'+(type==='ok'?'ok':'err');el.textContent=msg;el.style.display='block';if(type==='ok')setTimeout(()=>el.style.display='none',3000);}
 
-function doLogin(){
+async function doLogin(){
   const id=document.getElementById('loginId').value.trim().toUpperCase();
   const pass=document.getElementById('loginPass').value;
   if(!id||!pass){showAlert('loginAlert','Sila isi semua maklumat.','err');return;}
-  const users=DB.getUsers();
-  if(!users[id]){showAlert('loginAlert','ID Pekerja tidak dijumpai.','err');return;}
-  if(users[id].pass!==pass){showAlert('loginAlert','Kata laluan salah.','err');return;}
-  currentUser=users[id];
-  localStorage.setItem('ct_session_id',id); // supaya refresh page tak terus logout
-  document.getElementById('authScreen').classList.remove('active');
-  document.getElementById('mainApp').classList.add('active');
-  initApp();
+  const btn=document.querySelector('#loginForm .btn-primary');
+  if(btn){btn.disabled=true;btn.textContent='Log masuk...';}
+  try{
+    const user=await userApi.login(id,pass);
+    currentUser=user;
+    localStorage.setItem('ct_session_id',user.id); // supaya refresh page tak terus logout
+    document.getElementById('authScreen').classList.remove('active');
+    document.getElementById('mainApp').classList.add('active');
+    initApp();
+  }catch(e){
+    showAlert('loginAlert',e.message,'err');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Log Masuk';}
+  }
 }
 
-function doRegister(){
+async function doRegister(){
   const name=document.getElementById('regName').value.trim();
   const id=document.getElementById('regId').value.trim().toUpperCase();
   const pass=document.getElementById('regPass').value;
@@ -130,16 +173,22 @@ function doRegister(){
   if(!name||!id||!pass){showAlert('regAlert','Sila isi semua maklumat.','err');return;}
   if(pass.length<6){showAlert('regAlert','Kata laluan min 6 aksara.','err');return;}
   if(pass!==pass2){showAlert('regAlert','Kata laluan tidak sepadan.','err');return;}
-  const users=DB.getUsers();
-  if(users[id]){showAlert('regAlert','ID ini sudah wujud.','err');return;}
-  users[id]={id,name,pass,role,registeredAt:new Date().toISOString()};
-  DB.saveUsers(users);
-  showAlert('regAlert','Berjaya didaftar! Sila log masuk.','ok');
-  setTimeout(()=>{switchAuthTab('login');document.getElementById('loginId').value=id;},1500);
+  const btn=document.querySelector('#registerForm .btn-primary');
+  if(btn){btn.disabled=true;btn.textContent='Mendaftar...';}
+  try{
+    await userApi.register(id,name,pass,role);
+    showAlert('regAlert','Berjaya didaftar! Sila log masuk.','ok');
+    setTimeout(()=>{switchAuthTab('login');document.getElementById('loginId').value=id;},1500);
+  }catch(e){
+    showAlert('regAlert',e.message,'err');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Daftar Akaun';}
+  }
 }
 
 function doLogout(){
   currentUser=null;
+  usersCache=null; // elak data pengguna sebelum ni terbawa kalau orang lain login di device sama
   localStorage.removeItem('ct_session_id');
   stopCall();
   document.getElementById('mainApp').classList.remove('active');
@@ -201,10 +250,10 @@ function navigate(page){
 }
 
 // ═══════════ PAGES ═══════════
-function renderDashboard(){
+async function renderDashboard(){
   const sessions=DB.getSessions();
-  const users=DB.getUsers();
-  const collectors=Object.values(users).filter(u=>u.role==='collector');
+  const users=await loadUsers();
+  const collectors=users.filter(u=>u.role==='collector');
   const totalSessions=sessions.length;
   const avgScore=sessions.length?Math.round(sessions.reduce((a,s)=>a+s.totalScore,0)/sessions.length):0;
   const todaySessions=sessions.filter(s=>s.date&&s.date.startsWith(new Date().toISOString().slice(0,10))).length;
@@ -249,7 +298,7 @@ function renderDashboard(){
       <div class="card-title">Sesi Terbaru</div>
       ${recentSessions.length===0?`<div class="empty-state"><div class="es-icon">📋</div><p>Tiada sesi lagi</p></div>`:''}
       ${recentSessions.map(s=>{
-        const u=Object.values(DB.getUsers()).find(u=>u.id===s.collectorId);
+        const u=findUserById(users,s.collectorId);
         return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-size:13px;font-weight:500">${u?u.name:'—'}</div><div style="font-size:11px;color:var(--text3)">${s.scenarioName} · ${s.duration}</div></div>
           <span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span>
@@ -488,10 +537,10 @@ function renderMyHistory(){
   `);
 }
 
-function renderCollectors(){
-  const users=DB.getUsers();
+async function renderCollectors(){
+  const users=await loadUsers();
   const sessions=DB.getSessions();
-  const collectors=Object.values(users).filter(u=>u.role==='collector');
+  const collectors=users.filter(u=>u.role==='collector');
   setContent(`
   <div class="page-header"><div class="page-title">Semua Collector</div><div class="page-sub">${collectors.length} collector berdaftar</div></div>
   <div class="card">
@@ -519,9 +568,9 @@ function renderCollectors(){
   </div>`);
 }
 
-function renderSessions(){
+async function renderSessions(){
   const sessions=DB.getSessions().slice().reverse();
-  const users=DB.getUsers();
+  const users=await loadUsers();
   setContent(`
   <div class="page-header"><div class="page-title">Sesi Latihan</div><div class="page-sub">${sessions.length} sesi keseluruhan</div></div>
   ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📋</div><p>Belum ada sesi latihan.</p></div></div>`:''}
@@ -529,7 +578,7 @@ function renderSessions(){
     <div class="table-wrap"><table>
       <tr><th>Collector</th><th>Senario</th><th>Masa</th><th>Markah</th><th>Risiko Harassment</th><th>Tarikh</th><th></th></tr>
       ${sessions.map(s=>{
-        const u=Object.values(users).find(u=>u.id===s.collectorId);
+        const u=findUserById(users,s.collectorId);
         return`<tr>
           <td><div style="font-weight:500">${u?u.name:'—'}</div><div style="font-size:11px;color:var(--text3)">${s.collectorId}</div></td>
           <td>${s.scenarioName}</td>
@@ -545,11 +594,11 @@ function renderSessions(){
   `);
 }
 
-function viewSession(id){
+async function viewSession(id){
   const s=DB.getSessions().find(s=>s.id===id);
   if(!s)return;
-  const users=DB.getUsers();
-  const u=Object.values(users).find(u=>u.id===s.collectorId);
+  const users=await loadUsers();
+  const u=findUserById(users,s.collectorId);
   openModal(`
   <div class="modal-title">📋 Detail Sesi Latihan</div>
   <div style="display:flex;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:8px">
@@ -743,10 +792,16 @@ async function deleteScenario(id){
   }
 }
 
-function renderUsers(){
+async function renderUsers(){
   if(currentUser.role==='collector')return;
-  const users=DB.getUsers();
-  const all=Object.values(users);
+  setContent('<div class="page-header"><div class="page-title">Urus Pengguna</div></div><div class="card">Memuatkan pengguna...</div>');
+  let all;
+  try{
+    all=await loadUsers(true); // force=true: manager perlu data terkini
+  }catch(e){
+    setContent(`<div class="page-header"><div class="page-title">Urus Pengguna</div></div><div class="card">⚠ Gagal memuatkan pengguna: ${e.message}</div>`);
+    return;
+  }
   setContent(`
   <div class="page-header"><div class="page-title">Urus Pengguna</div><div class="page-sub">${all.length} pengguna berdaftar</div></div>
   <div class="card">
@@ -762,9 +817,15 @@ function renderUsers(){
     </table></div>
   </div>`);
 }
-function deleteUser(id){
+async function deleteUser(id){
   if(!confirm('Padam pengguna ini?'))return;
-  const users=DB.getUsers();delete users[id];DB.saveUsers(users);renderUsers();
+  try{
+    await userApi.remove(id);
+    await loadUsers(true);
+    renderUsers();
+  }catch(e){
+    alert('Gagal padam pengguna: '+e.message);
+  }
 }
 
 // ═══════════ CALL LOGIC ═══════════
@@ -1137,19 +1198,17 @@ function setContent(html){document.getElementById('mainContent').innerHTML=html;
 // refresh, walaupun baru je login. Fix: simpan ID pengguna (BUKAN
 // password) dalam localStorage semasa login, dan cuba restore sesi tu
 // secara automatik setiap kali app.js load.
-(function restoreSession(){
+(async function restoreSession(){
   try{
     const savedId=localStorage.getItem('ct_session_id');
     if(!savedId)return;
-    const users=DB.getUsers();
-    const u=users[savedId];
+    const u=await userApi.session(savedId);
     if(!u)return; // ID dah tak wujud (cth akaun dipadam) — kekal di skrin login
     currentUser=u;
     document.getElementById('authScreen').classList.remove('active');
     document.getElementById('mainApp').classList.add('active');
     initApp();
   }catch(e){
-    // localStorage tak available (cth private/incognito browsing yang sekat storage)
-    // — biar fallback senyap ke skrin login biasa, jangan crash app.
+    // network/localStorage tak available — biar fallback senyap ke skrin login biasa, jangan crash app.
   }
 })();
