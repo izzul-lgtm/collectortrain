@@ -1,16 +1,17 @@
 -- ═══════════════════════════════════════════════════════════════════
 -- CollectorTrain — Supabase schema
 -- Fasa 1: jadual `scenarios`
--- Fasa 3: jadual `users` (lihat bahagian bawah fail ni)
+-- Fasa 3: jadual `users`
+-- Fasa 4: jadual `sessions` (lihat bahagian bawah fail ni)
 -- ═══════════════════════════════════════════════════════════════════
 -- Cara guna:
 -- 1. Buka Supabase dashboard → project anda → SQL Editor → New query
 -- 2. Copy-paste SEMUA fail ni → Run
--- 3. Pergi Table Editor, sahkan jadual `scenarios` (4 baris) dan
---    `users` (5 baris) wujud
+-- 3. Pergi Table Editor, sahkan jadual `scenarios` (4 baris), `users`
+--    (5 baris), dan `sessions` (0 baris — kosong sehingga ada sesi
+--    latihan baru direkod) wujud
 --
--- Nota: jadual sessions + storage bucket audio akan ditambah dalam
--- fasa migration seterusnya.
+-- Nota: storage bucket untuk audio akan ditambah dalam fasa seterusnya.
 
 create table if not exists scenarios (
   id            text primary key,
@@ -135,4 +136,39 @@ alter table users enable row level security;
 
 drop policy if exists "users_read_all" on users;
 create policy "users_read_all" on users
+  for select using (true);
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Fasa 4: jadual `sessions` (gantikan localStorage DB.getSessions/addSession)
+-- ═══════════════════════════════════════════════════════════════════
+-- PENTING: ni jadual yang paling besar/kerap ditulis (1 baris setiap kali
+-- collector habis 1 sesi latihan) — transcript & scores disimpan sebagai
+-- jsonb (sama struktur macam dulu disimpan dalam localStorage), supaya
+-- app.js tak perlu banyak ubah bentuk data.
+create table if not exists sessions (
+  id               text primary key,
+  collector_id     text not null,
+  scenario_id      text,
+  scenario_name    text not null default '',
+  duration         text not null default '',
+  total_score      integer not null default 0,
+  scores           jsonb not null default '{}'::jsonb,
+  strengths        jsonb not null default '[]'::jsonb,
+  missed           jsonb not null default '[]'::jsonb,
+  priority_focus   jsonb,
+  harassment_risk  text not null default 'none' check (harassment_risk in ('none','low','medium','high')),
+  harassment_note  text not null default '',
+  feedback         text not null default '',
+  transcript       jsonb not null default '[]'::jsonb,
+  created_at       timestamptz not null default now()
+);
+
+-- Index untuk query biasa: "sesi collector ni" (My History) & susun ikut tarikh
+create index if not exists idx_sessions_collector on sessions(collector_id);
+create index if not exists idx_sessions_created_at on sessions(created_at desc);
+
+alter table sessions enable row level security;
+
+drop policy if exists "sessions_read_all" on sessions;
+create policy "sessions_read_all" on sessions
   for select using (true);

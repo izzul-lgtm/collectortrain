@@ -1,8 +1,10 @@
-// ═══════════ DATABASE (localStorage — sessions je tinggal di sini, Fasa 4 nanti) ═══════════
+// ═══════════ DATABASE (localStorage — kosong sekarang, semua dah pindah ke Supabase) ═══════════
 const DB = {
   get(k){try{return JSON.parse(localStorage.getItem('ct_'+k)||'null');}catch{return null;}},
-  set(k,v){localStorage.setItem('ct_'+k,JSON.stringify(v));},
-  getSessions(){return this.get('sessions')||[];},
+  set(k,v){localStorage.setItem('ct_'+k,JSON.stringify(v));}
+  // Nota: getSessions()/addSession() (localStorage) dah dibuang — sessions
+  // sekarang hidup di Supabase (jadual `sessions`), diakses melalui
+  // sessionApi di bawah, bukan DB.getSessions()/addSession() lagi.
   // Nota: defaultUsers()/getUsers()/saveUsers() (localStorage) dah dibuang —
   // users sekarang hidup di Supabase (jadual `users`, password di-hash
   // bcrypt), diakses melalui userApi di bawah, bukan DB.getUsers() lagi.
@@ -10,7 +12,6 @@ const DB = {
   // hidup di Supabase (jadual `scenarios`, lihat supabase/schema.sql untuk
   // seed data 4 senario default) dan diakses melalui scenarioApi di bawah,
   // bukan DB.getScenarios()/saveScenarios() lagi.
-  addSession(s){const arr=this.getSessions();arr.push(s);this.set('sessions',arr);}
 };
 
 // ═══════════ SCENARIOS API (Supabase, via /api/scenarios) ═══════════
@@ -41,6 +42,32 @@ const scenarioApi = {
     return true;
   }
 };
+
+// ═══════════ SESSIONS API (Supabase, via /api/sessions) ═══════════
+// Sama sebab macam scenarios & users — sessions (rekod & skor latihan)
+// dulu hidup dalam localStorage, tak shared antara device/browser. Kini
+// di Supabase (jadual `sessions`) — manager boleh nampak SEMUA rekod
+// collector dari mana-mana device, bukan terhad ke browser collector tu.
+const sessionApi = {
+  async list(){
+    const res=await fetch('/api/sessions');
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Gagal ambil sesi latihan.');
+    return data.sessions||[];
+  },
+  async create(sessionData){
+    const res=await fetch('/api/sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(sessionData)});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Gagal simpan sesi latihan.');
+    return data.session;
+  }
+};
+let sessionsCache=null;
+async function loadSessions(force){
+  if(sessionsCache&&!force)return sessionsCache;
+  sessionsCache=await sessionApi.list();
+  return sessionsCache;
+}
 
 // ═══════════ USERS API (Supabase, via /api/users + /api/auth/*) ═══════
 // Sama sebab macam scenarios di atas — users (admin/manager/collector)
@@ -251,7 +278,7 @@ function navigate(page){
 
 // ═══════════ PAGES ═══════════
 async function renderDashboard(){
-  const sessions=DB.getSessions();
+  const sessions=await loadSessions();
   const users=await loadUsers();
   const collectors=users.filter(u=>u.role==='collector');
   const totalSessions=sessions.length;
@@ -480,8 +507,9 @@ function renderScoreScreen(){
   </div>`);
 }
 
-function renderMyHistory(){
-  const sessions=DB.getSessions().filter(s=>s.collectorId===currentUser.id).reverse();
+async function renderMyHistory(){
+  const all=await loadSessions();
+  const sessions=all.filter(s=>s.collectorId===currentUser.id).reverse();
   const weakness=tallyWeakness(sessions);
   const latestFocus=sessions.length?sessions[0].priorityFocus:null; // sessions[0] = sesi terbaru (list dah reverse)
   setContent(`
@@ -539,7 +567,7 @@ function renderMyHistory(){
 
 async function renderCollectors(){
   const users=await loadUsers();
-  const sessions=DB.getSessions();
+  const sessions=await loadSessions();
   const collectors=users.filter(u=>u.role==='collector');
   setContent(`
   <div class="page-header"><div class="page-title">Semua Collector</div><div class="page-sub">${collectors.length} collector berdaftar</div></div>
@@ -569,7 +597,7 @@ async function renderCollectors(){
 }
 
 async function renderSessions(){
-  const sessions=DB.getSessions().slice().reverse();
+  const sessions=(await loadSessions()).slice().reverse();
   const users=await loadUsers();
   setContent(`
   <div class="page-header"><div class="page-title">Sesi Latihan</div><div class="page-sub">${sessions.length} sesi keseluruhan</div></div>
@@ -595,7 +623,8 @@ async function renderSessions(){
 }
 
 async function viewSession(id){
-  const s=DB.getSessions().find(s=>s.id===id);
+  const all=await loadSessions();
+  const s=all.find(s=>s.id===id);
   if(!s)return;
   const users=await loadUsers();
   const u=findUserById(users,s.collectorId);
@@ -1169,7 +1198,17 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
       harassmentNote:r.harassmentNote||'',
       feedback:r.feedback||'',transcript:callHistory
     };
-    DB.addSession(sessionData);
+    // Simpan ke Supabase dalam try/catch BERASINGAN dari parsing AI di atas —
+    // kalau save DB ni gagal (cth network blip), collector masih nak nampak
+    // hasil penilaian yang Claude baru jana (jangan buang feedback yang dah
+    // berjaya dianalisis hanya sebab DB write gagal sekejap).
+    try{
+      await sessionApi.create(sessionData);
+      await loadSessions(true); // refresh cache supaya dashboard/manager terus nampak sesi baru
+    }catch(saveErr){
+      console.error('Gagal simpan sesi ke Supabase:',saveErr);
+      sessionData.feedback+=' (Nota: hasil ni mungkin tak tersimpan dalam rekod sebab isu rangkaian sekejap — skrin ni je yang ada, tak dapat dilihat semula dalam "Rekod Latihan".)';
+    }
     window._lastScore={...sessionData};
     navigate('score');
   }catch(e){
