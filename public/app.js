@@ -114,6 +114,14 @@ async function loadUsers(force){
   return usersCache;
 }
 function findUserById(usersArr,id){return (usersArr||[]).find(u=>u.id===id);}
+// PERMINTAAN: tunjuk waktu (bukan tarikh sahaja) untuk setiap sesi latihan —
+// senang semak kalau ada beberapa sesi pada hari yang sama (cth nak confirm
+// sesi mana dah betul-betul masuk Supabase semasa testing/audit).
+function fmtDateTime(d){
+  if(!d)return '-';
+  const dt=new Date(d);
+  return dt.toLocaleDateString('ms-MY')+' '+dt.toLocaleTimeString('ms-MY',{hour:'2-digit',minute:'2-digit'});
+}
 
 // ═══════════ KATEGORI PENILAIAN ═══════════
 const SCORE_CATS = ['tone','delivery','counter','action','balance'];
@@ -161,6 +169,7 @@ let currentUser=null, currentPage='';
 let scenario=null, callHistory=[], callSeconds=0, timerInterval=null;
 let recognition=null, isRecording=false, callActive=false;
 let audioQueue=[], isPlayingAudio=false, currentAudio=null;
+let endCallInProgress=false; // guard: elak double-trigger (cth double-click/double-tap "Tamatkan Panggilan") hantar 2x evalCall() utk panggilan yang sama
 
 // ═══════════ AUTH ═══════════
 function switchAuthTab(tab){
@@ -557,7 +566,7 @@ async function renderMyHistory(){
         <td>${s.scenarioName}</td>
         <td>${s.duration}</td>
         <td><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span></td>
-        <td>${s.date?new Date(s.date).toLocaleDateString('ms-MY'):'-'}</td>
+        <td style="font-size:12px">${fmtDateTime(s.date)}</td>
         <td><button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="viewSession('${s.id}')">Lihat</button></td>
       </tr>`).join('')}
     </table></div>
@@ -589,7 +598,7 @@ async function renderCollectors(){
           <td>${typeof best==='number'?`<span class="score-pill score-high">${best}</span>`:'-'}</td>
           <td>${weakLabel!=='-'?`<span class="chip chip-amber">${weakLabel}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
           <td>${harassCount>0?`<span class="chip chip-red">⚠ ${harassCount}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
-          <td style="font-size:12px;color:var(--text3)">${last?new Date(last.date).toLocaleDateString('ms-MY'):'-'}</td>
+          <td style="font-size:12px;color:var(--text3)">${last?fmtDateTime(last.date):'-'}</td>
         </tr>`;
       }).join('')}
     </table></div>
@@ -613,7 +622,7 @@ async function renderSessions(){
           <td>${s.duration}</td>
           <td><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span></td>
           <td>${s.harassmentRisk&&s.harassmentRisk!=='none'?`<span class="chip chip-red">⚠ ${s.harassmentRisk}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
-          <td style="font-size:12px;color:var(--text3)">${s.date?new Date(s.date).toLocaleDateString('ms-MY'):'-'}</td>
+          <td style="font-size:12px;color:var(--text3)">${fmtDateTime(s.date)}</td>
           <td><button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="viewSession('${s.id}')">Lihat</button></td>
         </tr>`;
       }).join('')}
@@ -634,6 +643,7 @@ async function viewSession(id){
     <div><div style="font-size:12px;color:var(--text3)">Collector</div><div style="font-weight:500">${u?u.name:'—'}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Senario</div><div style="font-weight:500">${s.scenarioName}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Masa</div><div style="font-weight:500">${s.duration}</div></div>
+    <div><div style="font-size:12px;color:var(--text3)">Tarikh & Waktu</div><div style="font-weight:500">${fmtDateTime(s.date)}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Markah</div><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}/100</span></div>
   </div>
   ${s.harassmentRisk&&s.harassmentRisk!=='none'?`<div class="alert alert-err" style="display:block">⚠ <strong>Isu Pematuhan/Harassment (${s.harassmentRisk}):</strong> ${s.harassmentNote||''}</div>`:''}
@@ -932,12 +942,24 @@ function stopCall(){
 }
 
 async function endCall(){
-  stopCall();
-  const m=Math.floor(callSeconds/60),s=callSeconds%60;
-  const duration=m+'m '+s+'s';
-  navigate('score');
-  document.getElementById('mainContent').innerHTML='<div style="text-align:center;padding:4rem;color:var(--text3)">⏳ Menganalisis sesi latihan...</div>';
-  await evalCall(duration);
+  // PUNCA BUG "sesi sebelum ini macam hilang/tak konsisten": butang "Tamatkan
+  // Panggilan" tak pernah disable lepas ditekan — kalau collector double-click/
+  // double-tap (selalu jadi bila butang besar kat skrin call), endCall() jalan
+  // 2x serentak → evalCall() panggil Claude API 2x utk transcript yang SAMA &
+  // cuba POST /api/sessions 2x. Fix: guard senyap, klik kedua/seterusnya
+  // diabaikan terus sehingga sesi yang pertama habis disimpan.
+  if(endCallInProgress)return;
+  endCallInProgress=true;
+  try{
+    stopCall();
+    const m=Math.floor(callSeconds/60),s=callSeconds%60;
+    const duration=m+'m '+s+'s';
+    navigate('score');
+    document.getElementById('mainContent').innerHTML='<div style="text-align:center;padding:4rem;color:var(--text3)">⏳ Menganalisis sesi latihan...</div>';
+    await evalCall(duration);
+  }finally{
+    endCallInProgress=false;
+  }
 }
 
 async function speakEl(text){audioQueue.push(text);if(!isPlayingAudio)playNext();}
@@ -1023,18 +1045,33 @@ function startRec(retryCount){
   let silenceTimer=null;
   let lastFinal='';
   let lastInterim='';
+  // PUNCA BUG "teks/respon double": stopRec() (klik manual henti mic) dan
+  // recognition.onend (yang ter-fire SEBAB recognition.stop() dipanggil dalam
+  // stopRec()) DUA-DUA terus panggil processSpeech() dengan teks yang SAMA —
+  // jadi 1 ucapan collector dihantar 2x ke /api/claude, transcript jadi
+  // double, dan AI respon (+ suara TTS) pun double. Fix: satu flag `dispatched`
+  // jadi "tiket sekali guna" — sesiapa (silence-timer / manual stop / error /
+  // onend) yang sampai dulu, dia je yang hantar; selebihnya jadi no-op senyap.
+  let dispatched=false;
 
   function currentText(){return (lastFinal+' '+lastInterim).trim();}
+
+  function dispatchIfNeeded(){
+    if(dispatched)return;
+    const text=currentText();
+    if(text.length>1){
+      dispatched=true;
+      processSpeech(text);
+    }
+    lastFinal='';lastInterim='';
+  }
 
   function armSilenceTimer(){
     clearTimeout(silenceTimer);
     silenceTimer=setTimeout(()=>{
-      const text=currentText();
-      if(text.length>1){
-        recognition.stop();
-        processSpeech(text);
-        lastFinal='';lastInterim='';
-      }
+      if(dispatched)return;
+      recognition.stop();
+      dispatchIfNeeded();
     },SILENCE_MS);
   }
 
@@ -1061,11 +1098,12 @@ function startRec(retryCount){
   recognition.onerror=(e)=>{
     clearTimeout(silenceTimer);
     isRecording=false;
+    if(dispatched)return;
     const text=currentText();
     if(text.length>1){
       // Ada teks yang sempat ditangkap sebelum ralat — jangan buang, hantar.
       recognition.stop();
-      processSpeech(text);
+      dispatchIfNeeded();
       return;
     }
     if(RECOVERABLE.includes(e.error)&&retryCount<MAX_RETRY){
@@ -1082,14 +1120,21 @@ function startRec(retryCount){
 
   recognition.onend=()=>{
     isRecording=false;
-    // Kalau ada teks terkumpul (final ATAU interim) tapi timer belum fire —
+    clearTimeout(silenceTimer);
+    if(dispatched){
+      // Sesi STT ni dah pun dihantar (silence-timer/manual-stop/error sampai
+      // dulu) — JANGAN sentuh UI lagi, elak overwrite state 'AI sedang
+      // berfikir...' yang processSpeech() baru je set.
+      return;
+    }
+    // Kalau ada teks terkumpul (final ATAU interim) tapi belum dihantar lagi —
     // cth browser stop recognition tiba-tiba (network blip) — hantar sekarang
     // supaya tak ada perkataan terakhir yang hilang.
-    clearTimeout(silenceTimer);
     const text=currentText();
     if(text.length>1){
-      processSpeech(text);
-      lastFinal='';lastInterim='';
+      dispatchIfNeeded();
+    }else{
+      resetMicBtn();
     }
   };
 
@@ -1097,12 +1142,12 @@ function startRec(retryCount){
 }
 
 function stopRec(){
+  // Jangan panggil processSpeech() terus di sini — recognition.stop() di
+  // bawah akan trigger 'onend' (lihat startRec()), dan flag `dispatched`
+  // kat situ yang akan uruskan hantar teks (sekali sahaja). Ni punca fix bug
+  // "teks/respon double" bila collector tekan mic untuk henti secara manual.
   if(recognition)recognition.stop();
   isRecording=false;
-  const lt=document.getElementById('liveText');
-  const text=lt?lt.textContent.trim():'';
-  if(text&&text.length>1)processSpeech(text);
-  else resetMicBtn();
 }
 
 async function processSpeech(text){
@@ -1188,13 +1233,20 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
     const totalScore=typeof r.totalScore==='number'?r.totalScore:Object.values(scores).reduce((a,b)=>a+b,0);
     const missed=Array.isArray(r.missed)?r.missed.slice(0,5):[];
     const priorityFocus=(r.priorityFocus&&r.priorityFocus.category)?{category:r.priorityFocus.category,tip:r.priorityFocus.tip||''}:fallbackPriority(scores,missed);
+    // PUNCA BUG "sesi tak tersimpan": jadual `sessions` ada CHECK constraint
+    // harassment_risk IN ('none','low','medium','high') — kalau Claude pulangkan
+    // nilai luar dari 4 ni (cth casing lain/kosong), INSERT akan ditolak DB
+    // (gagal senyap, cuma masuk console.error). Clamp dulu sebelum hantar.
+    const VALID_HARASSMENT=['none','low','medium','high'];
+    const harassmentRisk=VALID_HARASSMENT.includes(r.harassmentRisk)?r.harassmentRisk:'none';
     const sessionData={
-      id:'sess_'+Date.now(),collectorId:currentUser.id,scenarioId:scenario?scenario.id:'',
+      id:'sess_'+Date.now()+'_'+Math.random().toString(36).slice(2,8),
+      collectorId:currentUser.id,scenarioId:scenario?scenario.id:'',
       scenarioName:scenario?scenario.title:'',duration,date:new Date().toISOString(),
       totalScore,scores,
       strengths:Array.isArray(r.strengths)?r.strengths:[],
       missed,priorityFocus,
-      harassmentRisk:r.harassmentRisk||'none',
+      harassmentRisk,
       harassmentNote:r.harassmentNote||'',
       feedback:r.feedback||'',transcript:callHistory
     };
@@ -1206,8 +1258,18 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
       await sessionApi.create(sessionData);
       await loadSessions(true); // refresh cache supaya dashboard/manager terus nampak sesi baru
     }catch(saveErr){
-      console.error('Gagal simpan sesi ke Supabase:',saveErr);
-      sessionData.feedback+=' (Nota: hasil ni mungkin tak tersimpan dalam rekod sebab isu rangkaian sekejap — skrin ni je yang ada, tak dapat dilihat semula dalam "Rekod Latihan".)';
+      console.error('Gagal simpan sesi ke Supabase (cubaan 1):',saveErr);
+      // Cuba SEKALI lagi dengan id baru — litupi kes jarang (id sama tertimpa
+      // request lain hampir serentak). Kalau cubaan kedua pun gagal, baru
+      // mengalah & beritahu collector terus terang.
+      try{
+        sessionData.id='sess_'+Date.now()+'_'+Math.random().toString(36).slice(2,8);
+        await sessionApi.create(sessionData);
+        await loadSessions(true);
+      }catch(saveErr2){
+        console.error('Gagal simpan sesi ke Supabase (cubaan 2, mengalah):',saveErr2);
+        sessionData.feedback+=' (⚠ Nota: hasil ni TAK tersimpan dalam "Rekod Latihan" — ada ralat simpan ke pangkalan data. Sila screenshot skrin ni & ralat dalam console browser (F12 → Console) untuk dilaporkan.)';
+      }
     }
     window._lastScore={...sessionData};
     navigate('score');
