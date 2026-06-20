@@ -172,3 +172,36 @@ alter table sessions enable row level security;
 drop policy if exists "sessions_read_all" on sessions;
 create policy "sessions_read_all" on sessions
   for select using (true);
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Tambahan: Maklumat Akaun Pelanggan (rujukan collector semasa nego)
+-- ═══════════════════════════════════════════════════════════════════
+-- PUNCA: collector perlukan detail akaun sebenar (no. akaun, no. servis, IC,
+-- tarikh, dll) untuk dirujuk SEMASA panggilan nego, bukan sekadar nama &
+-- jumlah hutang yang dah sedia ada. Guna `add column if not exists` supaya
+-- selamat di-run berulang & tak ganggu 4 senario seed yang dah wujud (akan
+-- masuk sebagai '' / null dulu sehingga manager isi melalui form Edit Senario).
+-- Nota: `name` (Nama Penghutang) & `amount` (Jumlah Hutang/Amount Outstanding)
+-- TAK diduplikasi — column tu dah sedia ada & dipakai semula utk maklumat ni.
+alter table scenarios add column if not exists client            text not null default '';
+alter table scenarios add column if not exists ic_number         text not null default '';
+alter table scenarios add column if not exists acc_number        text not null default '';
+alter table scenarios add column if not exists service_no        text not null default '';
+alter table scenarios add column if not exists acc_type          text not null default '';
+alter table scenarios add column if not exists termination_date  date;
+alter table scenarios add column if not exists registration_date date;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Tambahan: Pengumuman / Polisi Wajib Dimaklumkan kepada Penghutang
+-- ═══════════════════════════════════════════════════════════════════
+-- PUNCA: bila syarikat brief collector pasal tindakan/dasar BARU (cth:
+-- "paylater/e-wallet akan disekat sebab akaun masuk CTOS") yang WAJIB
+-- disampaikan kepada penghutang semasa nego, sebelum ni tiada cara untuk
+-- AI Quality Assurance tahu pasal dasar tu — jadi walaupun collector tak
+-- maklumkan langsung, AI takkan tangkap sebagai isu. Column ni simpan
+-- senarai (jsonb array of text, "open" — tiada kategori dipaksa macam
+-- checklist) pengumuman/dasar yang relevan untuk senario tu, supaya
+-- evalCall() (app.js) boleh sertakan dalam prompt penilaian Claude &
+-- tandakan sebagai "missed" (kategori action) kalau collector langsung
+-- tak sebut sepanjang panggilan.
+alter table scenarios add column if not exists disclosures jsonb not null default '[]'::jsonb;

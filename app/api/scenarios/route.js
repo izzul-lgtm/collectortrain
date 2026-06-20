@@ -19,6 +19,14 @@ function toClientShape(row) {
     balanceTier: row.balance_tier,
     prompt: row.prompt,
     checklist: row.checklist || [],
+    disclosures: row.disclosures || [],
+    client: row.client || '',
+    icNumber: row.ic_number || '',
+    accNumber: row.acc_number || '',
+    serviceNo: row.service_no || '',
+    accType: row.acc_type || '',
+    terminationDate: row.termination_date || '',
+    registrationDate: row.registration_date || '',
   };
 }
 
@@ -38,6 +46,14 @@ function toDbShape(data) {
     balance_tier: data.balanceTier,
     prompt: data.prompt,
     checklist: data.checklist || [],
+    disclosures: data.disclosures || [],
+    client: data.client || '',
+    ic_number: data.icNumber || '',
+    acc_number: data.accNumber || '',
+    service_no: data.serviceNo || '',
+    acc_type: data.accType || '',
+    termination_date: data.terminationDate || null,
+    registration_date: data.registrationDate || null,
   };
 }
 
@@ -60,6 +76,9 @@ export async function POST(req) {
     const body = await req.json();
     if (!body.id || !body.name || !body.title || !body.prompt) {
       return Response.json({ error: 'Sila isi semua maklumat (id/name/title/prompt diperlukan).' }, { status: 400 });
+    }
+    if (!body.client || !body.icNumber || !body.accNumber || !body.serviceNo || !body.accType || !body.terminationDate || !body.registrationDate) {
+      return Response.json({ error: 'Sila isi semua Maklumat Akaun Pelanggan (Client/IC/No. Akaun/No. Servis/Jenis Akaun/Tarikh Termination/Tarikh Daftar) sebelum simpan.' }, { status: 400 });
     }
     const sb = supabaseAdmin();
     const { data, error } = await sb

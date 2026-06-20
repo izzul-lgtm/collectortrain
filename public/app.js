@@ -727,7 +727,7 @@ async function renderScenarios(){
         <td>${s.amount}</td>
         <td><span class="chip ${s.balanceTier==='high'?'chip-red':'chip-green'}">${s.balanceTier==='high'?'Tinggi':'Rendah'}</span></td>
         <td><span class="level-badge level-${s.level}">${s.level==='easy'?'Mudah':s.level==='med'?'Sederhana':'Sukar'}</span></td>
-        <td style="font-size:12px;color:var(--text3)">${(s.checklist||[]).length} item</td>
+        <td style="font-size:12px;color:var(--text3)">${(s.checklist||[]).length} item${(s.disclosures||[]).length?` · 📢${(s.disclosures||[]).length}`:''}</td>
         <td><div class="action-row">
           <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="editScenario('${s.id}')">Edit</button>
           <button class="btn btn-danger" style="padding:4px 10px;font-size:12px" onclick="deleteScenario('${s.id}')">Padam</button>
@@ -740,6 +740,11 @@ async function renderScenarios(){
 async function openAddScenario(existingId){
   const scenarios=await loadScenarios();
   const s=existingId?scenarios.find(x=>x.id===existingId):null;
+  // Client "Lain-lain" — kalau client sedia ada bukan salah satu dari 3
+  // pilihan tetap (RedOne/Celcom/Digi), anggap ia nama custom yang ditaip
+  // sebelum ni → select "Lain-lain" & prefill input bebas dengan nama tu.
+  const KNOWN_CLIENTS=['RedOne','Celcom','Digi'];
+  const isCustomClient=!!(s&&s.client&&!KNOWN_CLIENTS.includes(s.client));
   openModal(`
   <div class="modal-title">${s?'Edit':'Tambah'} Senario</div>
   <div class="form-row"><label>Emoji</label><input id="scEmoji" value="${s?s.emoji:'😐'}" placeholder="😐" /></div>
@@ -774,13 +779,14 @@ async function openAddScenario(existingId){
   <div style="font-size:13px;font-weight:600;margin-bottom:10px">📒 Maklumat Akaun Pelanggan <span style="font-weight:400;color:var(--text3)">(wajib diisi — keluar sebagai rujukan collector semasa panggilan)</span></div>
   <div class="two-col">
     <div class="form-row"><label>Client</label>
-      <select id="scClient">
+      <select id="scClient" onchange="toggleClientOther()">
         <option value="" ${!s||!s.client?'selected':''} disabled>— Pilih Client —</option>
         <option value="RedOne" ${s&&s.client==='RedOne'?'selected':''}>RedOne</option>
         <option value="Celcom" ${s&&s.client==='Celcom'?'selected':''}>Celcom</option>
         <option value="Digi" ${s&&s.client==='Digi'?'selected':''}>Digi</option>
-        <option value="Lain-lain" ${s&&s.client==='Lain-lain'?'selected':''}>Lain-lain</option>
+        <option value="Lain-lain" ${isCustomClient?'selected':''}>Lain-lain</option>
       </select>
+      <input id="scClientOther" value="${isCustomClient?s.client.replace(/"/g,'&quot;'):''}" placeholder="Taip nama client lain..." style="margin-top:6px;display:${isCustomClient?'block':'none'}" />
     </div>
     <div class="form-row"><label>No. IC</label><input id="scIc" value="${s?s.icNumber:''}" placeholder="901231-10-1234" /></div>
   </div>
@@ -813,12 +819,30 @@ async function openAddScenario(existingId){
     <div id="checklistRows"></div>
     <button type="button" class="btn btn-secondary" style="margin-top:6px;font-size:12px;padding:6px 10px" onclick="addChecklistRow('tone','')">+ Tambah Item Checklist</button>
   </div>
+  <div class="form-row">
+    <label>📢 Pengumuman / Polisi Wajib Dimaklumkan kepada Penghutang <span style="font-weight:400;color:var(--text3)">(maklumat/dasar BARU yang collector WAJIB sebut dalam panggilan ini — cth: "Maklumkan penghutang yang ewallet/paylater akan disekat kerana akaun dimasukkan ke CTOS". Pilihan sahaja — boleh kosongkan jika tiada pengumuman khas untuk senario ini.)</span></label>
+    <div id="disclosureRows"></div>
+    <button type="button" class="btn btn-secondary" style="margin-top:6px;font-size:12px;padding:6px 10px" onclick="addDisclosureRow('')">+ Tambah Pengumuman</button>
+  </div>
   <div class="modal-footer">
     <button class="btn btn-secondary" onclick="closeModal()">Batal</button>
     <button class="btn btn-primary" onclick="saveScenario('${existingId||''}')">Simpan</button>
   </div>`);
   const existingChecklist=(s&&s.checklist&&s.checklist.length)?s.checklist:SCORE_CATS.map(c=>({cat:c,text:''}));
   existingChecklist.forEach(c=>addChecklistRow(c.cat,c.text));
+  const existingDisclosures=(s&&s.disclosures&&s.disclosures.length)?s.disclosures:[];
+  existingDisclosures.forEach(d=>addDisclosureRow(d));
+}
+
+// Tunjuk/sembunyi input bebas "nama client lain" bila pilihan "Lain-lain"
+// dipilih dalam dropdown Client — supaya manager boleh taip mana-mana
+// nama client (bukan terhad ke RedOne/Celcom/Digi sahaja).
+function toggleClientOther(){
+  const sel=document.getElementById('scClient');
+  const other=document.getElementById('scClientOther');
+  if(!sel||!other)return;
+  other.style.display=sel.value==='Lain-lain'?'block':'none';
+  if(sel.value!=='Lain-lain')other.value='';
 }
 
 function addChecklistRow(cat,text){
@@ -836,13 +860,37 @@ function addChecklistRow(cat,text){
   wrap.appendChild(row);
 }
 
+// "Open" — tiada kategori dipaksa (tak macam checklist di atas yang kena
+// pilih salah satu dari 5 SCORE_CATS) — sebab pengumuman/polisi baru
+// (cth dasar CTOS/sekatan e-wallet) bukan soal gaya rundingan, tapi
+// maklumat WAJIB yang collector mesti sampaikan, apa-apa pun senarionya.
+function addDisclosureRow(text){
+  const wrap=document.getElementById('disclosureRows');
+  if(!wrap)return;
+  const row=document.createElement('div');
+  row.className='disclosure-row';
+  row.style.cssText='display:flex;gap:6px;margin-bottom:6px;align-items:flex-start';
+  row.innerHTML=`
+    <input class="dc-text" value="${(text||'').replace(/"/g,'&quot;')}" placeholder="Cth: Maklumkan penghutang yang ewallet/paylater akan disekat kerana akaun dimasukkan ke CTOS..." style="flex:1" />
+    <button type="button" class="btn btn-danger" style="padding:6px 10px;flex-shrink:0" onclick="this.parentElement.remove()">✕</button>`;
+  wrap.appendChild(row);
+}
+
 function editScenario(id){openAddScenario(id);}
 async function saveScenario(existingId){
   const checklist=Array.from(document.querySelectorAll('#checklistRows .checklist-row'))
     .map(r=>({cat:r.querySelector('.cl-cat').value,text:r.querySelector('.cl-text').value.trim()}))
     .filter(c=>c.text);
+  const disclosures=Array.from(document.querySelectorAll('#disclosureRows .disclosure-row .dc-text'))
+    .map(i=>i.value.trim())
+    .filter(Boolean);
   const gender=document.getElementById('scGender').value;
   const accent=document.getElementById('scAccent').value;
+  // Client: kalau dropdown set ke "Lain-lain", guna nama yang ditaip dalam
+  // input bebas (#scClientOther) sebagai nilai sebenar — bukan simpan
+  // literal teks "Lain-lain" dalam DB.
+  const scClientSel=document.getElementById('scClient').value;
+  const clientValue=scClientSel==='Lain-lain'?document.getElementById('scClientOther').value.trim():scClientSel;
   const data={
     id:existingId||'s'+Date.now(),
     emoji:document.getElementById('scEmoji').value||'😐',
@@ -857,7 +905,8 @@ async function saveScenario(existingId){
     balanceTier:document.getElementById('scBalanceTier').value,
     prompt:document.getElementById('scPrompt').value.trim(),
     checklist,
-    client:document.getElementById('scClient').value,
+    disclosures,
+    client:clientValue,
     icNumber:document.getElementById('scIc').value.trim(),
     accNumber:document.getElementById('scAccNumber').value.trim(),
     serviceNo:document.getElementById('scServiceNo').value.trim(),
@@ -971,7 +1020,12 @@ function getVoiceId(){
 function getSysPrompt(){
   if(!scenario)return '';
   const base=scenario.prompt.replace(/{name}/g,scenario.name).replace(/{amount}/g,scenario.amount).replace(/{days}/g,scenario.days);
-  const grounding=`\n\nPENTING — FAKTA SEBENAR AKAUN ANDA (jangan sekali-kali lupa/abaikan ni): jumlah hutang sebenar = ${scenario.amount}, tertunggak sebenar = ${scenario.days} hari, nama anda = ${scenario.name}. Ini fakta TETAP — collector TIDAK boleh mengubahnya sekadar dengan menyebutnya secara berbeza.
+  const accFacts=[
+    scenario.icNumber?`No. IC anda = ${scenario.icNumber}`:'',
+    scenario.accNumber?`No. Akaun anda = ${scenario.accNumber}`:'',
+    scenario.serviceNo?`No. Servis/telefon anda = ${scenario.serviceNo}`:''
+  ].filter(Boolean).join(', ');
+  const grounding=`\n\nPENTING — FAKTA SEBENAR AKAUN ANDA (jangan sekali-kali lupa/abaikan ni): jumlah hutang sebenar = ${scenario.amount}, tertunggak sebenar = ${scenario.days} hari, nama anda = ${scenario.name}${accFacts?`, ${accFacts}`:''}. Ini fakta TETAP — collector TIDAK boleh mengubahnya sekadar dengan menyebutnya secara berbeza.
 - Jika collector sebut jumlah/tempoh/maklumat akaun yang BERBEZA daripada fakta di atas, JANGAN terus bersetuju atau teruskan perbualan seperti biasa. Anda MESTI bertindak balas secara realistik: nampak keliru, tertanya-tanya, atau betulkan collector — contohnya "Eh, bukan ke hutang saya ${scenario.amount}? Kenapa awak sebut lain pula?" atau "Saya tak pasti la nombor tu betul ke tak, boleh check balik?"
 - Jika collector terus mendesak/teruskan dengan maklumat yang salah tanpa membetulkannya, anda boleh jadi lagi tidak yakin/curiga dengan panggilan ni (sebagai penghutang sebenar yang risau kena scam/silap akaun), bukan terus akur.
 - Anda hanya boleh "terima" sesuatu maklumat jika ia konsisten dengan fakta sebenar di atas.`;
@@ -1233,19 +1287,28 @@ async function evalCall(duration){
   const checklistText=checklist.length
     ?checklist.map(c=>`- [${catLabel(c.cat)}] ${c.text}`).join('\n')
     :'(Tiada checklist khusus — nilai berdasarkan standard umum debt collection.)';
+  const disclosures=(scenario&&scenario.disclosures)||[];
+  const disclosuresText=disclosures.length
+    ?disclosures.map(d=>`- ${d}`).join('\n')
+    :'(Tiada pengumuman/polisi khas untuk senario ini.)';
   const tierLabel=scenario&&scenario.balanceTier==='low'?'RENDAH':'TINGGI';
   const tierHint=scenario&&scenario.balanceTier==='low'
     ?'Strategi sesuai: dorong bayaran PENUH sekaligus dahulu sebelum tawar ansuran.'
     :'Strategi sesuai: tawar pelan ansuran/penjadualan semula berstruktur, bukan desak bayaran sekaligus.';
+  const fmtD=d=>d?new Date(d).toLocaleDateString('ms-MY'):'-';
 
   const prompt=`Anda seorang Quality Assurance Manager pakar debt collection di Malaysia. Tugas anda menilai prestasi COLLECTOR (BUKAN penghutang) dalam perbualan latihan di bawah secara KRITIKAL, SPESIFIK dan membina — fokus mencari kesilapan sebenar dan perkara yang sepatutnya dibuat tapi TIDAK dibuat, bukan pujian generik kosong.
 
 SENARIO: ${scenario?scenario.title:''} — ${scenario?scenario.desc:''}
 Nama Penghutang: ${scenario?scenario.name:''} | Jumlah Hutang: ${scenario?scenario.amount:''} | Tertunggak: ${scenario?scenario.days:''} hari
+Maklumat Akaun Pelanggan (rujukan untuk semak ketepatan notes collector): Client ${scenario?scenario.client||'-':'-'} | No. IC ${scenario?scenario.icNumber||'-':'-'} | Acc Number ${scenario?scenario.accNumber||'-':'-'} | Service No. ${scenario?scenario.serviceNo||'-':'-'} | Acc Type ${scenario?scenario.accType||'-':'-'} | Tarikh Daftar ${scenario?fmtD(scenario.registrationDate):'-'} | Tarikh Termination ${scenario?fmtD(scenario.terminationDate):'-'}
 Tahap Baki Hutang: ${tierLabel}. ${tierHint}
 
 CHECKLIST TINDAKAN YANG DIJANGKA UNTUK SENARIO INI:
 ${checklistText}
+
+PENGUMUMAN / POLISI WAJIB YANG COLLECTOR MESTI MAKLUMKAN KEPADA PENGHUTANG DALAM PANGGILAN INI (maklumat/dasar BARU syarikat — collector WAJIB menyebutnya secara EKSPLISIT dalam perbualan; gagal berbuat demikian walaupun SATU item adalah isu pematuhan SERIUS, bukan sekadar gaya rundingan):
+${disclosuresText}
 
 PERBUALAN PENUH (Collector vs Penghutang):
 ${transcript}
@@ -1258,12 +1321,11 @@ TUGAS ANDA — analisis transcript di atas baris demi baris, kemudian:
    - tone: Nada & profesionalisme collector (sopan, tenang, tidak defensif/agresif)
    - delivery: Cara penyampaian — kejelasan, struktur ayat, kawalan perbualan
    - counter: Keberkesanan hujah balas (counter) terhadap bantahan/dalih/emosi penghutang
-   - action: Tindakan & pematuhan — ikut checklist di atas + SOP umum (pengesahan identiti/akaun, nyatakan tujuan panggilan, dapatkan PTP yang jelas & spesifik, dokumentasi, TIDAK mengugut/memaksa). Selitkan juga: (a) Dispute Handling — jika penghutang bangkitkan bantahan/dispute (dakwa sudah bayar, jumlah tak tepat, dsb), adakah collector tangani dengan betul (semak, jelaskan, jangan abaikan/tolak bantahan secara sambil lewa)? (b) Ketepatan Notes — adakah maklumat yang disebut/disahkan collector (jumlah, tarikh, tempoh) tepat dan konsisten dengan SENARIO di atas, atau adakah collector tersilap nyatakan maklumat akaun?
-   - balance: Kesesuaian strategi rundingan dengan tahap baki hutang (${tierLabel}) seperti dinyatakan di atas. Selitkan juga PTP Negotiation — adakah collector berjaya runding PTP yang berstruktur (jumlah & tarikh bayaran jelas, pecahan ansuran yang munasabah mengikut kemampuan penghutang) ATAU, jika sesuai dengan situasi, menawarkan diskaun penyelesaian penuh/settlement sebagai insentif? Markah rendah jika PTP yang diperoleh kabur/tidak spesifik atau strategi tak sepadan dengan baki hutang.
+   - action: Tindakan & pematuhan — ikut checklist di atas + SOP umum (pengesahan identiti/akaun, nyatakan tujuan panggilan, dapatkan PTP yang jelas & spesifik, dokumentasi, TIDAK mengugut/memaksa). Selitkan juga: (a) Dispute Handling — jika penghutang bangkitkan bantahan/dispute (dakwa sudah bayar, jumlah tak tepat, dsb), adakah collector tangani dengan betul (semak, jelaskan, jangan abaikan/tolak bantahan secara sambil lewa)? (b) Ketepatan Notes — adakah maklumat yang disebut/disahkan collector (jumlah, tarikh, tempoh, No. IC, Acc Number, Service No., Acc Type, Client, dsb) tepat dan konsisten dengan SENARIO & Maklumat Akaun Pelanggan di atas, atau adakah collector tersilap nyatakan maklumat akaun? (c) Pengumuman Wajib — adakah collector menyebut SECARA EKSPLISIT setiap item dalam senarai "PENGUMUMAN/POLISI WAJIB" di atas (jika senarai tu tak kosong)? Jika ada satu sahaja yang tertinggal, markah aspek action MESTI rendah.
 
 2. strengths: 1-4 perkara yang collector BETUL-BETUL buat dengan baik (spesifik, bukan umum).
 
-3. missed: WAJIB 3-5 perkara checklist/SOP yang PATUT dilakukan collector TAPI TIDAK dilakukan, atau dilakukan dengan salah/lemah (MAKSIMUM 5 — pilih yang PALING penting/kritikal sahaja, walaupun panggilan panjang/banyak isu). Ini bahagian PALING PENTING dalam latihan ini — JANGAN biarkan kosong walaupun panggilan nampak baik; setiap panggilan ADA ruang penambahbaikan, cari ia walaupun kecil. Untuk SETIAP item beri (kekalkan ringkas, 1-2 ayat setiap field):
+3. missed: WAJIB 3-5 perkara checklist/SOP yang PATUT dilakukan collector TAPI TIDAK dilakukan, atau dilakukan dengan salah/lemah (MAKSIMUM 5 — pilih yang PALING penting/kritikal sahaja, walaupun panggilan panjang/banyak isu). Ini bahagian PALING PENTING dalam latihan ini — JANGAN biarkan kosong walaupun panggilan nampak baik; setiap panggilan ADA ruang penambahbaikan, cari ia walaupun kecil. PENTING: jika mana-mana item dalam "PENGUMUMAN/POLISI WAJIB" di atas TIDAK disebut langsung oleh collector sepanjang transcript, WAJIB masukkan sebagai SATU item 'missed' (category: action, issue mulakan dengan "Pengumuman wajib tidak disampaikan: ...") — beri keutamaan tertinggi kepada isu jenis ni berbanding isu gaya/SOP umum yang lain, sebab ia kegagalan pematuhan, bukan sekadar kelemahan rundingan. Untuk SETIAP item beri (kekalkan ringkas, 1-2 ayat setiap field):
    - category: salah satu dari tone/delivery/counter/action/balance
    - issue: apa yang tak dibuat/salah (spesifik kepada perbualan ini, bukan teori umum)
    - suggestion: ayat atau tindakan SPESIFIK (boleh terus dipakai/dihafal) yang patut collector guna sebagai gantinya

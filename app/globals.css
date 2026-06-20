@@ -109,8 +109,15 @@ tr:hover td{background:var(--bg);}
 .level-hard{background:var(--red-light);color:var(--red);}
 
 /* CALL SCREEN */
-.call-wrap{max-width:640px;margin:0 auto;}
+.call-wrap{max-width:980px;margin:0 auto;display:flex;gap:1rem;align-items:flex-start;flex-wrap:wrap;}
+.call-main{flex:2 1 420px;min-width:0;}
 .call-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;margin-bottom:1rem;}
+.acc-ref-card{flex:1 1 260px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;}
+.acc-ref-title{font-size:13px;font-weight:600;margin-bottom:10px;}
+.acc-ref-row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px;}
+.acc-ref-row:last-child{border-bottom:none;}
+.acc-ref-row span:first-child{color:var(--text3);flex-shrink:0;}
+.acc-ref-row span:last-child{font-weight:500;text-align:right;}
 .call-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;}
 .debtor-info{display:flex;align-items:center;gap:12px;}
 .debtor-ava{width:48px;height:48px;border-radius:50%;background:var(--red-light);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:600;color:var(--red);}
