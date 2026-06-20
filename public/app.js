@@ -426,25 +426,40 @@ function selectScenario(id){
 function renderCallScreen(){
   if(!scenario)return navigate('training');
   const ini=scenario.name.split(' ').filter(w=>w.length>1).map(w=>w[0]).join('').slice(0,2).toUpperCase();
+  const acc=(label,val)=>`<div class="acc-ref-row"><span>${label}</span><span>${val&&String(val).trim()?val:'-'}</span></div>`;
   setContent(`
   <div class="call-wrap">
-    <div class="call-card">
-      <div class="call-header">
-        <div class="debtor-info">
-          <div class="debtor-ava">${ini}</div>
-          <div><div class="debtor-name">${scenario.name}</div><div class="debtor-sub">${scenario.title}</div></div>
+    <div class="call-main">
+      <div class="call-card">
+        <div class="call-header">
+          <div class="debtor-info">
+            <div class="debtor-ava">${ini}</div>
+            <div><div class="debtor-name">${scenario.name}</div><div class="debtor-sub">${scenario.title}</div></div>
+          </div>
+          <div class="call-timer" id="callTimer">00:00</div>
         </div>
-        <div class="call-timer" id="callTimer">00:00</div>
+        <div class="status-bar"><div class="status-dot green" id="statusDot"></div><span id="statusText">Sesi aktif</span></div>
+        <div class="transcript" id="transcriptBox"></div>
+        <div class="mic-area">
+          <div class="live-text" id="liveText"></div>
+          <button class="mic-btn" id="micBtn" onclick="toggleMic()"><span id="micIcon">🎙</span></button>
+          <div class="mic-label" id="micLabel">Tekan untuk bercakap</div>
+        </div>
       </div>
-      <div class="status-bar"><div class="status-dot green" id="statusDot"></div><span id="statusText">Sesi aktif</span></div>
-      <div class="transcript" id="transcriptBox"></div>
-      <div class="mic-area">
-        <div class="live-text" id="liveText"></div>
-        <button class="mic-btn" id="micBtn" onclick="toggleMic()"><span id="micIcon">🎙</span></button>
-        <div class="mic-label" id="micLabel">Tekan untuk bercakap</div>
-      </div>
+      <button class="btn btn-danger btn-full" onclick="endCall()">📵 Tamatkan Panggilan</button>
     </div>
-    <button class="btn btn-danger btn-full" onclick="endCall()">📵 Tamatkan Panggilan</button>
+    <div class="acc-ref-card">
+      <div class="acc-ref-title">📒 Maklumat Akaun (rujukan nego)</div>
+      ${acc('Client',scenario.client)}
+      ${acc('Nama',scenario.name)}
+      ${acc('No. IC',scenario.icNumber)}
+      ${acc('Acc Number',scenario.accNumber)}
+      ${acc('Service No.',scenario.serviceNo)}
+      ${acc('Amount Outstanding',scenario.amount)}
+      ${acc('Acc Type',scenario.accType)}
+      ${acc('Tarikh Daftar',scenario.registrationDate?new Date(scenario.registrationDate).toLocaleDateString('ms-MY'):'')}
+      ${acc('Tarikh Termination',scenario.terminationDate?new Date(scenario.terminationDate).toLocaleDateString('ms-MY'):'')}
+    </div>
   </div>`);
 }
 
@@ -703,10 +718,11 @@ async function renderScenarios(){
   </div>
   <div class="card">
     <div class="table-wrap"><table>
-      <tr><th>Emoji</th><th>Nama</th><th>Tajuk</th><th>Hutang</th><th>Baki</th><th>Aras</th><th>Checklist</th><th>Tindakan</th></tr>
+      <tr><th>Emoji</th><th>Nama</th><th>Client</th><th>Tajuk</th><th>Hutang</th><th>Baki</th><th>Aras</th><th>Checklist</th><th>Tindakan</th></tr>
       ${scenarios.map(s=>`<tr>
         <td style="font-size:20px">${s.emoji}</td>
         <td><div style="font-weight:500">${s.name}</div></td>
+        <td>${s.client?`<span class="chip chip-purple">${s.client}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
         <td>${s.title}</td>
         <td>${s.amount}</td>
         <td><span class="chip ${s.balanceTier==='high'?'chip-red':'chip-green'}">${s.balanceTier==='high'?'Tinggi':'Rendah'}</span></td>
@@ -754,6 +770,41 @@ async function openAddScenario(existingId){
       <select id="scBalanceTier"><option value="low" ${s&&s.balanceTier==='low'?'selected':''}>Rendah (Low Balance)</option><option value="high" ${!s||s.balanceTier==='high'?'selected':''}>Tinggi (High Balance)</option></select>
     </div>
   </div>
+  <hr class="divider"/>
+  <div style="font-size:13px;font-weight:600;margin-bottom:10px">📒 Maklumat Akaun Pelanggan <span style="font-weight:400;color:var(--text3)">(wajib diisi — keluar sebagai rujukan collector semasa panggilan)</span></div>
+  <div class="two-col">
+    <div class="form-row"><label>Client</label>
+      <select id="scClient">
+        <option value="" ${!s||!s.client?'selected':''} disabled>— Pilih Client —</option>
+        <option value="RedOne" ${s&&s.client==='RedOne'?'selected':''}>RedOne</option>
+        <option value="Celcom" ${s&&s.client==='Celcom'?'selected':''}>Celcom</option>
+        <option value="Digi" ${s&&s.client==='Digi'?'selected':''}>Digi</option>
+        <option value="Lain-lain" ${s&&s.client==='Lain-lain'?'selected':''}>Lain-lain</option>
+      </select>
+    </div>
+    <div class="form-row"><label>No. IC</label><input id="scIc" value="${s?s.icNumber:''}" placeholder="901231-10-1234" /></div>
+  </div>
+  <div class="two-col">
+    <div class="form-row"><label>Acc Number</label><input id="scAccNumber" value="${s?s.accNumber:''}" placeholder="1234567890" /></div>
+    <div class="form-row"><label>Service No.</label><input id="scServiceNo" value="${s?s.serviceNo:''}" placeholder="012-3456789" /></div>
+  </div>
+  <div class="two-col">
+    <div class="form-row"><label>Acc Type</label>
+      <select id="scAccType">
+        <option value="" ${!s||!s.accType?'selected':''} disabled>— Pilih Jenis —</option>
+        <option value="Active" ${s&&s.accType==='Active'?'selected':''}>Active</option>
+        <option value="Pre-NPL" ${s&&s.accType==='Pre-NPL'?'selected':''}>Pre-NPL</option>
+        <option value="NPL" ${s&&s.accType==='NPL'?'selected':''}>NPL</option>
+        <option value="Write Off" ${s&&s.accType==='Write Off'?'selected':''}>Write Off</option>
+      </select>
+    </div>
+    <div></div>
+  </div>
+  <div class="two-col">
+    <div class="form-row"><label>Tarikh Daftar</label><input id="scRegDate" type="date" value="${s&&s.registrationDate?s.registrationDate:''}" /></div>
+    <div class="form-row"><label>Tarikh Termination</label><input id="scTermDate" type="date" value="${s&&s.terminationDate?s.terminationDate:''}" /></div>
+  </div>
+  <hr class="divider"/>
   <div class="form-row"><label>Prompt AI (gunakan {name}, {amount}, {days})</label>
     <textarea id="scPrompt" rows="4" placeholder="Anda berlakon sebagai {name}...">${s?s.prompt:'Anda berlakon sebagai {name}, penghutang yang berhutang {amount} tertunggak {days} hari. Bercakap dalam Bahasa Malaysia. Jawab 1-3 ayat sahaja.'}</textarea>
   </div>
@@ -805,9 +856,22 @@ async function saveScenario(existingId){
     level:document.getElementById('scLevel').value,
     balanceTier:document.getElementById('scBalanceTier').value,
     prompt:document.getElementById('scPrompt').value.trim(),
-    checklist
+    checklist,
+    client:document.getElementById('scClient').value,
+    icNumber:document.getElementById('scIc').value.trim(),
+    accNumber:document.getElementById('scAccNumber').value.trim(),
+    serviceNo:document.getElementById('scServiceNo').value.trim(),
+    accType:document.getElementById('scAccType').value,
+    registrationDate:document.getElementById('scRegDate').value,
+    terminationDate:document.getElementById('scTermDate').value
   };
   if(!data.name||!data.title||!data.prompt){alert('Sila isi semua maklumat.');return;}
+  // WAJIB: Maklumat Akaun Pelanggan kena lengkap dulu sebelum boleh simpan —
+  // kalau tak, panel rujukan kat skrin panggilan collector akan separuh kosong.
+  if(!data.client||!data.icNumber||!data.accNumber||!data.serviceNo||!data.accType||!data.registrationDate||!data.terminationDate){
+    alert('Sila lengkapkan semua Maklumat Akaun Pelanggan (Client/IC/Acc Number/Service No./Acc Type/Tarikh Daftar/Tarikh Termination) sebelum simpan.');
+    return;
+  }
   const btn=document.querySelector('.modal-footer .btn-primary');
   if(btn){btn.disabled=true;btn.textContent='Menyimpan...';}
   try{
