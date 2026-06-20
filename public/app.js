@@ -827,9 +827,17 @@ async function openAddScenario(existingId){
     </div>
   </div>
   <div class="form-row">
-    <label>Checklist Penilaian <span style="font-weight:400;color:var(--text3)">(perkara yang collector PATUT lakukan — AI akan nilai & beri markah berdasarkan ini)</span></label>
+    <label>Checklist Penilaian <span style="font-weight:400;color:var(--text3)">(AI akan nilai & beri markah berdasarkan 5 kategori ini secara automatik)</span></label>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+      <span style="padding:4px 10px;border-radius:20px;background:var(--bg);border:1px solid var(--border2);font-size:12px;font-weight:600;color:var(--text2)">🗣 Tone / Nada</span>
+      <span style="padding:4px 10px;border-radius:20px;background:var(--bg);border:1px solid var(--border2);font-size:12px;font-weight:600;color:var(--text2)">📢 Cara Penyampaian</span>
+      <span style="padding:4px 10px;border-radius:20px;background:var(--bg);border:1px solid var(--border2);font-size:12px;font-weight:600;color:var(--text2)">🔄 Hujah Balas</span>
+      <span style="padding:4px 10px;border-radius:20px;background:var(--bg);border:1px solid var(--border2);font-size:12px;font-weight:600;color:var(--text2)">✅ Tindakan & Pematuhan</span>
+      <span style="padding:4px 10px;border-radius:20px;background:var(--bg);border:1px solid var(--border2);font-size:12px;font-weight:600;color:var(--text2)">💰 Strategi Baki Hutang</span>
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Tambah item spesifik untuk senario ini (pilihan):</div>
     <div id="checklistRows"></div>
-    <button type="button" class="btn btn-secondary" style="margin-top:6px;font-size:12px;padding:6px 10px" onclick="addChecklistRow('action','')">+ Tambah Item</button>
+    <button type="button" class="btn btn-secondary" style="font-size:12px;padding:6px 10px" onclick="addChecklistRow('action','')">+ Tambah Item</button>
   </div>
   <div class="form-row">
     <label>📢 Pengumuman / Polisi Wajib Dimaklumkan kepada Penghutang <span style="font-weight:400;color:var(--text3)">(maklumat/dasar BARU yang collector WAJIB sebut dalam panggilan ini — cth: "Maklumkan penghutang yang ewallet/paylater akan disekat kerana akaun dimasukkan ke CTOS". Pilihan sahaja — boleh kosongkan jika tiada pengumuman khas untuk senario ini.)</span></label>
@@ -840,12 +848,9 @@ async function openAddScenario(existingId){
     <button class="btn btn-secondary" onclick="closeModal()">Batal</button>
     <button class="btn btn-primary" onclick="saveScenario('${existingId||''}')">Simpan</button>
   </div>`);
-  // Kalau ada checklist sedia ada (termasuk format lama dengan cat), guna semula
-  // Kalau baru, bagi 3 baris kosong sebagai contoh permulaan
-  const existingChecklist=(s&&s.checklist&&s.checklist.length)
-    ?s.checklist
-    :[{cat:'action',text:''},{cat:'action',text:''},{cat:'action',text:''}];
-  existingChecklist.forEach(c=>addChecklistRow(c.cat,c.text));
+  // Hanya load extra checklist items — 5 kategori utama auto-score oleh AI
+  const clData=(s&&s.checklist&&s.checklist.length)?s.checklist:[];
+  clData.forEach(c=>addChecklistRow(c.cat,c.text));
   const existingDisclosures=(s&&s.disclosures&&s.disclosures.length)?s.disclosures:[];
   existingDisclosures.forEach(d=>addDisclosureRow(d));
 }
@@ -867,11 +872,9 @@ function addChecklistRow(cat,text){
   const row=document.createElement('div');
   row.className='checklist-row';
   row.style.cssText='display:flex;gap:6px;margin-bottom:6px;align-items:flex-start';
-  // cat parameter dikekalkan untuk backward-compat dengan data lama — tapi UI
-  // sekarang open text sahaja, tanpa dropdown kategori
   row.innerHTML=`
     <input class="cl-cat" type="hidden" value="${cat||'action'}" />
-    <input class="cl-text" value="${(text||'').replace(/"/g,'&quot;')}" placeholder="Cth: Dapatkan tarikh PTP yang spesifik dari penghutang..." style="flex:1" />
+    <input class="cl-text" value="${(text||'').replace(/"/g,'&quot;')}" placeholder="Cth: Pastikan collector sahkan identiti sebelum bagi maklumat akaun..." style="flex:1" />
     <button type="button" class="btn btn-danger" style="padding:6px 10px;flex-shrink:0" onclick="this.parentElement.remove()">✕</button>`;
   wrap.appendChild(row);
 }
@@ -1321,9 +1324,19 @@ async function processSpeech(text){
 async function evalCall(duration){
   const transcript=callHistory.map(m=>`${m.role==='user'?'Collector':'Penghutang'}: ${m.content}`).join('\n');
   const checklist=(scenario&&scenario.checklist)||[];
-  const checklistText=checklist.length
-    ?checklist.map((c,i)=>`${i+1}. ${c.text}`).join('\n')
-    :'(Tiada checklist khusus — nilai berdasarkan standard umum debt collection.)';
+  // 5 kategori scoring sentiasa dinilai — ini standard untuk SEMUA senario
+  const fixedCriteria=[
+    '- [Tone / Nada] Nada collector sepanjang panggilan — sopan, tenang, profesional, tidak agresif atau defensif',
+    '- [Cara Penyampaian] Kejelasan penyampaian, struktur ayat, kawalan perbualan, tidak tergagap atau keliru',
+    '- [Hujah Balas] Keberkesanan counter terhadap bantahan, alasan, atau emosi penghutang',
+    '- [Tindakan & Pematuhan] Ikut SOP — sahkan identiti, nyatakan tujuan panggilan, dapatkan PTP jelas & spesifik, dokumentasi betul, tidak mengugut',
+    '- [Strategi Baki Hutang] Pendekatan strategi mengikut tahap baki hutang ('+( scenario&&scenario.balanceTier==='low'?'RENDAH — dorong bayaran penuh':'TINGGI — tawar ansuran berstruktur')+')'
+  ].join('\n');
+  // Extra items spesifik untuk senario ini (kalau ada)
+  const extraItems=checklist.length
+    ?'\n\nITEM TAMBAHAN SPESIFIK SENARIO INI:\n'+checklist.map(c=>`- ${c.text}`).join('\n')
+    :'';
+  const checklistText=fixedCriteria+extraItems;
   const disclosures=(scenario&&scenario.disclosures)||[];
   const disclosuresText=disclosures.length
     ?disclosures.map(d=>`- ${d}`).join('\n')
