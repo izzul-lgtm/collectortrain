@@ -1061,7 +1061,6 @@ function getSysPrompt(){
 
   return base+accentBlock+contextBlock+groundingBlock;
 }
-}
 
 async function startCall(){
   callHistory=[];callSeconds=0;callActive=true;
