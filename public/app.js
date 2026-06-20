@@ -747,7 +747,14 @@ async function openAddScenario(existingId){
   const isCustomClient=!!(s&&s.client&&!KNOWN_CLIENTS.includes(s.client));
   openModal(`
   <div class="modal-title">${s?'Edit':'Tambah'} Senario</div>
-  <div class="form-row"><label>Emoji</label><input id="scEmoji" value="${s?s.emoji:'😐'}" placeholder="😐" /></div>
+  <div class="form-row"><label>Emoji Senario</label>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input id="scEmoji" type="text" value="${s?s.emoji:'😐'}" placeholder="😐" style="max-width:70px;font-size:24px;text-align:center" maxlength="4" />
+      <div style="display:flex;flex-wrap:wrap;gap:4px">
+        ${['😐','😤','😠','😔','😰','🤔','😒','😭','🙄','😑'].map(e=>`<button type="button" onclick="document.getElementById('scEmoji').value='${e}'" style="font-size:20px;background:none;border:1px solid var(--border2);border-radius:6px;padding:2px 5px;cursor:pointer">${e}</button>`).join('')}
+      </div>
+    </div>
+  </div>
   <div class="form-row"><label>Nama Penghutang</label><input id="scName" value="${s?s.name:''}" placeholder="Encik Ahmad" /></div>
   <div class="two-col">
     <div class="form-row"><label>Jantina (untuk pilih suara AI yang betul)</label>
@@ -811,13 +818,18 @@ async function openAddScenario(existingId){
     <div class="form-row"><label>Tarikh Termination</label><input id="scTermDate" type="date" value="${s&&s.terminationDate?s.terminationDate:''}" /></div>
   </div>
   <hr class="divider"/>
-  <div class="form-row"><label>Prompt AI (gunakan {name}, {amount}, {days})</label>
-    <textarea id="scPrompt" rows="4" placeholder="Anda berlakon sebagai {name}...">${s?s.prompt:'Anda berlakon sebagai {name}, penghutang yang berhutang {amount} tertunggak {days} hari. Bercakap dalam Bahasa Malaysia. Jawab 1-3 ayat sahaja.'}</textarea>
+  <hr class="divider"/>
+  <div class="form-row">
+    <label>Perangai / Watak Penghutang <span style="font-weight:400;color:var(--text3)">(hanya describe sikap/perangai — nama, jumlah, IC, bahasa & fakta akaun auto-inject oleh sistem)</span></label>
+    <textarea id="scPrompt" rows="3" placeholder="Cth: Penghutang yang defensif dan selalu bagi alasan sibuk. Mudah marah bila ditekan tapi akan akur kalau didekati dengan sabar. Nada cepat tidak sabar.">${s?s.prompt:'Penghutang yang bekerjasama tetapi penuh alasan. Nada neutral, minta masa lebih untuk bayar.'}</textarea>
+    <div style="margin-top:6px;padding:8px 10px;background:var(--bg);border-radius:var(--radius-sm);font-size:11px;color:var(--text3);line-height:1.6">
+      ℹ️ <b>Auto-inject oleh sistem (tidak perlu tulis dalam prompt):</b> Nama penghutang · Jumlah hutang · Hari tertunggak · Loghat/bangsa · No. IC · Acc Number · Service No. · Acc Type · Fakta akaun
+    </div>
   </div>
   <div class="form-row">
-    <label>Checklist Penilaian (apa yang collector PATUT lakukan dalam senario ini)</label>
+    <label>Checklist Penilaian <span style="font-weight:400;color:var(--text3)">(perkara yang collector PATUT lakukan — AI akan nilai & beri markah berdasarkan ini)</span></label>
     <div id="checklistRows"></div>
-    <button type="button" class="btn btn-secondary" style="margin-top:6px;font-size:12px;padding:6px 10px" onclick="addChecklistRow('tone','')">+ Tambah Item Checklist</button>
+    <button type="button" class="btn btn-secondary" style="margin-top:6px;font-size:12px;padding:6px 10px" onclick="addChecklistRow('action','')">+ Tambah Item</button>
   </div>
   <div class="form-row">
     <label>📢 Pengumuman / Polisi Wajib Dimaklumkan kepada Penghutang <span style="font-weight:400;color:var(--text3)">(maklumat/dasar BARU yang collector WAJIB sebut dalam panggilan ini — cth: "Maklumkan penghutang yang ewallet/paylater akan disekat kerana akaun dimasukkan ke CTOS". Pilihan sahaja — boleh kosongkan jika tiada pengumuman khas untuk senario ini.)</span></label>
@@ -828,7 +840,11 @@ async function openAddScenario(existingId){
     <button class="btn btn-secondary" onclick="closeModal()">Batal</button>
     <button class="btn btn-primary" onclick="saveScenario('${existingId||''}')">Simpan</button>
   </div>`);
-  const existingChecklist=(s&&s.checklist&&s.checklist.length)?s.checklist:SCORE_CATS.map(c=>({cat:c,text:''}));
+  // Kalau ada checklist sedia ada (termasuk format lama dengan cat), guna semula
+  // Kalau baru, bagi 3 baris kosong sebagai contoh permulaan
+  const existingChecklist=(s&&s.checklist&&s.checklist.length)
+    ?s.checklist
+    :[{cat:'action',text:''},{cat:'action',text:''},{cat:'action',text:''}];
   existingChecklist.forEach(c=>addChecklistRow(c.cat,c.text));
   const existingDisclosures=(s&&s.disclosures&&s.disclosures.length)?s.disclosures:[];
   existingDisclosures.forEach(d=>addDisclosureRow(d));
@@ -851,11 +867,11 @@ function addChecklistRow(cat,text){
   const row=document.createElement('div');
   row.className='checklist-row';
   row.style.cssText='display:flex;gap:6px;margin-bottom:6px;align-items:flex-start';
+  // cat parameter dikekalkan untuk backward-compat dengan data lama — tapi UI
+  // sekarang open text sahaja, tanpa dropdown kategori
   row.innerHTML=`
-    <select class="cl-cat" style="max-width:150px;flex-shrink:0">
-      ${SCORE_CATS.map(c=>`<option value="${c}" ${c===cat?'selected':''}>${catLabel(c)}</option>`).join('')}
-    </select>
-    <input class="cl-text" value="${(text||'').replace(/"/g,'&quot;')}" placeholder="Cth: Dapatkan tarikh PTP yang spesifik..." />
+    <input class="cl-cat" type="hidden" value="${cat||'action'}" />
+    <input class="cl-text" value="${(text||'').replace(/"/g,'&quot;')}" placeholder="Cth: Dapatkan tarikh PTP yang spesifik dari penghutang..." style="flex:1" />
     <button type="button" class="btn btn-danger" style="padding:6px 10px;flex-shrink:0" onclick="this.parentElement.remove()">✕</button>`;
   wrap.appendChild(row);
 }
@@ -1019,17 +1035,32 @@ function getVoiceId(){
 }
 function getSysPrompt(){
   if(!scenario)return '';
-  const base=scenario.prompt.replace(/{name}/g,scenario.name).replace(/{amount}/g,scenario.amount).replace(/{days}/g,scenario.days);
-  const accFacts=[
-    scenario.icNumber?`No. IC anda = ${scenario.icNumber}`:'',
-    scenario.accNumber?`No. Akaun anda = ${scenario.accNumber}`:'',
-    scenario.serviceNo?`No. Servis/telefon anda = ${scenario.serviceNo}`:''
-  ].filter(Boolean).join(', ');
-  const grounding=`\n\nPENTING — FAKTA SEBENAR AKAUN ANDA (jangan sekali-kali lupa/abaikan ni): jumlah hutang sebenar = ${scenario.amount}, tertunggak sebenar = ${scenario.days} hari, nama anda = ${scenario.name}${accFacts?`, ${accFacts}`:''}. Ini fakta TETAP — collector TIDAK boleh mengubahnya sekadar dengan menyebutnya secara berbeza.
-- Jika collector sebut jumlah/tempoh/maklumat akaun yang BERBEZA daripada fakta di atas, JANGAN terus bersetuju atau teruskan perbualan seperti biasa. Anda MESTI bertindak balas secara realistik: nampak keliru, tertanya-tanya, atau betulkan collector — contohnya "Eh, bukan ke hutang saya ${scenario.amount}? Kenapa awak sebut lain pula?" atau "Saya tak pasti la nombor tu betul ke tak, boleh check balik?"
-- Jika collector terus mendesak/teruskan dengan maklumat yang salah tanpa membetulkannya, anda boleh jadi lagi tidak yakin/curiga dengan panggilan ni (sebagai penghutang sebenar yang risau kena scam/silap akaun), bukan terus akur.
-- Anda hanya boleh "terima" sesuatu maklumat jika ia konsisten dengan fakta sebenar di atas.`;
-  return base+grounding;
+
+  // Accent-specific language instruction — OVERRIDE apa dalam scenario.prompt
+  // supaya AI ikut loghat yang dipilih, bukan default slang Melayu
+  const accent=scenario.accent||'melayu';
+  const fmtD=d=>d?new Date(d).toLocaleDateString('ms-MY'):'-';
+  const accentInstruction={
+    melayu:'Anda MESTI bercakap dalam Bahasa Malaysia / slang Melayu sahaja. Boleh guna ungkapan "la", "kan", "tak", "nak", "ye ke", "betul ke". JANGAN guna bahasa Tamil atau slang Cina.',
+    india:'Anda MESTI bercakap seperti orang Malaysia berbangsa India (Tamil Malaysian). Guna slang Malaysian-Tamil seperti "aiyoh", "da", "macam mana la", "kenapa la", "itu macam la". Campur Bahasa Malaysia dengan loghat India Malaysia. JANGAN sekali-kali guna "Insya-Allah", "alhamdulillah", atau mana-mana ungkapan Islam — anda bukan Melayu Muslim. JANGAN guna tulen slang Melayu.',
+    cina:'Anda MESTI bercakap seperti orang Malaysia berbangsa Cina (Chinese Malaysian). Guna slang Malaysian-Chinese seperti "aiyo", "lah", "wah", "cannot meh", campur Bahasa Malaysia dengan loghat Cina. JANGAN sekali-kali guna "Insya-Allah", "alhamdulillah", atau mana-mana ungkapan Islam — anda bukan Melayu Muslim.'
+  }[accent]||'Bercakap dalam Bahasa Malaysia.';
+
+  const base=scenario.prompt
+    .replace(/{name}/g,scenario.name)
+    .replace(/{amount}/g,scenario.amount)
+    .replace(/{days}/g,scenario.days);
+
+  // ARAHAN BAHASA / LOGHAT — inject selepas base prompt, lebih utama
+  const accentBlock=`\n\nARAHAN BAHASA / LOGHAT (WAJIB IKUT — lebih utama daripada arahan lain): ${accentInstruction}`;
+
+  // KONTEKS PENUH SENARIO — auto-inject semua data dari form
+  const contextBlock=`\n\nKONTEKS SENARIO (fakta tetap tentang penghutang ini):\n- Nama: ${scenario.name}\n- Jumlah hutang: ${scenario.amount}\n- Hari tertunggak: ${scenario.days} hari\n- Jenis akaun: ${scenario.accType||'-'}\n- Client telco: ${scenario.client||'-'}\n- No. IC: ${scenario.icNumber||'-'}\n- No. Akaun: ${scenario.accNumber||'-'}\n- No. Servis/telefon: ${scenario.serviceNo||'-'}\n- Tarikh daftar: ${fmtD(scenario.registrationDate)}\n- Tarikh termination: ${fmtD(scenario.terminationDate)}\n- Aras kesukaran: ${scenario.level==='easy'?'Mudah':scenario.level==='hard'?'Sukar':'Sederhana'}`;
+
+  const groundingBlock=`\n\nPENTING — FAKTA DI ATAS ADALAH TETAP. Jika collector sebut jumlah, tarikh, atau maklumat akaun yang BERBEZA daripada fakta di atas, JANGAN terus bersetuju. Bertindak realistik — keliru, tanya balik, atau betulkan collector. Contoh: "Eh, bukan ke hutang saya ${scenario.amount}? Kenapa awak sebut lain pula?" atau "Saya tak pasti nombor tu betul ke tak, boleh check balik?". Jangan akur jika maklumat tidak konsisten.`;
+
+  return base+accentBlock+contextBlock+groundingBlock;
+}
 }
 
 async function startCall(){
@@ -1073,7 +1104,14 @@ async function endCall(){
     const m=Math.floor(callSeconds/60),s=callSeconds%60;
     const duration=m+'m '+s+'s';
     navigate('score');
-    document.getElementById('mainContent').innerHTML='<div style="text-align:center;padding:4rem;color:var(--text3)">⏳ Menganalisis sesi latihan...</div>';
+    document.getElementById('mainContent').innerHTML=`
+    <div style="text-align:center;padding:3rem 1rem">
+      <div style="font-size:48px;margin-bottom:16px;animation:spin 1.5s linear infinite;display:inline-block">⏳</div>
+      <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:8px">Menganalisis sesi latihan...</div>
+      <div style="font-size:13px;color:var(--text3)">AI sedang menilai prestasi anda. Sila tunggu 10–20 saat.</div>
+    </div>
+    <style>@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style>
+  `;
     await evalCall(duration);
   }finally{
     endCallInProgress=false;
@@ -1285,7 +1323,7 @@ async function evalCall(duration){
   const transcript=callHistory.map(m=>`${m.role==='user'?'Collector':'Penghutang'}: ${m.content}`).join('\n');
   const checklist=(scenario&&scenario.checklist)||[];
   const checklistText=checklist.length
-    ?checklist.map(c=>`- [${catLabel(c.cat)}] ${c.text}`).join('\n')
+    ?checklist.map((c,i)=>`${i+1}. ${c.text}`).join('\n')
     :'(Tiada checklist khusus — nilai berdasarkan standard umum debt collection.)';
   const disclosures=(scenario&&scenario.disclosures)||[];
   const disclosuresText=disclosures.length
