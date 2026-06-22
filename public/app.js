@@ -1044,9 +1044,9 @@ function getSysPrompt(){
   const accent=scenario.accent||'melayu';
   const fmtD=d=>d?new Date(d).toLocaleDateString('ms-MY'):'-';
   const accentInstruction={
-    melayu:'Anda MESTI bercakap dalam Bahasa Malaysia / slang Melayu sahaja. Boleh guna ungkapan "la", "kan", "tak", "nak", "ye ke", "betul ke". JANGAN guna bahasa Tamil atau slang Cina.',
-    india:'Anda MESTI bercakap seperti orang Malaysia berbangsa India (Tamil Malaysian). Guna slang Malaysian-Tamil seperti "aiyoh", "da", "macam mana la", "kenapa la", "itu macam la". Campur Bahasa Malaysia dengan loghat India Malaysia. JANGAN sekali-kali guna "Insya-Allah", "alhamdulillah", atau mana-mana ungkapan Islam — anda bukan Melayu Muslim. JANGAN guna tulen slang Melayu.',
-    cina:'Anda MESTI bercakap seperti orang Malaysia berbangsa Cina (Chinese Malaysian). Guna slang Malaysian-Chinese seperti "aiyo", "lah", "wah", "cannot meh", campur Bahasa Malaysia dengan loghat Cina. JANGAN sekali-kali guna "Insya-Allah", "alhamdulillah", atau mana-mana ungkapan Islam — anda bukan Melayu Muslim.'
+    melayu:'Anda MESTI bercakap dalam Bahasa Malaysia / slang Melayu yang NATURAL — macam orang biasa bercakap telefon, BUKAN buku teks. Guna "la", "kan", "tak", "nak", "ye ke", "betul ke", "hmm", "ha". JANGAN guna bahasa Tamil atau slang Cina.',
+    india:'Anda MESTI bercakap seperti orang Malaysia berbangsa India (Tamil Malaysian) yang bercakap telefon secara NATURAL. Guna "aiyoh", "da", "macam mana la", "kenapa la", "itu macam la", "cannot la". Campur Bahasa Malaysia dengan loghat India Malaysia yang spontan. JANGAN guna "Insya-Allah", "alhamdulillah" — anda bukan Muslim. JANGAN guna slang Melayu tulen.',
+    cina:'Anda MESTI bercakap seperti orang Malaysia berbangsa Cina (Chinese Malaysian) yang bercakap telefon secara NATURAL. Guna "aiyo", "lah", "wah", "cannot meh", "like that how". Campur Bahasa Malaysia dengan loghat Cina yang spontan. JANGAN guna "Insya-Allah", "alhamdulillah" — anda bukan Muslim.'
   }[accent]||'Bercakap dalam Bahasa Malaysia.';
 
   const base=scenario.prompt
@@ -1057,12 +1057,50 @@ function getSysPrompt(){
   // ARAHAN BAHASA / LOGHAT — inject selepas base prompt, lebih utama
   const accentBlock=`\n\nARAHAN BAHASA / LOGHAT (WAJIB IKUT — lebih utama daripada arahan lain): ${accentInstruction}`;
 
+  // Tukar nombor telefon ke sebutan natural: 0142536985 → "oh satu empat dua lima tiga enam sembilan lapan lima"
+  const digitWord=['oh','satu','dua','tiga','empat','lima','enam','tujuh','lapan','sembilan'];
+  function spokenPhone(num){
+    return (num||'').replace(/\d/g,d=>digitWord[+d]).replace(/\s+/g,' ').trim();
+  }
+  // Tukar RM ke sebutan natural: RM1234.50 → "seribu dua ratus tiga puluh empat ringgit lima puluh sen"
+  function spokenRM(amtStr){
+    if(!amtStr)return amtStr;
+    const m=amtStr.replace(/,/g,'').match(/[\d]+(?:\.[\d]{1,2})?/);
+    if(!m)return amtStr;
+    const [ringgit,sen]=(m[0]).split('.');
+    const r=parseInt(ringgit)||0;
+    const s=parseInt((sen||'0').padEnd(2,'0'))||0;
+    function toWords(n){
+      if(n===0)return '';
+      if(n<0)return 'negatif '+toWords(-n);
+      const ones=['','satu','dua','tiga','empat','lima','enam','tujuh','lapan','sembilan',
+                  'sepuluh','sebelas','dua belas','tiga belas','empat belas','lima belas',
+                  'enam belas','tujuh belas','lapan belas','sembilan belas'];
+      const tens=['','','dua puluh','tiga puluh','empat puluh','lima puluh',
+                  'enam puluh','tujuh puluh','lapan puluh','sembilan puluh'];
+      if(n<20)return ones[n];
+      if(n<100)return tens[Math.floor(n/10)]+(n%10?' '+ones[n%10]:'');
+      if(n<1000){const h=Math.floor(n/100);return (h===1?'seratus':ones[h]+' ratus')+(n%100?' '+toWords(n%100):'');}
+      if(n<1000000){const k=Math.floor(n/1000);return (k===1?'seribu':toWords(k)+' ribu')+(n%1000?' '+toWords(n%1000):'');}
+      return amtStr; // fallback kalau terlalu besar
+    }
+    let result=toWords(r)+' ringgit';
+    if(s>0)result+=' '+toWords(s)+' sen';
+    return result||amtStr;
+  }
+
+  const spokenAmount=spokenRM(scenario.amount);
+  const spokenService=spokenPhone(scenario.serviceNo);
+  const spokenIC=spokenPhone(scenario.icNumber);
+  const spokenAcc=spokenPhone(scenario.accNumber);
+
   // KONTEKS PENUH SENARIO — auto-inject semua data dari form
-  const contextBlock=`\n\nKONTEKS SENARIO (fakta tetap tentang penghutang ini):\n- Nama: ${scenario.name}\n- Jumlah hutang: ${scenario.amount}\n- Hari tertunggak: ${scenario.days} hari\n- Jenis akaun: ${scenario.accType||'-'}\n- Client telco: ${scenario.client||'-'}\n- No. IC: ${scenario.icNumber||'-'}\n- No. Akaun: ${scenario.accNumber||'-'}\n- No. Servis/telefon: ${scenario.serviceNo||'-'}\n- Tarikh daftar: ${fmtD(scenario.registrationDate)}\n- Tarikh termination: ${fmtD(scenario.terminationDate)}\n- Aras kesukaran: ${scenario.level==='easy'?'Mudah':scenario.level==='hard'?'Sukar':'Sederhana'}`;
+  const contextBlock=`\n\nKONTEKS SENARIO (fakta tetap tentang penghutang ini):\n- Nama: ${scenario.name}\n- Jumlah hutang: ${scenario.amount} (sebut sebagai: "${spokenAmount}")\n- Hari tertunggak: ${scenario.days} hari\n- Jenis akaun: ${scenario.accType||'-'}\n- Client telco: ${scenario.client||'-'}\n- No. IC: ${scenario.icNumber||'-'} (sebut digit demi digit: "${spokenIC}")\n- No. Akaun: ${scenario.accNumber||'-'} (sebut digit demi digit: "${spokenAcc}")\n- No. Servis/telefon: ${scenario.serviceNo||'-'} (sebut digit demi digit: "${spokenService}")\n- Tarikh daftar: ${fmtD(scenario.registrationDate)}\n- Tarikh termination: ${fmtD(scenario.terminationDate)}\n- Aras kesukaran: ${scenario.level==='easy'?'Mudah':scenario.level==='hard'?'Sukar':'Sederhana'}`;
 
   const groundingBlock=`\n\nPENTING — FAKTA DI ATAS ADALAH TETAP. Jika collector sebut jumlah, tarikh, atau maklumat akaun yang BERBEZA daripada fakta di atas, JANGAN terus bersetuju. Bertindak realistik — keliru, tanya balik, atau betulkan collector. Contoh: "Eh, bukan ke hutang saya ${scenario.amount}? Kenapa awak sebut lain pula?" atau "Saya tak pasti nombor tu betul ke tak, boleh check balik?". Jangan akur jika maklumat tidak konsisten.`;
 
-  return base+accentBlock+contextBlock+groundingBlock;
+  const naturalBlock=`\n\nCARA BERCAKAP (WAJIB IKUT):\n- Jawab PENDEK dan NATURAL — 1 hingga 3 ayat sahaja setiap giliran, macam orang bercakap telefon sebenar\n- JANGAN tulis ayat panjang berjela atau formal macam surat\n- Sebut nombor dan wang secara lisan: RM${scenario.amount} sebut sebagai "${spokenAmount}", no telefon sebut digit demi digit\n- Boleh guna bunyi natural: "hmm", "ha?", "eh", "ok ok", "ha ye", "ala..." mengikut situasi\n- Kadang-kadang boleh potong cakap, tanya balik, atau tergantung ayat kalau rasa keliru\n- Reaksi MESTI sesuai dengan watak dan situasi — kalau penghutang kata sibuk, dia tak bagi masa panjang`;
+  return base+accentBlock+naturalBlock+contextBlock+groundingBlock;
 }
 
 async function startCall(){
