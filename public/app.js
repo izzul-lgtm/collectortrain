@@ -1091,23 +1091,18 @@ function getSysPrompt(){
   const accent=scenario.accent||'melayu';
   const fmtD=d=>d?new Date(d).toLocaleDateString('ms-MY'):'-';
   const accentInstruction={
-    melayu:`Anda orang Melayu Muslim. WAJIB bercakap slang Melayu Malaysia yang NATURAL dan SPONTAN.
-GUNAKAN: "la", "kan", "tak", "nak", "ye ke", "betul ke", "hmm", "ha", "lah", "mana ada", "ish", "alah", "InsyaAllah", "alhamdulillah", "Allah".
-JANGAN guna: "aiyoh", "da", "aiyo", "lah meh", "cannot meh", atau mana-mana slang Cina/India.
-CONTOH AYAT: "Eh tak boleh la macam tu kan.", "Ha InsyaAllah saya bayar minggu depan la.", "Mana ada saya tak bayar, dah bayar dah."`,
+    melayu:`Gaya pertuturan: loghat Melayu Malaysia yang santai dan natural, macam orang biasa bercakap di telefon.
+Boleh selang-seli (jangan setiap ayat) guna partikel macam: "la", "kan", "tak", "nak", "ye ke", "betul ke", "hmm", "InsyaAllah", "alhamdulillah".
+Elak nada formal/surat-menyurat — kekal ringkas dan spontan.`,
 
-    india:`Anda orang Malaysia berbangsa India Tamil. WAJIB bercakap slang Malaysian-Tamil yang JELAS BERBEZA dari Melayu.
-GUNAKAN WAJIB: "aiyoh", "aiya", "da", "dei", "macam mana la da", "itu macam ka", "cannot la da", "why like that da", "I tell you da", "samy", "appah".
-Campur Tamil words sekali-sekala: "enna" (apa), "theriyum" (tahu), "vendaam" (tak nak).
-JANGAN SESEKALI guna: "InsyaAllah", "alhamdulillah", "ish", "mana ada" — anda BUKAN Melayu Muslim.
-CONTOH AYAT: "Aiyoh da, macam mana la I nak bayar sekarang da?", "Cannot la dei, I no money now la.", "Enna you want from me da?"`,
+    india:`Gaya pertuturan: Manglish santai yang biasa digunakan ramai rakyat Malaysia, dengan sentuhan ringan loghat masyarakat India tanpa over-acting.
+Boleh selang-seli (bukan setiap ayat) guna partikel macam: "aiyo", "ah", "macam mana ni", "cannot la", atau struktur ayat Manglish biasa.
+Cakap macam manusia sebenar dalam panggilan telefon — bukan watak komedi atau parodi. Jangan over-exaggerate sebutan atau gunakan stereotype yang melampau.`,
 
-    cina:`Anda orang Malaysia berbangsa Cina. WAJIB bercakap slang Malaysian-Chinese (Manglish) yang JELAS BERBEZA dari Melayu dan India.
-GUNAKAN WAJIB: "aiyo", "wah", "lah", "meh", "one", "lor", "leh", "cannot meh", "like that also can meh", "why you like that one", "sure or not", "confirm or not", "walao".
-Struktur ayat Manglish: letak "lah/meh/lor/one" kat hujung ayat.
-JANGAN SESEKALI guna: "InsyaAllah", "alhamdulillah", "aiyoh da", "dei" — anda BUKAN Melayu atau India.
-CONTOH AYAT: "Aiyo why you call me one?", "Cannot lah, I no money now lah.", "Walao, so much money meh? Sure or not?"`
-  }[accent]||'Bercakap dalam Bahasa Malaysia.';
+    cina:`Gaya pertuturan: Manglish santai yang biasa digunakan ramai rakyat Malaysia, dengan sentuhan ringan loghat masyarakat Cina tanpa over-acting.
+Boleh selang-seli (bukan setiap ayat) guna partikel macam: "lah", "lor", "meh", "one" — secukupnya untuk rasa natural, bukan setiap ayat.
+Cakap macam manusia sebenar dalam panggilan telefon — bukan watak komedi atau parodi. Jangan over-exaggerate sebutan atau gunakan stereotype yang melampau.`
+  }[accent]||'Bercakap dalam Bahasa Malaysia yang santai dan natural.';
 
   const base=scenario.prompt
     .replace(/{name}/g,scenario.name)
@@ -1115,7 +1110,7 @@ CONTOH AYAT: "Aiyo why you call me one?", "Cannot lah, I no money now lah.", "Wa
     .replace(/{days}/g,scenario.days);
 
   // ARAHAN BAHASA / LOGHAT — inject selepas base prompt, lebih utama
-  const accentBlock=`\n\nARAHAN BAHASA / LOGHAT (WAJIB IKUT — lebih utama daripada arahan lain): ${accentInstruction}`;
+  const accentBlock=`\n\nARAHAN BAHASA / LOGHAT (WAJIB IKUT — lebih utama daripada arahan lain): ${accentInstruction}\n\nPENTING: Ini SEKADAR gaya pertuturan. JANGAN sebut secara literal perkataan "Melayu", "Cina", atau "India" sebagai label kaum diri sendiri semasa panggilan (contoh: jangan cakap "saya orang India" / "saya orang Cina" / "saya Melayu"), melainkan collector sendiri tanya soalan yang relevan secara langsung. Fokus pada cara sebut dan gaya ayat sahaja, bukan menyebut label kaum.`;
 
   // Tukar nombor telefon ke sebutan natural: 0142536985 → "oh satu empat dua lima tiga enam sembilan lapan lima"
   const digitWord=['kosong','satu','dua','tiga','empat','lima','enam','tujuh','lapan','sembilan'];
@@ -1157,7 +1152,7 @@ CONTOH AYAT: "Aiyo why you call me one?", "Cannot lah, I no money now lah.", "Wa
   // KONTEKS PENUH SENARIO — auto-inject semua data dari form
   const contextBlock=`\n\nKONTEKS SENARIO (fakta tetap tentang penghutang ini):\n- Nama: ${scenario.name}\n- Jumlah hutang: ${scenario.amount} (sebut sebagai: "${spokenAmount}")\n- Hari tertunggak: ${scenario.days} hari\n- Jenis akaun: ${scenario.accType||'-'}\n- Client telco: ${scenario.client||'-'}\n- No. IC: ${scenario.icNumber||'-'} (sebut digit demi digit: "${spokenIC}")\n- No. Akaun: ${scenario.accNumber||'-'} (sebut digit demi digit: "${spokenAcc}")\n- No. Servis/telefon: ${scenario.serviceNo||'-'} (sebut digit demi digit: "${spokenService}")\n- Tarikh daftar: ${fmtD(scenario.registrationDate)}\n- Tarikh termination: ${fmtD(scenario.terminationDate)}\n- Aras kesukaran: ${scenario.level==='easy'?'Mudah':scenario.level==='hard'?'Sukar':'Sederhana'}`;
 
-  const groundingBlock=`\n\nPENTING — FAKTA DI ATAS ADALAH TETAP. Jika collector sebut jumlah, tarikh, atau maklumat akaun yang BERBEZA daripada fakta di atas, JANGAN terus bersetuju. Bertindak realistik — keliru, tanya balik, atau betulkan collector. Contoh: "Eh, bukan ke hutang saya ${scenario.amount}? Kenapa awak sebut lain pula?" atau "Saya tak pasti nombor tu betul ke tak, boleh check balik?". Jangan akur jika maklumat tidak konsisten.`;
+  const groundingBlock=`\n\nPENTING — FAKTA DI ATAS ADALAH TETAP, termasuk NAMA CLIENT/TELCO (${scenario.client||'-'}). Jika collector sebut jumlah, tarikh, nama syarikat/client telco, atau maklumat akaun yang BERBEZA daripada fakta di atas — termasuk salah sebut nama syarikat (contoh: collector sebut "RedOne" tapi KONTEKS SENARIO kata client ialah "${scenario.client||'syarikat lain'}") — JANGAN terus bersetuju/"mengiyakan" begitu sahaja walaupun collector cakap dengan yakin. Bertindak realistik — keliru, tanya balik, atau betulkan collector. Contoh: "Eh, bukan ke hutang saya ${scenario.amount}? Kenapa awak sebut lain pula?", "Eh, akaun saya ni bukan dengan ${scenario.client||'syarikat tu'} ke? Awak sebut lain tadi.", atau "Saya tak pasti betul ke tak, boleh check balik?". Jangan akur secara automatik kepada apa-apa maklumat (termasuk nama syarikat) yang tidak konsisten dengan KONTEKS SENARIO di atas.`;
 
   const levelBehaviour={
     easy:`Aras Mudah — anda adalah penghutang yang MUDAH dilayan: cepat akur bila diberi alasan munasabah, tidak banyak bantahan, bersedia bagi PTP kalau diminta dengan baik, nada agak cooperative walaupun ada sedikit keberatan awal.`,
