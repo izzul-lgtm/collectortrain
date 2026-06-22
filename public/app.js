@@ -1071,16 +1071,25 @@ function getVoiceId(){
 function getVoiceSettings(text){
   if(!text)return {stability:0.5,similarity_boost:0.75,style:0.4};
   const t=text.toLowerCase();
-  // Marah/tension/jerit
-  if(/marah|tension|bengang|geram|tak nak|pergi|letak|!{2,}|dah la|buat apa/.test(t))
-    return {stability:0.25,similarity_boost:0.8,style:0.8,use_speaker_boost:true};
-  // Sedih/menangis/tertekan
-  if(/tak boleh|susah|masalah|tolong|tak ada duit|nangis|sedih/.test(t))
-    return {stability:0.6,similarity_boost:0.75,style:0.3};
-  // Gelak/santai
-  if(/haha|hehe|lawak|takpe|ok ok|boleh je/.test(t))
-    return {stability:0.7,similarity_boost:0.7,style:0.5};
-  // Default — natural
+  // Marah/tension/jerit — nada tinggi, tak stabil, expressive
+  if(/marah|tension|bengang|geram|tak nak|pergi|letak telefon|!{2,}|dah la|buat apa|apa kejadah|menyampah|bising|tak faham ke|dah cakap dah|tak payah|suka hati|jangan kacau|leceh|penat la|bising la|jangan ganggu/.test(t))
+    return {stability:0.2,similarity_boost:0.85,style:0.85,use_speaker_boost:true};
+  // Menangis/tertekan/putus asa — nada perlahan, rendah, lembut
+  if(/nangis|menangis|sedih|tertekan|takut|tahu nak buat macam mana|dah tak tahu|minta maaf|harap maaf|tolong faham|susah sangat|dah cuba|penat dah|give up|tak larat|nak buat macam mana/.test(t))
+    return {stability:0.65,similarity_boost:0.8,style:0.15,use_speaker_boost:false};
+  // Keliru/confuse — nada soal balik, tak pasti
+  if(/ha\?|eh\?|apa|macam mana|tak faham|maksud|yang mana|yang ni ke|yang tu ke|tak ingat|lupa|betul ke|ye ke|serius|confirm|pastikan|check balik|berapa|bila/.test(t))
+    return {stability:0.55,similarity_boost:0.75,style:0.35,use_speaker_boost:false};
+  // Susah/masalah kewangan — berat, serius
+  if(/tak boleh bayar|tak ada duit|takde duit|poket|kering|hutang lain|kerja pun|gaji|tak cukup|nak makan pun|hidup|anak|keluarga|masalah sekarang|susah sekarang|tak mampu|tak ada kerja|baru kena buang/.test(t))
+    return {stability:0.6,similarity_boost:0.78,style:0.2,use_speaker_boost:false};
+  // Gelak/santai/agreeable
+  if(/haha|hehe|lawak|takpe|ok ok|boleh je|alright|ok la|fine|no problem|insyaallah|kalau macam tu/.test(t))
+    return {stability:0.7,similarity_boost:0.7,style:0.5,use_speaker_boost:false};
+  // Kasar/defensive — lebih tegas dari marah biasa
+  if(/saman je la|lapor|report|lawyer|saman|mahkamah|tak kisah|buat apa nak kisah|lantak/.test(t))
+    return {stability:0.3,similarity_boost:0.85,style:0.75,use_speaker_boost:true};
+  // Default — natural conversational
   return {stability:0.5,similarity_boost:0.75,style:0.4};
 }
 function getSysPrompt(){
@@ -1115,7 +1124,8 @@ Cakap macam manusia sebenar dalam panggilan telefon — bukan watak komedi atau 
   // Tukar nombor telefon ke sebutan natural: 0142536985 → "oh satu empat dua lima tiga enam sembilan lapan lima"
   const digitWord=['kosong','satu','dua','tiga','empat','lima','enam','tujuh','lapan','sembilan'];
   function spokenPhone(num){
-    return (num||'').replace(/\d/g,d=>digitWord[+d]).replace(/\s+/g,' ').trim();
+    // Strip semua bukan-digit dulu (dash, space, bracket) sebelum convert
+    return (num||'').replace(/[^\d]/g,'').replace(/\d/g,d=>digitWord[+d]).replace(/\s+/g,' ').trim();
   }
   // Tukar RM ke sebutan natural: RM1234.50 → "seribu dua ratus tiga puluh empat ringgit lima puluh sen"
   function spokenRM(amtStr){
