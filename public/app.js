@@ -1352,8 +1352,8 @@ function stopMicLevelMeter() {
 // Bila collector berhenti cakap 2.5 saat, auto-stop recording dan hantar
 // Guna micAnalyser (dah ada dari level meter) untuk detect senyap
 function startSilenceDetection() {
-  const SILENCE_THRESHOLD = 0.03; // level RMS bawah ni = senyap
-  const SILENCE_MS = 2500;        // 2.5 saat senyap → auto submit
+  const SILENCE_THRESHOLD = 0.02; // level RMS bawah ni = senyap (lebih sensitive dari 0.03)
+  const SILENCE_MS = 1500;        // 1.5 saat senyap → auto submit (dari 2.5s — kurang latency)
   let silenceStart = null;
 
   silenceDetectInterval = setInterval(() => {
@@ -1420,7 +1420,9 @@ async function startRec() {
   mediaRecorder.onstop = async () => {
     isRecording = false;
     stopSilenceDetection();
-    resetMicBtn();
+    // Tunjuk "Memproses..." SEGERA sebaik mic stop — collector tau request dah dihantar
+    // (jangan tunggu STT response dulu baru update UI — nampak laggy)
+    setMicState('thinking', '⏳', 'Memproses audio...');
     setStatus('', 'Memproses...');
 
     if (audioChunks.length === 0) {
