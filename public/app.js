@@ -1009,31 +1009,62 @@ async function deleteUser(id){
 // teka dari nama). VOICE_LIBRARY di bawah ialah tempat untuk tambah suara
 // loghat/bangsa lain — ganti placeholder dengan Voice ID sebenar dari
 // ElevenLabs (Voice Library → cari loghat yang sesuai → copy Voice ID).
-const VOICE_LIBRARY = {
-  male_melayu:   'TX3LPaxmHKxFdv7VOQHJ',
-  female_melayu: 'EXAVITQu4vr4xnSDxMaL',
-  // TODO: ganti dua ID di bawah dengan Voice ID sebenar dari ElevenLabs
-  // Voice Library sebelum pilihan ni digunakan — sementara ni ia fallback
-  // ke suara Melayu mengikut jantina supaya app tak rosak.
-  male_cina:     'REPLACE_WITH_ELEVENLABS_VOICE_ID',
-  female_cina:   'REPLACE_WITH_ELEVENLABS_VOICE_ID',
-  male_india:    'REPLACE_WITH_ELEVENLABS_VOICE_ID',
-  female_india:  'REPLACE_WITH_ELEVENLABS_VOICE_ID',
+// Pool 20 suara dari ElevenLabs — dibahagi male/female
+// Bila start call baru, sistem random pilih satu suara yang belum pernah
+// dipakai dalam sesi terkini supaya tak bosan dengar suara sama
+const VOICE_POOL = {
+  male:  [
+    'PId0lEbL3SOYkQZSraml','d0grukerEzs069eKIauC','nfMYisZqs1GOjTFllho3',
+    'cHDwXsKG0qHMNLIjOusN','42bu2zNrjJXYzreZrTEu','Q2ELiWzbuj5F0eFHXK6S',
+    '1wuUVbmqPGK24IaC0QTh','15Y62ZlO8it2f5wduybx','qKNMkrcmsdf29T6K7Dbu',
+    'INmScOFtmeMGA4p0XRr1'
+  ],
+  female:[
+    'dNnVzcebCLVAswzGKvfO','lMSqoJeA0cBBNA9FeHAs','SrWU271vZiNf2mrBhzL5',
+    'jtEc6V0BMZoMqpAMRJbl','lvNyQwaZPcGFiNUWWiVa','vRaj2Gd0mefB1EU96ua2',
+    'WuePGPKIAIKI8COZpzce','GoGUcAZovo4MFeLxJdZd','XKMCahG4CffeDasU2nuT',
+    'brChkoggsUHF1stW6omH'
+  ]
 };
-function resolveVoiceId(gender,accent){
-  const key=(accent||'melayu')+'_'+(gender==='female'?'female':'male');
-  const lookupKey=(gender==='female'?'female':'male')+'_'+(accent||'melayu');
-  const id=VOICE_LIBRARY[lookupKey];
-  if(id&&!id.startsWith('REPLACE_WITH'))return id;
-  // Belum ada voice ID sebenar utk loghat ni — fallback ikut jantina sahaja
-  return gender==='female'?VOICE_LIBRARY.female_melayu:VOICE_LIBRARY.male_melayu;
+
+// Track suara yang dah dipakai — rotate supaya tak repeat
+let usedVoices=[];
+let activeVoiceId=null; // suara untuk sesi call semasa
+
+function pickVoice(gender){
+  const pool=gender==='female'?VOICE_POOL.female:VOICE_POOL.male;
+  // Filter suara yang belum dipakai — kalau semua dah pakai, reset
+  let available=pool.filter(v=>!usedVoices.includes(v));
+  if(!available.length){usedVoices=[];available=pool;}
+  const picked=available[Math.floor(Math.random()*available.length)];
+  usedVoices.push(picked);
+  return picked;
 }
+
 function getVoiceId(){
-  if(!scenario)return VOICE_LIBRARY.male_melayu;
-  if(scenario.voiceId)return scenario.voiceId; // disimpan secara explicit semasa cipta senario
-  // Senario lama (sebelum fix ni) tiada voiceId/gender disimpan — guna
-  // heuristik lama sebagai fallback supaya senario sedia ada tak rosak.
-  return (scenario.name.includes('Puan')||scenario.name.includes('Cik'))?VOICE_LIBRARY.female_melayu:VOICE_LIBRARY.male_melayu;
+  // Guna suara yang dah dipilih untuk sesi ini (konsisten dalam satu call)
+  if(activeVoiceId)return activeVoiceId;
+  if(!scenario)return VOICE_POOL.male[0];
+  const gender=scenario.gender||'male';
+  activeVoiceId=pickVoice(gender);
+  return activeVoiceId;
+}
+
+// Detect sentiment dari AI reply untuk adjust voice emotion
+function getVoiceSettings(text){
+  if(!text)return {stability:0.5,similarity_boost:0.75,style:0.4};
+  const t=text.toLowerCase();
+  // Marah/tension/jerit
+  if(/marah|tension|bengang|geram|tak nak|pergi|letak|!{2,}|dah la|buat apa/.test(t))
+    return {stability:0.25,similarity_boost:0.8,style:0.8,use_speaker_boost:true};
+  // Sedih/menangis/tertekan
+  if(/tak boleh|susah|masalah|tolong|tak ada duit|nangis|sedih/.test(t))
+    return {stability:0.6,similarity_boost:0.75,style:0.3};
+  // Gelak/santai
+  if(/haha|hehe|lawak|takpe|ok ok|boleh je/.test(t))
+    return {stability:0.7,similarity_boost:0.7,style:0.5};
+  // Default — natural
+  return {stability:0.5,similarity_boost:0.75,style:0.4};
 }
 function getSysPrompt(){
   if(!scenario)return '';
@@ -1109,6 +1140,7 @@ function getSysPrompt(){
 }
 
 async function startCall(){
+  activeVoiceId=null; // reset suara — akan pick baru untuk call ni
   callHistory=[];callSeconds=0;callActive=true;
   audioQueue=[];isPlayingAudio=false;
   if(currentAudio){currentAudio.pause();currentAudio=null;}
@@ -1174,7 +1206,7 @@ async function playNext(){
     const res=await fetch('/api/tts',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({text,voiceId:getVoiceId()})
+      body:JSON.stringify({text,voiceId:getVoiceId(),voiceSettings:getVoiceSettings(text)})
     });
     if(!res.ok)throw new Error(res.status);
     const blob=await res.blob();const url=URL.createObjectURL(blob);
