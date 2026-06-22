@@ -1269,240 +1269,213 @@ function addBubble(role,text){
   box.appendChild(div);box.scrollTop=box.scrollHeight;
 }
 
-// ═══════════ STT — DIPERBAIKI ═══════════
-function toggleMic(){if(isPlayingAudio)return;if(isRecording)stopRec();else startRec();}
 
-// Kamus pembetulan STT — global scope supaya boleh diakses oleh processSpeech()
-const STT_CORRECTIONS=[
-  [/\bpr\s*one\b/gi,'RedOne'],[/\bred\s*one\b/gi,'RedOne'],
-  [/\bcel\s*com\b/gi,'Celcom'],[/\bsel\s*com\b/gi,'Celcom'],[/\bcel\s*come\b/gi,'Celcom'],
-  [/\bde\s*gi\b/gi,'Digi'],[/\bdi\s*gi\b/gi,'Digi'],[/\bdigi\s*cel\b/gi,'Digi'],
-  [/\bmaxis\s*one\b/gi,'Maxis'],[/\bu\s*mobile\b/gi,'U Mobile'],
-  [/\bc\s*t\s*o\s*s\b/gi,'CTOS'],[/\bc\s*c\s*r\s*i\s*s\b/gi,'CCRIS'],
-  [/\bn\s*p\s*l\b/gi,'NPL'],[/\bn\s*p\s*n\b/gi,'NPL'],[/\bnon\s*performing\b/gi,'NPL'],
-  [/\bp\s*t\s*p\b/gi,'PTP'],[/\bpromise\s*to\s*pay\b/gi,'PTP'],
-  [/\bspdca\b/gi,'SPDCA'],[/\bspd\s*ca\b/gi,'SPDCA'],
-  [/\bjom\s*pay\b/gi,'JomPay'],[/\bjompay\b/gi,'JomPay'],
-  [/\bfpx\b/gi,'FPX'],[/\bringgit\s*malaysia\b/gi,'RM'],
-  [/\bnew\s*vest\b/gi,'Newvest'],[/\bnew\s*face\b/gi,'New Face'],
-  [/\bdc\s*a\b/gi,'DCA'],[/\bde\s*ce\s*a\b/gi,'DCA'],
-  [/\bwhat\s*sapp\b/gi,'WhatsApp'],[/\bwhat\s*app\b/gi,'WhatsApp'],
+// ═══════════ STT — DEEPGRAM (gantikan Web Speech API) ═══════════
+// KENAPA DEEPGRAM: Web Speech API (webkitSpeechRecognition) bergantung pada
+// Google STT cloud melalui Chrome — latency tinggi, bahasa rojak BM+English
+// selalu drop/salah, dan tiada kawalan. Deepgram Nova-2 jauh lebih accurate
+// untuk sebutan Malaysia, latency lebih rendah, dan kita kawalan penuh.
+// FLOW BARU: push-to-talk — tekan mic → MediaRecorder rakam audio →
+// lepas mic (atau auto-detect senyap) → hantar audio ke /api/stt →
+// Deepgram transcribe → processSpeech() seperti biasa.
+
+let mediaRecorder = null;
+let audioChunks = [];
+let silenceDetectInterval = null;
+let recordingStartTime = 0;
+
+function toggleMic() {
+  if (isPlayingAudio) return;
+  if (isRecording) stopRec();
+  else startRec();
+}
+
+// Kamus pembetulan STT — masih dipakai untuk betulkan output Deepgram
+const STT_CORRECTIONS = [
+  [/\bpr\s*one\b/gi, 'RedOne'], [/\bred\s*one\b/gi, 'RedOne'],
+  [/\bcel\s*com\b/gi, 'Celcom'], [/\bsel\s*com\b/gi, 'Celcom'], [/\bcel\s*come\b/gi, 'Celcom'],
+  [/\bde\s*gi\b/gi, 'Digi'], [/\bdi\s*gi\b/gi, 'Digi'], [/\bdigi\s*cel\b/gi, 'Digi'],
+  [/\bmaxis\s*one\b/gi, 'Maxis'], [/\bu\s*mobile\b/gi, 'U Mobile'],
+  [/\bc\s*t\s*o\s*s\b/gi, 'CTOS'], [/\bc\s*c\s*r\s*i\s*s\b/gi, 'CCRIS'],
+  [/\bn\s*p\s*l\b/gi, 'NPL'], [/\bn\s*p\s*n\b/gi, 'NPL'], [/\bnon\s*performing\b/gi, 'NPL'],
+  [/\bp\s*t\s*p\b/gi, 'PTP'], [/\bpromise\s*to\s*pay\b/gi, 'PTP'],
+  [/\bspdca\b/gi, 'SPDCA'], [/\bspd\s*ca\b/gi, 'SPDCA'],
+  [/\bjom\s*pay\b/gi, 'JomPay'], [/\bjompay\b/gi, 'JomPay'],
+  [/\bfpx\b/gi, 'FPX'], [/\bringgit\s*malaysia\b/gi, 'RM'],
+  [/\bnew\s*vest\b/gi, 'Newvest'], [/\bnew\s*face\b/gi, 'New Face'],
+  [/\bdc\s*a\b/gi, 'DCA'], [/\bde\s*ce\s*a\b/gi, 'DCA'],
+  [/\bwhat\s*sapp\b/gi, 'WhatsApp'], [/\bwhat\s*app\b/gi, 'WhatsApp'],
 ];
-function correctSTT(text){
-  let t=text;
-  STT_CORRECTIONS.forEach(([pattern,replacement])=>{t=t.replace(pattern,replacement);});
+function correctSTT(text) {
+  let t = text;
+  STT_CORRECTIONS.forEach(([pattern, replacement]) => { t = t.replace(pattern, replacement); });
   return t;
 }
 
-// ═══════════ MIC LEVEL METER (pre-warm + visual feedback) ═══════════
-// PUNCA BUG "mic tak detect, terpaksa cakap berulang-ulang": 2 sebab utama —
-// (1) getUserMedia/permission & (untuk headset Bluetooth) profile-switch
-//     HSP→HFP cuma start LEPAS collector tekan butang mic, ambil ~1-2 saat;
-//     sepanjang masa tu SpeechRecognition dah `start()` tapi mic belum betul²
-//     "live" → perkataan PERTAMA yang collector cakap terus hilang, baru
-//     perasan lepas dah cakap & kena ulang. Fix: warmupMic() dipanggil
-//     seawal startCall() — sebelum collector sempat tekan mic langsung —
-//     supaya permission & profile-switch siap dulu, recognition.start()
-//     lepas tu terus "panas".
-// (2) Takde sebarang visual feedback bunyi betul² masuk ke mic atau tak —
-//     collector cuma nampak ikon berkelip statik "Sedang rakam...", tak
-//     boleh self-diagnose sama ada isu di hardware/permission dia atau di
-//     app. Fix: bar level bunyi real-time bawah butang mic (#micLevelFill)
-//     supaya collector nampak SENDIRI kalau mic betul² detect bunyi —
-//     kalau bar tu tak gerak langsung walaupun dah cakap kuat, dia terus
-//     tahu masalah kat mic/permission dia, bukan app yang rosak.
-async function warmupMic(){
-  try{
-    if(micStream)return; // dah warm dari turn sebelum ni, skip
-    micStream=await navigator.mediaDevices.getUserMedia({audio:true});
-    micAudioCtx=new (window.AudioContext||window.webkitAudioContext)();
-    const source=micAudioCtx.createMediaStreamSource(micStream);
-    micAnalyser=micAudioCtx.createAnalyser();
-    micAnalyser.fftSize=512;
+// ═══════════ MIC LEVEL METER ═══════════
+async function warmupMic() {
+  try {
+    if (micStream) return;
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    micAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = micAudioCtx.createMediaStreamSource(micStream);
+    micAnalyser = micAudioCtx.createAnalyser();
+    micAnalyser.fftSize = 512;
     source.connect(micAnalyser);
     tickMicLevel();
-  }catch(e){
-    // Gagal warm-up awal — bukan fatal, SpeechRecognition akan minta
-    // permission sendiri bila recognition.start() dipanggil nanti (cuma
-    // collector tak dapat manfaat "panaskan awal" ni).
-    console.warn('Mic warm-up gagal:',e.message);
+  } catch (e) {
+    console.warn('Mic warm-up gagal:', e.message);
   }
 }
 
-function tickMicLevel(){
-  if(!micAnalyser)return;
-  const data=new Uint8Array(micAnalyser.fftSize);
+function tickMicLevel() {
+  if (!micAnalyser) return;
+  const data = new Uint8Array(micAnalyser.fftSize);
   micAnalyser.getByteTimeDomainData(data);
-  let sum=0;
-  for(let i=0;i<data.length;i++){const v=(data[i]-128)/128;sum+=v*v;}
-  const level=Math.min(1,Math.sqrt(sum/data.length)*4); // RMS, di-scale supaya nampak jelas dalam bar
-  if(isRecording)micPeakSinceStart=Math.max(micPeakSinceStart,level);
-  const fill=document.getElementById('micLevelFill');
-  if(fill)fill.style.width=(isRecording?Math.round(level*100):0)+'%';
-  micLevelRAF=requestAnimationFrame(tickMicLevel);
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
+  const level = Math.min(1, Math.sqrt(sum / data.length) * 4);
+  if (isRecording) micPeakSinceStart = Math.max(micPeakSinceStart, level);
+  const fill = document.getElementById('micLevelFill');
+  if (fill) fill.style.width = (isRecording ? Math.round(level * 100) : 0) + '%';
+  micLevelRAF = requestAnimationFrame(tickMicLevel);
 }
 
-function stopMicLevelMeter(){
-  if(micLevelRAF){cancelAnimationFrame(micLevelRAF);micLevelRAF=null;}
-  if(micStream){micStream.getTracks().forEach(t=>t.stop());micStream=null;}
-  if(micAudioCtx){try{micAudioCtx.close();}catch(e){}micAudioCtx=null;}
-  micAnalyser=null;
+function stopMicLevelMeter() {
+  if (micLevelRAF) { cancelAnimationFrame(micLevelRAF); micLevelRAF = null; }
+  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  if (micAudioCtx) { try { micAudioCtx.close(); } catch (e) { } micAudioCtx = null; }
+  micAnalyser = null;
 }
 
-function startRec(retryCount){
-  retryCount=retryCount||0;
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){alert('Sila guna Google Chrome untuk fungsi mikrofon.');return;}
-  recognition=new SR();
-  recognition.lang='ms-MY';
-  recognition.continuous=true;       // ← tak auto-stop bila senyap sekejap
-  recognition.interimResults=true;
+// ═══════════ AUTO-SILENCE DETECTION ═══════════
+// Bila collector berhenti cakap 2.5 saat, auto-stop recording dan hantar
+// Guna micAnalyser (dah ada dari level meter) untuk detect senyap
+function startSilenceDetection() {
+  const SILENCE_THRESHOLD = 0.03; // level RMS bawah ni = senyap
+  const SILENCE_MS = 2500;        // 2.5 saat senyap → auto submit
+  let silenceStart = null;
 
-  // PUNCA BUG "system detect lambat & cut sebelum habis cakap":
-  // dulu timer senyap ni HANYA reset bila ada hasil "final" — tapi engine STT
-  // Chrome kadang lambat finalize ayat panjang/bercampur BM-Inggeris (kena
-  // round-trip ke server Google). Bila gap antara satu "final" dengan "final"
-  // seterusnya lagi panjang dari 1.5s — walaupun collector tengah aktif
-  // bercakap (nampak pada "interim") — sistem silap anggap dah senyap, terus
-  // recognition.stop(), dan apa-apa yang belum "final" hilang terus (tak
-  // sempat masuk transcript pun). Fix: reset timer pada SETIAP hasil (final
-  // ATAU interim), dan bila timer fire, hantar gabungan final+interim supaya
-  // tak ada perkataan terakhir yang hilang.
-  const SILENCE_MS=1500; // 1500ms — cukup untuk pause natural, tak terlalu lambat
+  silenceDetectInterval = setInterval(() => {
+    if (!micAnalyser || !isRecording) return;
+    const data = new Uint8Array(micAnalyser.fftSize);
+    micAnalyser.getByteTimeDomainData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
+    const level = Math.sqrt(sum / data.length);
 
-  // PUNCA BUG "suara tak detect / ralat / tak stable":
-  // webkitSpeechRecognition Chrome bergantung pada round-trip rangkaian ke
-  // server STT cloud Google — bukan diproses lokal. Bila ada network blip
-  // sekejap atau Chrome anggap tiada suara (silap detect, especially dengan
-  // mic murah/headset bluetooth), ia throw 'network'/'no-speech'/'aborted'
-  // dan DULU terus mati ke idle + buang apa-apa teks yang dah capture, force
-  // collector tekan mic semula dari kosong. Fix: (a) kalau ralat ni jenis
-  // recoverable & BELUM ada teks dicapture, auto-restart sendiri (senyap,
-  // collector tak perasan) sehingga 2 kali sebelum mengalah; (b) kalau dah
-  // ada teks yang sempat capture sebelum ralat, hantar je teks tu (jangan
-  // buang) — collector boleh sambung cakap dalam giliran seterusnya.
-  const MAX_RETRY=2;
-  const RECOVERABLE=['no-speech','network','aborted'];
+    // Jangan trigger auto-stop dalam 1 saat pertama — bagi masa collector mula cakap
+    const elapsed = Date.now() - recordingStartTime;
+    if (elapsed < 1000) { silenceStart = null; return; }
 
-  let silenceTimer=null;
-  let lastFinal='';
-  let lastInterim='';
-  // PUNCA BUG "teks/respon double": stopRec() (klik manual henti mic) dan
-  // recognition.onend (yang ter-fire SEBAB recognition.stop() dipanggil dalam
-  // stopRec()) DUA-DUA terus panggil processSpeech() dengan teks yang SAMA —
-  // jadi 1 ucapan collector dihantar 2x ke /api/claude, transcript jadi
-  // double, dan AI respon (+ suara TTS) pun double. Fix: satu flag `dispatched`
-  // jadi "tiket sekali guna" — sesiapa (silence-timer / manual stop / error /
-  // onend) yang sampai dulu, dia je yang hantar; selebihnya jadi no-op senyap.
-  let dispatched=false;
-
-  function currentText(){return (lastFinal+' '+lastInterim).trim();}
-
-  function dispatchIfNeeded(){
-    if(dispatched)return;
-    const text=currentText();
-    if(text.length>1){
-      dispatched=true;
-      lastFinal='';lastInterim='';
-      processSpeech(text);
+    if (level < SILENCE_THRESHOLD) {
+      if (!silenceStart) silenceStart = Date.now();
+      else if (Date.now() - silenceStart >= SILENCE_MS) {
+        // Senyap cukup lama — auto stop
+        clearInterval(silenceDetectInterval);
+        silenceDetectInterval = null;
+        stopRec();
+      }
     } else {
-      // Tiada teks — reset dan restart mic supaya collector boleh cuba semula
-      lastFinal='';lastInterim='';
-      if(callActive&&!isRecording)startRec();
+      silenceStart = null; // ada bunyi — reset timer senyap
+    }
+  }, 100);
+}
+
+function stopSilenceDetection() {
+  if (silenceDetectInterval) { clearInterval(silenceDetectInterval); silenceDetectInterval = null; }
+}
+
+// ═══════════ START / STOP RECORDING ═══════════
+async function startRec() {
+  if (isRecording) return;
+
+  // Pastikan ada mic stream (warmupMic dah panggil sebelum ni, tapi kalau gagal, cuba lagi)
+  if (!micStream) {
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const source = micAudioCtx.createMediaStreamSource(micStream);
+      micAnalyser = micAudioCtx.createAnalyser();
+      micAnalyser.fftSize = 512;
+      source.connect(micAnalyser);
+      tickMicLevel();
+    } catch (e) {
+      setStatus('', '⚠ Mic tidak dibenarkan. Allow akses mikrofon dalam browser.');
+      return;
     }
   }
 
-  function armSilenceTimer(){
-    clearTimeout(silenceTimer);
-    silenceTimer=setTimeout(()=>{
-      if(dispatched)return;
-      recognition.stop();
-      dispatchIfNeeded();
-    },SILENCE_MS);
-  }
+  // Pilih format terbaik yang disokong browser
+  const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg']
+    .find(m => MediaRecorder.isTypeSupported(m)) || '';
 
-  recognition.onstart=()=>{
-    isRecording=true;
-    micPeakSinceStart=0; // reset — ukur peak bunyi untuk turn baru ni je
-    setMicState('recording','🎙','Sedang rakam...');
-    setStatus('red','Anda sedang bercakap...');
+  audioChunks = [];
+  mediaRecorder = new MediaRecorder(micStream, mimeType ? { mimeType } : {});
+
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) audioChunks.push(e.data);
   };
 
-  recognition.onresult=(e)=>{
-    let interim='',final='';
-    for(let i=e.resultIndex;i<e.results.length;i++){
-      if(e.results[i].isFinal)final+=e.results[i][0].transcript;
-      else interim+=e.results[i][0].transcript;
-    }
-    if(final)lastFinal+=' '+final;
-    lastInterim=interim;
-    const lt=document.getElementById('liveText');
-    if(lt)lt.textContent=currentText();
-    // Reset timer pada SETIAP event STT (final ATAU interim) — bukan final sahaja
-    armSilenceTimer();
-  };
-
-  recognition.onerror=(e)=>{
-    clearTimeout(silenceTimer);
-    isRecording=false;
-    if(dispatched)return;
-    const text=currentText();
-    if(text.length>1){
-      // Ada teks yang sempat ditangkap sebelum ralat — jangan buang, hantar.
-      recognition.stop();
-      dispatchIfNeeded();
-      return;
-    }
-    if(RECOVERABLE.includes(e.error)&&retryCount<MAX_RETRY){
-      // Cuba sendiri semula tanpa kacau collector — ralat sekejap macam ni
-      // selalunya hilang sendiri pada cubaan seterusnya.
-      setStatus('','Mendengar semula...');
-      setTimeout(()=>startRec(retryCount+1),300);
-      return;
-    }
+  mediaRecorder.onstop = async () => {
+    isRecording = false;
+    stopSilenceDetection();
     resetMicBtn();
-    // Guna micPeakSinceStart (dari level meter) untuk bezakan 2 jenis
-    // "no-speech" — mic memang tak dengar APA-APA bunyi (isu hardware/
-    // permission/Bluetooth) lawan ada bunyi tapi STT tak dapat faham
-    // (cakap kurang jelas/laju). Mesej lain² supaya collector tahu nak
-    // buat apa, bukan cuma "ralat" generik.
-    const noSpeechMsg=micPeakSinceStart<0.05
-      ?'Mic tak mengesan SEBARANG bunyi. Cuba check setting privacy mic browser anda, pastikan headset/mic dipilih betul, atau cuba mic lain.'
-      :'Bunyi dikesan tapi tak dapat difahami. Cuba cakap lebih jelas, perlahan & dekat dengan mic.';
-    const m={'not-allowed':'Mic tidak dibenarkan. Allow akses mikrofon.','no-speech':noSpeechMsg,'network':'Ralat rangkaian. Sila semak sambungan internet & cuba lagi.'};
-    setStatus('','⚠ '+(m[e.error]||'Ralat: '+e.error));
-  };
+    setStatus('', 'Memproses...');
 
-  recognition.onend=()=>{
-    isRecording=false;
-    clearTimeout(silenceTimer);
-    if(dispatched){
-      // Sesi STT ni dah pun dihantar (silence-timer/manual-stop/error sampai
-      // dulu) — JANGAN sentuh UI lagi, elak overwrite state 'AI sedang
-      // berfikir...' yang processSpeech() baru je set.
+    if (audioChunks.length === 0) {
+      setStatus('green', 'Tekan mikrofon untuk bercakap.');
       return;
     }
-    // Kalau ada teks terkumpul (final ATAU interim) tapi belum dihantar lagi —
-    // cth browser stop recognition tiba-tiba (network blip) — hantar sekarang
-    // supaya tak ada perkataan terakhir yang hilang.
-    const text=currentText();
-    if(text.length>1){
-      dispatchIfNeeded();
-    }else{
+
+    const audioBlob = new Blob(audioChunks, { type: mimeType || 'audio/webm' });
+    audioChunks = [];
+
+    // Hantar ke /api/stt (Deepgram)
+    try {
+      setMicState('thinking', '⏳', 'Mentranskrip...');
+      const res = await fetch('/api/stt', {
+        method: 'POST',
+        headers: { 'Content-Type': mimeType || 'audio/webm' },
+        body: audioBlob,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'STT gagal');
+
+      const transcript = (data.transcript || '').trim();
+      if (!transcript) {
+        // Tiada teks — mungkin senyap atau noise je
+        setStatus('green', 'Tekan mikrofon untuk bercakap.');
+        resetMicBtn();
+        return;
+      }
+
+      // Update live text display sekejap sebelum hantar
+      const lt = document.getElementById('liveText');
+      if (lt) lt.textContent = transcript;
+
+      await processSpeech(transcript);
+    } catch (e) {
+      console.error('STT error:', e);
+      setStatus('', '⚠ Gagal transkrip: ' + e.message);
       resetMicBtn();
     }
   };
 
-  recognition.start();
+  mediaRecorder.start(250); // collect chunks setiap 250ms
+  isRecording = true;
+  micPeakSinceStart = 0;
+  recordingStartTime = Date.now();
+  setMicState('recording', '🎙', 'Sedang rakam... (lepas untuk hantar)');
+  setStatus('red', 'Anda sedang bercakap...');
+  startSilenceDetection();
 }
 
-function stopRec(){
-  // Jangan panggil processSpeech() terus di sini — recognition.stop() di
-  // bawah akan trigger 'onend' (lihat startRec()), dan flag `dispatched`
-  // kat situ yang akan uruskan hantar teks (sekali sahaja). Ni punca fix bug
-  // "teks/respon double" bila collector tekan mic untuk henti secara manual.
-  if(recognition)recognition.stop();
-  isRecording=false;
+function stopRec() {
+  if (!isRecording || !mediaRecorder) return;
+  stopSilenceDetection();
+  try { mediaRecorder.stop(); } catch (e) { }
+  // isRecording akan diset false dalam mediaRecorder.onstop
 }
 
 async function processSpeech(rawText){
