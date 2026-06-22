@@ -1282,6 +1282,31 @@ function startRec(retryCount){
     setStatus('red','Anda sedang bercakap...');
   };
 
+  // Kamus pembetulan STT — tambah entries baru bila jumpa error
+  const STT_CORRECTIONS=[
+    // Telco brands
+    [/\bpr\s*one\b/gi,'RedOne'],[/\bred\s*one\b/gi,'RedOne'],
+    [/\bcel\s*com\b/gi,'Celcom'],[/\bsel\s*com\b/gi,'Celcom'],[/\bcel\s*come\b/gi,'Celcom'],
+    [/\bde\s*gi\b/gi,'Digi'],[/\bdi\s*gi\b/gi,'Digi'],[/\bdigi\s*cel\b/gi,'Digi'],
+    [/\bmaxis\s*one\b/gi,'Maxis'],[/\bu\s*mobile\b/gi,'U Mobile'],
+    // Istilah collections
+    [/\bc\s*t\s*o\s*s\b/gi,'CTOS'],[/\bc\s*c\s*r\s*i\s*s\b/gi,'CCRIS'],
+    [/\bn\s*p\s*l\b/gi,'NPL'],[/\bn\s*p\s*n\b/gi,'NPL'],[/\bnon\s*performing\b/gi,'NPL'],
+    [/\bp\s*t\s*p\b/gi,'PTP'],[/\bpromise\s*to\s*pay\b/gi,'PTP'],
+    [/\bspdca\b/gi,'SPDCA'],[/\bspd\s*ca\b/gi,'SPDCA'],
+    [/\bjom\s*pay\b/gi,'JomPay'],[/\bjompay\b/gi,'JomPay'],
+    [/\bfpx\b/gi,'FPX'],[/\bringgit\s*malaysia\b/gi,'RM'],
+    // Frasa common yang slalu silap
+    [/\bnew\s*vest\b/gi,'Newvest'],[/\bnew\s*face\b/gi,'New Face'],
+    [/\bdc\s*a\b/gi,'DCA'],[/\bde\s*ce\s*a\b/gi,'DCA'],
+    [/\bwhat\s*sapp\b/gi,'WhatsApp'],[/\bwhat\s*app\b/gi,'WhatsApp'],
+  ];
+  function correctSTT(text){
+    let t=text;
+    STT_CORRECTIONS.forEach(([pattern,replacement])=>{t=t.replace(pattern,replacement);});
+    return t;
+  }
+
   recognition.onresult=(e)=>{
     let interim='',final='';
     for(let i=e.resultIndex;i<e.results.length;i++){
@@ -1351,7 +1376,8 @@ function stopRec(){
   isRecording=false;
 }
 
-async function processSpeech(text){
+async function processSpeech(rawText){
+  const text=correctSTT(rawText); // betulkan STT errors sebelum hantar ke AI & transcript
   const lt=document.getElementById('liveText');if(lt)lt.textContent='';
   setMicState('thinking','⏳','AI sedang berfikir...');setStatus('','AI sedang berfikir...');
   addBubble('collector',text);callHistory.push({role:'user',content:text});
