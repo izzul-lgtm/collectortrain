@@ -769,7 +769,6 @@ async function openAddScenario(existingId){
     </div>
   </div>
   <div class="form-row"><label>Tajuk Senario</label><input id="scTitle" value="${s?s.title:''}" placeholder="Penghutang Bekerjasama" /></div>
-  <div class="form-row"><label>Keterangan Ringkas</label><input id="scDesc" value="${s?s.desc:''}" placeholder="Lupa bayar, mudah dibujuk..." /></div>
   <div class="two-col">
     <div class="form-row"><label>Jumlah Hutang</label><input id="scAmount" value="${s?s.amount:'RM5,000'}" /></div>
     <div class="form-row"><label>Hari Tertunggak</label><input id="scDays" value="${s?s.days:30}" type="number" /></div>
@@ -917,7 +916,6 @@ async function saveScenario(existingId){
     gender,accent,
     voiceId:resolveVoiceId(gender,accent),
     title:document.getElementById('scTitle').value.trim(),
-    desc:document.getElementById('scDesc').value.trim(),
     amount:document.getElementById('scAmount').value.trim(),
     days:parseInt(document.getElementById('scDays').value)||30,
     level:document.getElementById('scLevel').value,
@@ -1099,7 +1097,13 @@ function getSysPrompt(){
 
   const groundingBlock=`\n\nPENTING — FAKTA DI ATAS ADALAH TETAP. Jika collector sebut jumlah, tarikh, atau maklumat akaun yang BERBEZA daripada fakta di atas, JANGAN terus bersetuju. Bertindak realistik — keliru, tanya balik, atau betulkan collector. Contoh: "Eh, bukan ke hutang saya ${scenario.amount}? Kenapa awak sebut lain pula?" atau "Saya tak pasti nombor tu betul ke tak, boleh check balik?". Jangan akur jika maklumat tidak konsisten.`;
 
-  const naturalBlock=`\n\nCARA BERCAKAP (WAJIB IKUT):\n- Jawab PENDEK dan NATURAL — 1 hingga 3 ayat sahaja setiap giliran, macam orang bercakap telefon sebenar\n- JANGAN tulis ayat panjang berjela atau formal macam surat\n- Sebut nombor dan wang secara lisan: RM${scenario.amount} sebut sebagai "${spokenAmount}", no telefon sebut digit demi digit\n- Boleh guna bunyi natural: "hmm", "ha?", "eh", "ok ok", "ha ye", "ala..." mengikut situasi\n- Kadang-kadang boleh potong cakap, tanya balik, atau tergantung ayat kalau rasa keliru\n- Reaksi MESTI sesuai dengan watak dan situasi — kalau penghutang kata sibuk, dia tak bagi masa panjang`;
+  const levelBehaviour={
+    easy:`Aras Mudah — anda adalah penghutang yang MUDAH dilayan: cepat akur bila diberi alasan munasabah, tidak banyak bantahan, bersedia bagi PTP kalau diminta dengan baik, nada agak cooperative walaupun ada sedikit keberatan awal.`,
+    med:`Aras Sederhana — anda adalah penghutang yang ADA RESISTANCE: bagi 1-2 bantahan atau alasan sebelum akur, perlu sedikit pujukan, mungkin minta masa lebih atau tawar PTP yang lewat, tapi akhirnya boleh reach agreement kalau collector approach dengan betul.`,
+    hard:`Aras Sukar — anda adalah penghutang yang DEGIL dan SUSAH DILAYAN: banyak bantahan, selalu potong cakap collector, bagi alasan berulang-ulang, emosi mudah naik, mungkin cuba letak telefon atau ugut nak report, SANGAT susah nak dapat PTP — collector kena kerja keras betul-betul baru dapat commitment.`
+  }[scenario.level||'med'];
+
+  const naturalBlock=`\n\nCARA BERCAKAP (WAJIB IKUT):\n- Jawab PENDEK dan NATURAL — 1 hingga 3 ayat sahaja setiap giliran, macam orang bercakap telefon sebenar\n- JANGAN tulis ayat panjang berjela atau formal macam surat\n- Sebut nombor dan wang secara lisan: RM${scenario.amount} sebut sebagai "${spokenAmount}", no telefon sebut digit demi digit\n- Boleh guna bunyi natural: "hmm", "ha?", "eh", "ok ok", "ha ye", "ala..." mengikut situasi\n- Kadang-kadang boleh potong cakap, tanya balik, atau tergantung ayat kalau rasa keliru\n- Reaksi MESTI sesuai dengan watak dan situasi — kalau penghutang kata sibuk, dia tak bagi masa panjang\n\nARAS KESUKARAN SENARIO INI: ${levelBehaviour}`;
   return base+accentBlock+naturalBlock+contextBlock+groundingBlock;
 }
 
