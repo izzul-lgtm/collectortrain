@@ -169,6 +169,8 @@ let currentUser=null, currentPage='';
 let scenario=null, callHistory=[], callSeconds=0, timerInterval=null;
 let recognition=null, isRecording=false, callActive=false;
 let audioQueue=[], isPlayingAudio=false, currentAudio=null;
+let micStream=null, micAudioCtx=null, micAnalyser=null, micLevelRAF=null;
+let micPeakSinceStart=0; // peak bunyi dikesan sejak recognition.onstart turn semasa
 let endCallInProgress=false; // guard: elak double-trigger (cth double-click/double-tap "Tamatkan Panggilan") hantar 2x evalCall() utk panggilan yang sama
 
 // ═══════════ AUTH ═══════════
@@ -443,6 +445,7 @@ function renderCallScreen(){
         <div class="mic-area">
           <div class="live-text" id="liveText"></div>
           <button class="mic-btn" id="micBtn" onclick="toggleMic()"><span id="micIcon">🎙</span></button>
+          <div class="mic-level-track"><div class="mic-level-fill" id="micLevelFill"></div></div>
           <div class="mic-label" id="micLabel">Tekan untuk bercakap</div>
         </div>
       </div>
@@ -1168,6 +1171,7 @@ CONTOH AYAT: "Aiyo why you call me one?", "Cannot lah, I no money now lah.", "Wa
 
 async function startCall(){
   activeVoiceId=null; // reset suara — akan pick baru untuk call ni
+  warmupMic(); // panaskan mic SEAWAL mungkin — sebelum collector sempat tekan butang mic (lihat nota di atas function warmupMic)
   callHistory=[];callSeconds=0;callActive=true;
   audioQueue=[];isPlayingAudio=false;
   if(currentAudio){currentAudio.pause();currentAudio=null;}
@@ -1192,6 +1196,7 @@ function stopCall(){
   if(recognition)try{recognition.stop();}catch(e){}
   if(currentAudio){currentAudio.pause();currentAudio=null;}
   audioQueue=[];isPlayingAudio=false;isRecording=false;
+  stopMicLevelMeter(); // lepas track mic — call dah tamat
 }
 
 async function endCall(){
@@ -1289,6 +1294,61 @@ function correctSTT(text){
   return t;
 }
 
+// ═══════════ MIC LEVEL METER (pre-warm + visual feedback) ═══════════
+// PUNCA BUG "mic tak detect, terpaksa cakap berulang-ulang": 2 sebab utama —
+// (1) getUserMedia/permission & (untuk headset Bluetooth) profile-switch
+//     HSP→HFP cuma start LEPAS collector tekan butang mic, ambil ~1-2 saat;
+//     sepanjang masa tu SpeechRecognition dah `start()` tapi mic belum betul²
+//     "live" → perkataan PERTAMA yang collector cakap terus hilang, baru
+//     perasan lepas dah cakap & kena ulang. Fix: warmupMic() dipanggil
+//     seawal startCall() — sebelum collector sempat tekan mic langsung —
+//     supaya permission & profile-switch siap dulu, recognition.start()
+//     lepas tu terus "panas".
+// (2) Takde sebarang visual feedback bunyi betul² masuk ke mic atau tak —
+//     collector cuma nampak ikon berkelip statik "Sedang rakam...", tak
+//     boleh self-diagnose sama ada isu di hardware/permission dia atau di
+//     app. Fix: bar level bunyi real-time bawah butang mic (#micLevelFill)
+//     supaya collector nampak SENDIRI kalau mic betul² detect bunyi —
+//     kalau bar tu tak gerak langsung walaupun dah cakap kuat, dia terus
+//     tahu masalah kat mic/permission dia, bukan app yang rosak.
+async function warmupMic(){
+  try{
+    if(micStream)return; // dah warm dari turn sebelum ni, skip
+    micStream=await navigator.mediaDevices.getUserMedia({audio:true});
+    micAudioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    const source=micAudioCtx.createMediaStreamSource(micStream);
+    micAnalyser=micAudioCtx.createAnalyser();
+    micAnalyser.fftSize=512;
+    source.connect(micAnalyser);
+    tickMicLevel();
+  }catch(e){
+    // Gagal warm-up awal — bukan fatal, SpeechRecognition akan minta
+    // permission sendiri bila recognition.start() dipanggil nanti (cuma
+    // collector tak dapat manfaat "panaskan awal" ni).
+    console.warn('Mic warm-up gagal:',e.message);
+  }
+}
+
+function tickMicLevel(){
+  if(!micAnalyser)return;
+  const data=new Uint8Array(micAnalyser.fftSize);
+  micAnalyser.getByteTimeDomainData(data);
+  let sum=0;
+  for(let i=0;i<data.length;i++){const v=(data[i]-128)/128;sum+=v*v;}
+  const level=Math.min(1,Math.sqrt(sum/data.length)*4); // RMS, di-scale supaya nampak jelas dalam bar
+  if(isRecording)micPeakSinceStart=Math.max(micPeakSinceStart,level);
+  const fill=document.getElementById('micLevelFill');
+  if(fill)fill.style.width=(isRecording?Math.round(level*100):0)+'%';
+  micLevelRAF=requestAnimationFrame(tickMicLevel);
+}
+
+function stopMicLevelMeter(){
+  if(micLevelRAF){cancelAnimationFrame(micLevelRAF);micLevelRAF=null;}
+  if(micStream){micStream.getTracks().forEach(t=>t.stop());micStream=null;}
+  if(micAudioCtx){try{micAudioCtx.close();}catch(e){}micAudioCtx=null;}
+  micAnalyser=null;
+}
+
 function startRec(retryCount){
   retryCount=retryCount||0;
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
@@ -1363,6 +1423,7 @@ function startRec(retryCount){
 
   recognition.onstart=()=>{
     isRecording=true;
+    micPeakSinceStart=0; // reset — ukur peak bunyi untuk turn baru ni je
     setMicState('recording','🎙','Sedang rakam...');
     setStatus('red','Anda sedang bercakap...');
   };
@@ -1400,7 +1461,15 @@ function startRec(retryCount){
       return;
     }
     resetMicBtn();
-    const m={'not-allowed':'Mic tidak dibenarkan. Allow akses mikrofon.','no-speech':'Tiada suara dikesan. Cuba cakap lebih dekat dengan mic, atau tekan mikrofon sekali lagi.','network':'Ralat rangkaian. Sila semak sambungan internet & cuba lagi.'};
+    // Guna micPeakSinceStart (dari level meter) untuk bezakan 2 jenis
+    // "no-speech" — mic memang tak dengar APA-APA bunyi (isu hardware/
+    // permission/Bluetooth) lawan ada bunyi tapi STT tak dapat faham
+    // (cakap kurang jelas/laju). Mesej lain² supaya collector tahu nak
+    // buat apa, bukan cuma "ralat" generik.
+    const noSpeechMsg=micPeakSinceStart<0.05
+      ?'Mic tak mengesan SEBARANG bunyi. Cuba check setting privacy mic browser anda, pastikan headset/mic dipilih betul, atau cuba mic lain.'
+      :'Bunyi dikesan tapi tak dapat difahami. Cuba cakap lebih jelas, perlahan & dekat dengan mic.';
+    const m={'not-allowed':'Mic tidak dibenarkan. Allow akses mikrofon.','no-speech':noSpeechMsg,'network':'Ralat rangkaian. Sila semak sambungan internet & cuba lagi.'};
     setStatus('','⚠ '+(m[e.error]||'Ralat: '+e.error));
   };
 
