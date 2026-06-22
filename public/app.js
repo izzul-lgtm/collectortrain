@@ -1118,7 +1118,7 @@ CONTOH AYAT: "Aiyo why you call me one?", "Cannot lah, I no money now lah.", "Wa
   const accentBlock=`\n\nARAHAN BAHASA / LOGHAT (WAJIB IKUT — lebih utama daripada arahan lain): ${accentInstruction}`;
 
   // Tukar nombor telefon ke sebutan natural: 0142536985 → "oh satu empat dua lima tiga enam sembilan lapan lima"
-  const digitWord=['oh','satu','dua','tiga','empat','lima','enam','tujuh','lapan','sembilan'];
+  const digitWord=['kosong','satu','dua','tiga','empat','lima','enam','tujuh','lapan','sembilan'];
   function spokenPhone(num){
     return (num||'').replace(/\d/g,d=>digitWord[+d]).replace(/\s+/g,' ').trim();
   }
