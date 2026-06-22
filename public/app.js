@@ -1016,17 +1016,17 @@ async function deleteUser(id){
 // Bila start call baru, sistem random pilih satu suara yang belum pernah
 // dipakai dalam sesi terkini supaya tak bosan dengar suara sama
 const VOICE_POOL = {
-  male:  [
-    'PId0lEbL3SOYkQZSraml','d0grukerEzs069eKIauC','nfMYisZqs1GOjTFllho3',
-    'cHDwXsKG0qHMNLIjOusN','42bu2zNrjJXYzreZrTEu','Q2ELiWzbuj5F0eFHXK6S',
-    '1wuUVbmqPGK24IaC0QTh','15Y62ZlO8it2f5wduybx','qKNMkrcmsdf29T6K7Dbu',
-    'INmScOFtmeMGA4p0XRr1'
+  male: [
+    'd0grukerEzs069eKIauC','cHDwXsKG0qHMNLIjOusN','42bu2zNrjJXYzreZrTEu',
+    'Q2ELiWzbuj5F0eFHXK6S','1wuUVbmqPGK24IaC0QTh','dNnVzcebCLVAswzGKvfO',
+    'lMSqoJeA0cBBNA9FeHAs','SrWU271vZiNf2mrBhzL5','jtEc6V0BMZoMqpAMRJbl',
+    'lvNyQwaZPcGFiNUWWiVa'
   ],
-  female:[
-    'dNnVzcebCLVAswzGKvfO','lMSqoJeA0cBBNA9FeHAs','SrWU271vZiNf2mrBhzL5',
-    'jtEc6V0BMZoMqpAMRJbl','lvNyQwaZPcGFiNUWWiVa','vRaj2Gd0mefB1EU96ua2',
-    'WuePGPKIAIKI8COZpzce','GoGUcAZovo4MFeLxJdZd','XKMCahG4CffeDasU2nuT',
-    'brChkoggsUHF1stW6omH'
+  female: [
+    'PId0lEbL3SOYkQZSraml','nfMYisZqs1GOjTFllho3','vRaj2Gd0mefB1EU96ua2',
+    'INmScOFtmeMGA4p0XRr1','qKNMkrcmsdf29T6K7Dbu','15Y62ZlO8it2f5wduybx',
+    'GlqBE2PF88HyOJJBxQ9T','ZSNL4hPqCnqoMPaI4jGX','MpbYQvoTmXjHkaxtLiSh',
+    'onQAwbsky3pmzMu2uapN'
   ]
 };
 
