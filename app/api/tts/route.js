@@ -18,10 +18,12 @@ export async function POST(request) {
     return Response.json({ error: "Body request tidak sah." }, { status: 400 });
   }
 
-  const { text, voiceId } = body || {};
+  const { text, voiceId, voiceSettings } = body || {};
   if (!text || !voiceId) {
     return Response.json({ error: "'text' dan 'voiceId' diperlukan." }, { status: 400 });
   }
+  // Guna voiceSettings dari client (emotion-aware) atau default
+  const settings = voiceSettings || { stability: 0.5, similarity_boost: 0.75, style: 0.4 };
 
   // Basic guardrail against runaway/abusive requests racking up usage on
   // the shared key — not a substitute for real per-user auth, see README.
@@ -40,10 +42,10 @@ export async function POST(request) {
           text: safeText,
           model_id: "eleven_multilingual_v2",
           voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.75,
-            style: 0.4,
-            use_speaker_boost: true,
+            stability: settings.stability ?? 0.5,
+            similarity_boost: settings.similarity_boost ?? 0.75,
+            style: settings.style ?? 0.4,
+            use_speaker_boost: settings.use_speaker_boost ?? true,
           },
         }),
       }
