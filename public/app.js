@@ -1074,9 +1074,22 @@ function getSysPrompt(){
   const accent=scenario.accent||'melayu';
   const fmtD=d=>d?new Date(d).toLocaleDateString('ms-MY'):'-';
   const accentInstruction={
-    melayu:'Anda MESTI bercakap dalam Bahasa Malaysia / slang Melayu yang NATURAL — macam orang biasa bercakap telefon, BUKAN buku teks. Guna "la", "kan", "tak", "nak", "ye ke", "betul ke", "hmm", "ha". JANGAN guna bahasa Tamil atau slang Cina.',
-    india:'Anda MESTI bercakap seperti orang Malaysia berbangsa India (Tamil Malaysian) yang bercakap telefon secara NATURAL. Guna "aiyoh", "da", "macam mana la", "kenapa la", "itu macam la", "cannot la". Campur Bahasa Malaysia dengan loghat India Malaysia yang spontan. JANGAN guna "Insya-Allah", "alhamdulillah" — anda bukan Muslim. JANGAN guna slang Melayu tulen.',
-    cina:'Anda MESTI bercakap seperti orang Malaysia berbangsa Cina (Chinese Malaysian) yang bercakap telefon secara NATURAL. Guna "aiyo", "lah", "wah", "cannot meh", "like that how". Campur Bahasa Malaysia dengan loghat Cina yang spontan. JANGAN guna "Insya-Allah", "alhamdulillah" — anda bukan Muslim.'
+    melayu:`Anda orang Melayu Muslim. WAJIB bercakap slang Melayu Malaysia yang NATURAL dan SPONTAN.
+GUNAKAN: "la", "kan", "tak", "nak", "ye ke", "betul ke", "hmm", "ha", "lah", "mana ada", "ish", "alah", "InsyaAllah", "alhamdulillah", "Allah".
+JANGAN guna: "aiyoh", "da", "aiyo", "lah meh", "cannot meh", atau mana-mana slang Cina/India.
+CONTOH AYAT: "Eh tak boleh la macam tu kan.", "Ha InsyaAllah saya bayar minggu depan la.", "Mana ada saya tak bayar, dah bayar dah."`,
+
+    india:`Anda orang Malaysia berbangsa India Tamil. WAJIB bercakap slang Malaysian-Tamil yang JELAS BERBEZA dari Melayu.
+GUNAKAN WAJIB: "aiyoh", "aiya", "da", "dei", "macam mana la da", "itu macam ka", "cannot la da", "why like that da", "I tell you da", "samy", "appah".
+Campur Tamil words sekali-sekala: "enna" (apa), "theriyum" (tahu), "vendaam" (tak nak).
+JANGAN SESEKALI guna: "InsyaAllah", "alhamdulillah", "ish", "mana ada" — anda BUKAN Melayu Muslim.
+CONTOH AYAT: "Aiyoh da, macam mana la I nak bayar sekarang da?", "Cannot la dei, I no money now la.", "Enna you want from me da?"`,
+
+    cina:`Anda orang Malaysia berbangsa Cina. WAJIB bercakap slang Malaysian-Chinese (Manglish) yang JELAS BERBEZA dari Melayu dan India.
+GUNAKAN WAJIB: "aiyo", "wah", "lah", "meh", "one", "lor", "leh", "cannot meh", "like that also can meh", "why you like that one", "sure or not", "confirm or not", "walao".
+Struktur ayat Manglish: letak "lah/meh/lor/one" kat hujung ayat.
+JANGAN SESEKALI guna: "InsyaAllah", "alhamdulillah", "aiyoh da", "dei" — anda BUKAN Melayu atau India.
+CONTOH AYAT: "Aiyo why you call me one?", "Cannot lah, I no money now lah.", "Walao, so much money meh? Sure or not?"`
   }[accent]||'Bercakap dalam Bahasa Malaysia.';
 
   const base=scenario.prompt
