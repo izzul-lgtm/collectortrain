@@ -26,13 +26,17 @@ export async function POST(request) {
     // smart_format: auto format nombor, tarikh, mata wang
     // punctuate: tambah tanda baca automatik
     // diarize: false — satu speaker je (collector)
+    // FIX: forward Content-Type sebenar dari browser (bukan hardcode audio/webm)
+    // Safari record dalam audio/mp4, Firefox dalam audio/ogg — hardcode audio/webm
+    // menyebabkan Deepgram silap decode, accuracy drop, collector kena repeat lebih selalu.
+    const contentType = request.headers.get('content-type') || 'audio/webm';
     const upstream = await fetch(
       'https://api.deepgram.com/v1/listen?model=nova-2&language=ms&smart_format=true&punctuate=true',
       {
         method: 'POST',
         headers: {
           Authorization: `Token ${apiKey}`,
-          'Content-Type': 'audio/webm',
+          'Content-Type': contentType,
         },
         body: audioBuffer,
       }
