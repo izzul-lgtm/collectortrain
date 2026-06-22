@@ -1027,6 +1027,20 @@ const VOICE_POOL = {
   ]
 };
 
+// PUNCA BUG "scenario gagal simpan / training tak match scenario yang
+// dicipta": fungsi resolveVoiceId() asalnya dipadam masa refactor ke
+// VOICE_POOL (commit b706d3c), tapi saveScenario() di bawah masih panggil
+// dia → ReferenceError senyap setiap kali tekan "Simpan", save fail tanpa
+// sebarang alert, DB kekal simpan rekod LAMA. Fix: letak balik
+// resolveVoiceId() sebagai placeholder ringkas — column `voice_id` di DB
+// masih NOT NULL jadi kena isi sesuatu, tapi nilai ni TAK dipakai untuk
+// playback sebenar (getVoiceId() di bawah random pick dari VOICE_POOL
+// ikut `gender` setiap kali call baru, bukan baca field voiceId ni).
+function resolveVoiceId(gender,accent){
+  const pool=gender==='female'?VOICE_POOL.female:VOICE_POOL.male;
+  return pool[0];
+}
+
 // Track suara yang dah dipakai — rotate supaya tak repeat
 let usedVoices=[];
 let activeVoiceId=null; // suara untuk sesi call semasa
