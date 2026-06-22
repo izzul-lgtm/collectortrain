@@ -134,7 +134,7 @@ function catIcon(cat){
 // Sokong sesi lama (format communication/empathy/compliance/effectiveness) & sesi baru (format scores{})
 function scoreRows(s){
   if(s.scores){
-    return SCORE_CATS.map(c=>[catLabel(c),s.scores[c]||0,20]);
+    return SCORE_CATS.map(c=>[catLabel(c),s.scores[c]||0,20,c,(s.scoreReasons&&s.scoreReasons[c])||'']);
   }
   return [['Komunikasi',s.communication||0,25],['Empati',s.empathy||0,25],['Pematuhan',s.compliance||0,25],['Keberkesanan',s.effectiveness||0,25]];
 }
@@ -479,13 +479,14 @@ function renderScoreScreen(){
       </div>
       ${s.harassmentRisk&&s.harassmentRisk!=='none'?`<div class="alert alert-err" style="display:block;margin-top:0">⚠ <strong>Isu Pematuhan/Harassment:</strong> ${s.harassmentNote||'Nada/ayat berisiko dikesan dalam panggilan ini.'}</div>`:''}
       <div class="score-rows">
-        ${scoreRows(s).map(([l,v,m])=>`
-        <div class="score-row">
-          <span>${l}</span>
-          <div style="display:flex;align-items:center;gap:10px">
-            <div class="score-bar-wrap"><div class="score-bar" style="width:${m?v/m*100:0}%;background:${v/m<0.5?'#E24B4A':v/m<0.75?'#F0AD4E':'var(--purple)'}"></div></div>
-            <span style="font-weight:600;color:var(--purple);min-width:40px;text-align:right">${v}/${m}</span>
+        ${scoreRows(s).map(([l,v,m,cat,reason])=>`
+        <div class="score-row" style="flex-direction:column;align-items:stretch;gap:4px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-weight:600">${l}</span>
+            <span style="font-weight:700;color:${v/m<0.5?'#E24B4A':v/m<0.75?'#F0AD4E':'var(--purple)'}">${v}/${m}</span>
           </div>
+          <div class="score-bar-wrap"><div class="score-bar" style="width:${m?v/m*100:0}%;background:${v/m<0.5?'#E24B4A':v/m<0.75?'#F0AD4E':'var(--purple)'}"></div></div>
+          ${reason?`<p style="font-size:12px;color:var(--text2);margin:2px 0 0;line-height:1.5">${reason}</p>`:''}
         </div>`).join('')}
       </div>
     </div>
@@ -1391,7 +1392,7 @@ async function evalCall(duration){
 
   const prompt=`Anda seorang Quality Assurance Manager pakar debt collection di Malaysia. Tugas anda menilai prestasi COLLECTOR (BUKAN penghutang) dalam perbualan latihan di bawah secara KRITIKAL, SPESIFIK dan membina — fokus mencari kesilapan sebenar dan perkara yang sepatutnya dibuat tapi TIDAK dibuat, bukan pujian generik kosong.
 
-SENARIO: ${scenario?scenario.title:''} — ${scenario?scenario.desc:''}
+SENARIO: ${scenario?scenario.title:''}
 Nama Penghutang: ${scenario?scenario.name:''} | Jumlah Hutang: ${scenario?scenario.amount:''} | Tertunggak: ${scenario?scenario.days:''} hari
 Maklumat Akaun Pelanggan (rujukan untuk semak ketepatan notes collector): Client ${scenario?scenario.client||'-':'-'} | No. IC ${scenario?scenario.icNumber||'-':'-'} | Acc Number ${scenario?scenario.accNumber||'-':'-'} | Service No. ${scenario?scenario.serviceNo||'-':'-'} | Acc Type ${scenario?scenario.accType||'-':'-'} | Tarikh Daftar ${scenario?fmtD(scenario.registrationDate):'-'} | Tarikh Termination ${scenario?fmtD(scenario.terminationDate):'-'}
 Tahap Baki Hutang: ${tierLabel}. ${tierHint}
@@ -1407,9 +1408,11 @@ ${transcript}
 
 Masa Panggilan: ${duration}
 
+PENTING: Jika transcript amat pendek (kurang 5 giliran perbualan), tetap beri markah ADIL berdasarkan apa yang ADA — jangan bagi 2/20 secara default. Walaupun singkat, analisis nada, cara sebut nama, cara bagi salam/perkenalan, dan sama ada collector terus ke tujuan panggilan dengan betul.
+
 TUGAS ANDA — analisis transcript di atas baris demi baris, kemudian:
 
-1. Markah 5 aspek (setiap satu 0-20, jumlah maksimum 100):
+1. Markah 5 aspek (setiap satu 0-20, jumlah maksimum 100) DAN bagi "scoreReasons" — 1-2 ayat per kategori yang WAJIB sebut (a) apa yang collector buat/tidak buat dalam kategori tu, (b) contoh SPESIFIK dari transcript (petik ayat pendek atau situasi), dan (c) kenapa markah tu diberikan (bukan sekadar cakap "baik" atau "lemah" tanpa bukti):
    - tone: Nada & profesionalisme collector (sopan, tenang, tidak defensif/agresif)
    - delivery: Cara penyampaian — kejelasan, struktur ayat, kawalan perbualan
    - counter: Keberkesanan hujah balas (counter) terhadap bantahan/dalih/emosi penghutang
@@ -1430,11 +1433,11 @@ TUGAS ANDA — analisis transcript di atas baris demi baris, kemudian:
 6. feedback: ringkasan keseluruhan 3-4 ayat dalam Bahasa Malaysia, nada membina (constructive coaching), bukan menghukum. WAJIB spesifik kepada panggilan ini (rujuk isu/kekuatan sebenar dari transcript, bukan ayat generik macam "secara keseluruhan baik"), dan tutup dengan 1 ayat galakan/arah tindakan konkrit untuk sesi latihan akan datang — bukan sekadar pujian kosong.
 
 Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
-{"totalScore":<0-100>,"scores":{"tone":<0-20>,"delivery":<0-20>,"counter":<0-20>,"action":<0-20>,"balance":<0-20>},"strengths":["..."],"missed":[{"category":"tone|delivery|counter|action|balance","issue":"...","suggestion":"...","quote":"..."}],"harassmentRisk":"none|low|medium|high","harassmentNote":"","priorityFocus":{"category":"tone|delivery|counter|action|balance","tip":"..."},"feedback":"..."}`;
+{"totalScore":<0-100>,"scores":{"tone":<0-20>,"delivery":<0-20>,"counter":<0-20>,"action":<0-20>,"balance":<0-20>},"scoreReasons":{"tone":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","delivery":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","counter":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","action":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","balance":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript"},"strengths":["..."],"missed":[{"category":"tone|delivery|counter|action|balance","issue":"...","suggestion":"...","quote":"..."}],"harassmentRisk":"none|low|medium|high","harassmentNote":"","priorityFocus":{"category":"tone|delivery|counter|action|balance","tip":"..."},"feedback":"..."}`;
 
   try{
     const res=await fetch('/api/claude',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:2200,messages:[{role:'user',content:prompt}]})});
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:3000,messages:[{role:'user',content:prompt}]})});
     const data=await res.json();
     const raw=(data.content?.[0]?.text||'{}').replace(/```json|```/g,'').trim();
     let r;
@@ -1463,6 +1466,7 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
       scenarioName:scenario?scenario.title:'',duration,date:new Date().toISOString(),
       totalScore,scores,
       strengths:Array.isArray(r.strengths)?r.strengths:[],
+      scoreReasons:r.scoreReasons||{},
       missed,priorityFocus,
       harassmentRisk,
       harassmentNote:r.harassmentNote||'',
