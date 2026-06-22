@@ -1227,7 +1227,7 @@ function startRec(retryCount){
   // sempat masuk transcript pun). Fix: reset timer pada SETIAP hasil (final
   // ATAU interim), dan bila timer fire, hantar gabungan final+interim supaya
   // tak ada perkataan terakhir yang hilang.
-  const SILENCE_MS=2200; // naik dari 1500ms → lebih ruang utk pause natural
+  const SILENCE_MS=1500; // 1500ms — cukup untuk pause natural, tak terlalu lambat
 
   // PUNCA BUG "suara tak detect / ralat / tak stable":
   // webkitSpeechRecognition Chrome bergantung pada round-trip rangkaian ke
@@ -1262,9 +1262,13 @@ function startRec(retryCount){
     const text=currentText();
     if(text.length>1){
       dispatched=true;
+      lastFinal='';lastInterim='';
       processSpeech(text);
+    } else {
+      // Tiada teks — reset dan restart mic supaya collector boleh cuba semula
+      lastFinal='';lastInterim='';
+      if(callActive&&!isRecording)startRec();
     }
-    lastFinal='';lastInterim='';
   }
 
   function armSilenceTimer(){
@@ -1386,7 +1390,8 @@ async function processSpeech(rawText){
       body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:200,system:getSysPrompt(),messages:callHistory})});
     const data=await res.json();
     const reply=data.content?.[0]?.text||'Hmm...';
-    callHistory.push({role:'assistant',content:reply});addBubble('debtor',reply);speakEl(reply);
+    callHistory.push({role:'assistant',content:reply});addBubble('debtor',reply);
+    speakEl(reply);
   }catch(e){addBubble('debtor','[Ralat AI. Cuba lagi.]');resetMicBtn();setStatus('green','Tekan mikrofon untuk bercakap.');}
 }
 
