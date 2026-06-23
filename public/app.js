@@ -1400,6 +1400,50 @@ function correctSTT(text) {
 }
 
 // ═══════════ MIC LEVEL METER ═══════════
+// FIX: dulu ada 2 cara kira "level" berbeza (meter visual guna ×4 scaling,
+// silence detector guna raw RMS) — tukar jadi SATU helper supaya semua bahagian
+// (meter, silence detect, ambient calibration, peak tracking) guna unit yang sama.
+function getMicRMS() {
+  if (!micAnalyser) return 0;
+  const data = new Uint8Array(micAnalyser.fftSize);
+  micAnalyser.getByteTimeDomainData(data);
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
+  return Math.sqrt(sum / data.length);
+}
+
+// FIX (auto-calibrate ikut bilik/mic sebenar): dulu SILENCE_THRESHOLD nombor
+// hardcode (0.02, lepas tu 0.012) — nombor yang sama boleh "betul" untuk satu
+// mic/bilik tapi "salah" untuk yang lain (noise floor setiap setup lain-lain).
+// Sample ambient noise level secara berterusan SEMASA TAK RECORDING, supaya kita
+// tahu "senyap sebenar" tu berapa untuk setup semasa, baru threshold dikira
+// relatif kepada tu — bukan teka nombor fixed.
+let ambientSamples = [];
+let ambientSampleInterval = null;
+
+function startAmbientCalibration() {
+  if (ambientSampleInterval) return;
+  ambientSampleInterval = setInterval(() => {
+    if (!micAnalyser || isRecording) return; // hanya sample bila TAK recording (anggap senyap)
+    ambientSamples.push(getMicRMS());
+    if (ambientSamples.length > 40) ambientSamples.shift(); // ~6 saat rolling window (150ms x 40)
+  }, 150);
+}
+
+function stopAmbientCalibration() {
+  if (ambientSampleInterval) { clearInterval(ambientSampleInterval); ambientSampleInterval = null; }
+  ambientSamples = [];
+}
+
+function getAdaptiveSilenceThreshold() {
+  if (ambientSamples.length < 5) return 0.02; // belum cukup sample, fallback default
+  const sorted = [...ambientSamples].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)]; // median — tahan terhadap noise spike sekejap (cth: kerusi berderak)
+  // Threshold = noise floor + margin. Clamp supaya tak terlalu sensitive (room sangat senyap)
+  // atau terlalu "buta" (room agak bising).
+  return Math.min(0.06, Math.max(0.014, median * 1.7 + 0.006));
+}
+
 async function warmupMic() {
   try {
     if (micStream) return;
@@ -1410,6 +1454,7 @@ async function warmupMic() {
     micAnalyser.fftSize = 512;
     source.connect(micAnalyser);
     tickMicLevel();
+    startAmbientCalibration();
   } catch (e) {
     console.warn('Mic warm-up gagal:', e.message);
   }
@@ -1417,19 +1462,17 @@ async function warmupMic() {
 
 function tickMicLevel() {
   if (!micAnalyser) return;
-  const data = new Uint8Array(micAnalyser.fftSize);
-  micAnalyser.getByteTimeDomainData(data);
-  let sum = 0;
-  for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
-  const level = Math.min(1, Math.sqrt(sum / data.length) * 4);
-  if (isRecording) micPeakSinceStart = Math.max(micPeakSinceStart, level);
+  const rms = getMicRMS();
+  const visualLevel = Math.min(1, rms * 4); // scaling khusus untuk visual bar je
+  if (isRecording) micPeakSinceStart = Math.max(micPeakSinceStart, rms);
   const fill = document.getElementById('micLevelFill');
-  if (fill) fill.style.width = (isRecording ? Math.round(level * 100) : 0) + '%';
+  if (fill) fill.style.width = (isRecording ? Math.round(visualLevel * 100) : 0) + '%';
   micLevelRAF = requestAnimationFrame(tickMicLevel);
 }
 
 function stopMicLevelMeter() {
   if (micLevelRAF) { cancelAnimationFrame(micLevelRAF); micLevelRAF = null; }
+  stopAmbientCalibration();
   if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
   if (micAudioCtx) { try { micAudioCtx.close(); } catch (e) { } micAudioCtx = null; }
   micAnalyser = null;
@@ -1437,28 +1480,19 @@ function stopMicLevelMeter() {
 
 // ═══════════ AUTO-SILENCE DETECTION ═══════════
 // Bila collector berhenti cakap, auto-stop recording dan hantar.
-// Guna micAnalyser (dah ada dari level meter) untuk detect senyap.
-//
-// FIX (jangan potong tengah ayat): threshold/duration asal (0.02 / 1.5s) terlalu
-// agresif — collector yang cakap perlahan (jarak dari mic) atau bilik yang sikit
-// bising (background call-center noise) akan ada RMS level yang sentiasa borderline
-// dekat 0.02, jadi recording auto-stop SEBELUM collector habis cakap → bahagian
-// hujung ayat tak sempat dirakam → Deepgram terima clip pendek/separuh → rasa "tak
-// detect apa kita cakap". Threshold diturunkan (lagi sukar dianggap senyap) dan
-// tempoh senyap dinaikkan sikit (lagi toleran pada pause semula jadi bila collector
-// berfikir sekejap) supaya ayat penuh sempat dirakam dulu sebelum auto-stop.
+// Threshold sekarang DIKIRA semasa setiap recording start (snapshot ambient
+// floor terkini), bukan nombor fixed — adapt automatik ikut bilik/mic semasa.
+let lastSilenceThreshold = 0.02; // disimpan supaya onstop boleh check "ada cakap sebenar tak"
 function startSilenceDetection() {
-  const SILENCE_THRESHOLD = 0.012; // turun dari 0.02 — kurang false-positive "senyap" semasa cakap perlahan
-  const SILENCE_MS = 2200;         // naik dari 1500 — bagi ruang pause semula jadi tengah ayat
+  const SILENCE_THRESHOLD = getAdaptiveSilenceThreshold();
+  lastSilenceThreshold = SILENCE_THRESHOLD;
+  const SILENCE_MS = 2000;
   let silenceStart = null;
+  console.log('[STT debug] silence threshold (adaptive):', SILENCE_THRESHOLD.toFixed(4));
 
   silenceDetectInterval = setInterval(() => {
     if (!micAnalyser || !isRecording) return;
-    const data = new Uint8Array(micAnalyser.fftSize);
-    micAnalyser.getByteTimeDomainData(data);
-    let sum = 0;
-    for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
-    const level = Math.sqrt(sum / data.length);
+    const level = getMicRMS();
 
     // Jangan trigger auto-stop dalam 1 saat pertama — bagi masa collector mula cakap
     const elapsed = Date.now() - recordingStartTime;
@@ -1477,6 +1511,7 @@ function startSilenceDetection() {
     }
   }, 100);
 }
+
 
 function stopSilenceDetection() {
   if (silenceDetectInterval) { clearInterval(silenceDetectInterval); silenceDetectInterval = null; }
@@ -1504,6 +1539,7 @@ async function startRec() {
       micAnalyser.fftSize = 512;
       source.connect(micAnalyser);
       tickMicLevel();
+      startAmbientCalibration();
     } catch (e) {
       setStatus('', '⚠ Mic tidak dibenarkan. Allow akses mikrofon dalam browser.');
       return;
@@ -1529,8 +1565,25 @@ async function startRec() {
     setMicState('thinking', '⏳', 'Memproses audio...');
     setStatus('', 'Memproses...');
 
+    const recDurationMs = Date.now() - recordingStartTime;
+    console.log('[STT debug] recording duration:', recDurationMs, 'ms | chunks:', audioChunks.length,
+      '| peak RMS:', micPeakSinceStart.toFixed(4), '| threshold used:', lastSilenceThreshold.toFixed(4));
+
     if (audioChunks.length === 0) {
       setStatus('green', 'Tekan mikrofon untuk bercakap.');
+      return;
+    }
+
+    // FIX (elak hantar clip "kosong" ke Deepgram): kalau peak volume sepanjang
+    // recording tak pernah naik jauh atas ambient floor, kemungkinan besar collector
+    // tak sempat cakap (cth: tersilap tekan, atau cakap terlalu jauh dari mic) — bukan
+    // Deepgram yang silap. Bagi feedback terus kat sini, jangan hantar API call yang
+    // memang akan balik kosong (jimat masa + jimat duit Deepgram credit jugak).
+    if (micPeakSinceStart < lastSilenceThreshold * 1.4) {
+      console.warn('[STT debug] peak terlalu rendah berbanding ambient — skip hantar ke Deepgram');
+      audioChunks = [];
+      setStatus('', '⚠ Tak nampak ada suara dikesan. Cuba cakap lebih dekat/lebih kuat dgn mic.');
+      resetMicBtn();
       return;
     }
 
@@ -1562,10 +1615,15 @@ async function startRec() {
         data = await callSTT();
       }
 
+      console.log('[STT debug] blob size:', audioBlob.size, 'bytes | transcript:', JSON.stringify(data.transcript),
+        '| confidence:', data.confidence);
+
       const transcript = (data.transcript || '').trim();
       if (!transcript) {
-        // Tiada teks — mungkin senyap atau noise je
-        setStatus('green', 'Tekan mikrofon untuk bercakap.');
+        // Tiada teks — audio ada dihantar (peak check dah lepas), tapi Deepgram balas
+        // kosong. Ini BUKAN "tiada suara" — kemungkinan isu format/encoding/upstream.
+        // Console log di atas akan tunjuk blob size sebenar untuk debug lanjut.
+        setStatus('', '⚠ Tak dapat transkrip ayat tu — cuba cakap lagi sekali.');
         resetMicBtn();
         return;
       }
