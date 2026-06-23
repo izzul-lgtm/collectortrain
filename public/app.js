@@ -251,18 +251,10 @@ function initApp(){
 
 function buildNav(){
   const nav=document.getElementById('sidebarNav');
-  // FIX (parity admin/manager vs collector): renderTraining() & renderMyHistory()
-  // dah generic dari awal (guna currentUser.id, tak ada check role) — tapi
-  // admin/manager nav (adminItems) tak pernah sertakan dua page ni, jadi
-  // admin/manager TAK BOLEH buat sesi latihan suara sendiri (cth nak test
-  // senario baru yang baru dicipta sendiri) atau tengok rekod sesi sendiri
-  // kalau pernah cuba — walaupun underlying function dah sedia boleh.
-  // Letak 'training' & 'my-history' selepas Dashboard supaya admin/manager
-  // boleh terus cuba latihan, sebelum bahagian "urus & pantau" yang lain.
+  // Admin/manager tidak buat call — tiada Latihan Suara atau Rekod Saya.
+  // Peranan diorang: pantau prestasi, urus senario, review sesi collector.
   const adminItems=[
     {page:'dashboard',icon:'📈',label:'Dashboard'},
-    {page:'training',icon:'🎯',label:'Latihan Suara'},
-    {page:'my-history',icon:'📊',label:'Rekod Saya'},
     {page:'collectors',icon:'👥',label:'Semua Collector'},
     {page:'sessions',icon:'📋',label:'Sesi Latihan'},
     {page:'scenarios',icon:'🎭',label:'Urus Senario'},
@@ -742,10 +734,13 @@ async function viewSession(id){
     <div style="font-size:12px;color:var(--text2);margin-top:4px">${s.priorityFocus.tip||''}</div>
   </div>
   <hr class="divider"/>`:''}
-  <div style="font-size:13px;font-weight:500;margin-bottom:8px">📝 Transcript</div>
-  <div style="max-height:220px;overflow-y:auto;background:var(--bg);border-radius:6px;padding:10px">
-    ${(s.transcript||[]).map(m=>`<div style="margin-bottom:8px"><div style="font-size:10px;color:var(--text3)">${m.role==='user'?(u?u.name:'Collector'):'Penghutang'}</div>
-    <div style="font-size:12px;line-height:1.5">${m.content}</div></div>`).join('')}
+  <div style="font-size:13px;font-weight:500;margin-bottom:8px">📝 Transcript Penuh</div>
+  <div style="background:var(--bg);border-radius:6px;padding:10px">
+    ${(s.transcript||[]).map(m=>`<div style="margin-bottom:10px">
+      <div style="font-size:10px;color:var(--text3);margin-bottom:2px">${m.role==='user'?(u?u.name:'Collector'):'Penghutang'}</div>
+      <div style="padding:6px 10px;border-radius:6px;font-size:12px;line-height:1.6;background:${m.role==='user'?'var(--purple-light)':'var(--surface)'};color:${m.role==='user'?'var(--purple)':'var(--text)'}">
+        ${m.content}
+      </div></div>`).join('')}
   </div>
   <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Tutup</button></div>`);
 }
@@ -1391,6 +1386,172 @@ function toggleMic() {
   else startRec();
 }
 
+// ═══════════ NOMBOR BM → DIGIT ═══════════
+// Deepgram language=ms tidak support smart_format Numerals — "dua ribu dua puluh enam"
+// kekal sebagai perkataan, bukan "2026". Kita convert sendiri, lebih predictable.
+// Dijalankan SELEPAS STT, SEBELUM STT_CORRECTIONS dan hantar ke AI.
+// Hanya convert nombor yang dikenali — perkataan lain kekal tidak berubah.
+function convertBMNumbers(text) {
+  if (!text) return text;
+
+  // Unit asas (1-19)
+  const ONES = {
+    'kosong': 0, 'satu': 1, 'dua': 2, 'tiga': 3, 'empat': 4, 'lima': 5,
+    'enam': 6, 'tujuh': 7, 'lapan': 8, 'sembilan': 9, 'sepuluh': 10,
+    'sebelas': 11, 'dua belas': 12, 'tiga belas': 13, 'empat belas': 14,
+    'lima belas': 15, 'enam belas': 16, 'tujuh belas': 17,
+    'lapan belas': 18, 'sembilan belas': 19
+  };
+  // Puluhan (20-90)
+  const TENS = {
+    'dua puluh': 20, 'tiga puluh': 30, 'empat puluh': 40, 'lima puluh': 50,
+    'enam puluh': 60, 'tujuh puluh': 70, 'lapan puluh': 80, 'sembilan puluh': 90
+  };
+
+  // Parse satu "nombor BM" dari senarai token (rekursif ke bawah)
+  // Pulangkan { value: <number>, consumed: <bilangan token yang dipakai> } atau null
+  function parseNum(tokens, i) {
+    if (i >= tokens.length) return null;
+
+    let val = 0;
+    let start = i;
+
+    // ── Juta ──
+    // "X juta [Y]" — X boleh jadi nombor (rekursif) atau "se"
+    const jutaMatch = /^(se)?juta$/.test(tokens[i]) && i > start
+      ? null // akan handle di bawah
+      : null;
+    // (handle juta selepas kumpul sub-value, lihat bawah)
+
+    // ── Ratus ──
+    // "seratus", "dua ratus", ...
+    if (tokens[i] === 'seratus') { val += 100; i++; }
+    else if (i + 1 < tokens.length && tokens[i + 1] === 'ratus') {
+      const h = ONES[tokens[i]];
+      if (h !== undefined && h >= 2 && h <= 9) { val += h * 100; i += 2; }
+    }
+
+    // ── Puluhan ──
+    // Cek "dua belas", "tiga belas" etc dulu (2-token)
+    const twoTok = tokens.slice(i, i + 2).join(' ');
+    if (ONES[twoTok] !== undefined) { val += ONES[twoTok]; i += 2; }
+    // Kemudian "dua puluh", "tiga puluh" etc
+    else if (TENS[twoTok] !== undefined) {
+      val += TENS[twoTok]; i += 2;
+      // Cek unit selepas: "dua puluh satu", "tiga puluh lapan"
+      if (i < tokens.length && ONES[tokens[i]] !== undefined && ONES[tokens[i]] > 0) {
+        val += ONES[tokens[i]]; i++;
+      }
+    }
+    // Unit tunggal (1-10)
+    else if (ONES[tokens[i]] !== undefined) { val += ONES[tokens[i]]; i++; }
+
+    if (i === start) return null; // tiada token dikenali
+    return { value: val, consumed: i - start };
+  }
+
+  // Tukar frasa nombor BM dalam teks kepada digit
+  // Strategi: scan token demi token, try parse, ganti kalau berjaya
+  function replaceBMNums(str) {
+    // Normalize: lowercase, trim, strip tanda baca dalam nombor
+    // Tapi jangan lowercase KESELURUHAN teks — hanya untuk lookup
+    const lower = str.toLowerCase();
+    const tokens = lower.split(/\s+/);
+    const origTokens = str.split(/\s+/); // jaga kes asal untuk token yang tak ditukar
+    const result = [];
+    let i = 0;
+
+    while (i < tokens.length) {
+      // Cuba parse nombor dari posisi i
+      // Cek "seribu", "dua ribu", ... + optional ratus/puluhan
+      let numVal = null;
+      let consumed = 0;
+
+      // ── Ribu ──
+      if (tokens[i] === 'seribu') {
+        numVal = 1000; consumed = 1; i++;
+        // Tambah bawah seribu: "seribu lapan ratus lima puluh"
+        const sub = parseNum(tokens, i);
+        if (sub && sub.value < 1000) { numVal += sub.value; consumed += sub.consumed; i += sub.consumed; }
+      } else {
+        // Cek "X ribu" — X boleh ratus/puluhan/ones sebelum "ribu"
+        // Scan ke hadapan untuk cari "ribu"
+        let peekVal = 0; let peekConsumed = 0; let j = i;
+
+        // Cek ratus dulu
+        if (tokens[j] === 'seratus') { peekVal = 100; peekConsumed++; j++; }
+        else if (j + 1 < tokens.length && tokens[j + 1] === 'ratus') {
+          const h = ONES[tokens[j]];
+          if (h >= 2 && h <= 9) { peekVal = h * 100; peekConsumed += 2; j += 2; }
+        }
+        // Cek puluhan/ones
+        const twoTok = tokens.slice(j, j + 2).join(' ');
+        if (ONES[twoTok] !== undefined) { peekVal += ONES[twoTok]; peekConsumed += 2; j += 2; }
+        else if (TENS[twoTok] !== undefined) {
+          peekVal += TENS[twoTok]; peekConsumed += 2; j += 2;
+          if (j < tokens.length && ONES[tokens[j]] !== undefined && ONES[tokens[j]] > 0) {
+            peekVal += ONES[tokens[j]]; peekConsumed++; j++;
+          }
+        } else if (ONES[tokens[j]] !== undefined) { peekVal += ONES[tokens[j]]; peekConsumed++; j++; }
+
+        if (j < tokens.length && tokens[j] === 'ribu' && peekConsumed > 0) {
+          numVal = peekVal * 1000; consumed = peekConsumed + 1; i = j + 1;
+          // Tambah bawah ribu
+          const sub = parseNum(tokens, i);
+          if (sub && sub.value < 1000) { numVal += sub.value; consumed += sub.consumed; i += sub.consumed; }
+        }
+      }
+
+      if (numVal !== null) {
+        // Berjaya parse nombor BM — ganti dengan digit
+        result.push(String(numVal));
+      } else {
+        // Cek nombor biasa (ratus/puluhan/ones tanpa ribu)
+        const plain = parseNum(tokens, i);
+        if (plain && plain.value > 0) {
+          // Hanya convert kalau bukan perkataan biasa yang kebetulan sama
+          // (cth "satu" dalam "satu hal" — terlalu aggressive kalau selalu tukar)
+          // Tukar JIKA ada context nombor (ada "RM", "ringgit", "tahun", "bulan", "hari", "sen" selepas)
+          const nextTok = tokens[i + plain.consumed] || '';
+          const prevTok = result.length > 0 ? result[result.length - 1].toLowerCase() : '';
+          const isNumContext = /^(rm|ringgit|tahun|bulan|hari|sen|%|peratus|sesi|kali|jam|minit)$/.test(nextTok)
+            || /^(rm|ringgit|dalam|lebih|bawah|atas|sekitar|dalam|antara|hanya|cuma|sejumlah)$/.test(prevTok)
+            || (plain.value >= 100); // nilai besar (100+) lebih selamat untuk convert
+          if (isNumContext) {
+            result.push(String(plain.value));
+            i += plain.consumed;
+          } else {
+            result.push(origTokens[i] || tokens[i]);
+            i++;
+          }
+        } else {
+          result.push(origTokens[i] || tokens[i]);
+          i++;
+        }
+      }
+    }
+
+    return result.join(' ');
+  }
+
+  // Spesial: tukar tahun BM → digit (lebih aggressive sebab tahun selalu nombor)
+  // "dua ribu dua puluh enam" → "2026"
+  // Ini handled oleh replaceBMNums() di atas (>= 2000 → tukar), tapi tambah
+  // frasa "tahun" + BM sebagai hint kalau replaceBMNums tak catch
+  let t = str;
+  // Normalkan "dua puluh" yang mungkin di-STT-kan terpisah dengan dash/space
+  t = t.replace(/dua\s*-\s*puluh/gi, 'dua puluh')
+       .replace(/tiga\s*-\s*puluh/gi, 'tiga puluh')
+       .replace(/empat\s*-\s*puluh/gi, 'empat puluh')
+       .replace(/lima\s*-\s*puluh/gi, 'lima puluh')
+       .replace(/enam\s*-\s*puluh/gi, 'enam puluh')
+       .replace(/tujuh\s*-\s*puluh/gi, 'tujuh puluh')
+       .replace(/lapan\s*-\s*puluh/gi, 'lapan puluh')
+       .replace(/sembilan\s*-\s*puluh/gi, 'sembilan puluh');
+  t = replaceBMNums(t);
+  return t;
+}
+
 // Kamus pembetulan STT — masih dipakai untuk betulkan output Deepgram
 const STT_CORRECTIONS = [
   // ── Telco / brand names ──
@@ -1699,7 +1860,9 @@ function stopRec() {
 }
 
 async function processSpeech(rawText){
-  const text=correctSTT(rawText); // betulkan STT errors sebelum hantar ke AI & transcript
+  // Pipeline: STT raw → convert nombor BM → STT corrections → AI
+  const withNums=convertBMNumbers(rawText);
+  const text=correctSTT(withNums); // betulkan STT errors selepas convert nombor
   const lt=document.getElementById('liveText');if(lt)lt.textContent='';
   setMicState('thinking','⏳','AI sedang berfikir...');setStatus('','AI sedang berfikir...');
   // Push ke full transcript (untuk eval) DAN callHistory (untuk API)
