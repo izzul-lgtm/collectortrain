@@ -1436,11 +1436,20 @@ function stopMicLevelMeter() {
 }
 
 // ═══════════ AUTO-SILENCE DETECTION ═══════════
-// Bila collector berhenti cakap 2.5 saat, auto-stop recording dan hantar
-// Guna micAnalyser (dah ada dari level meter) untuk detect senyap
+// Bila collector berhenti cakap, auto-stop recording dan hantar.
+// Guna micAnalyser (dah ada dari level meter) untuk detect senyap.
+//
+// FIX (jangan potong tengah ayat): threshold/duration asal (0.02 / 1.5s) terlalu
+// agresif — collector yang cakap perlahan (jarak dari mic) atau bilik yang sikit
+// bising (background call-center noise) akan ada RMS level yang sentiasa borderline
+// dekat 0.02, jadi recording auto-stop SEBELUM collector habis cakap → bahagian
+// hujung ayat tak sempat dirakam → Deepgram terima clip pendek/separuh → rasa "tak
+// detect apa kita cakap". Threshold diturunkan (lagi sukar dianggap senyap) dan
+// tempoh senyap dinaikkan sikit (lagi toleran pada pause semula jadi bila collector
+// berfikir sekejap) supaya ayat penuh sempat dirakam dulu sebelum auto-stop.
 function startSilenceDetection() {
-  const SILENCE_THRESHOLD = 0.02; // level RMS bawah ni = senyap (lebih sensitive dari 0.03)
-  const SILENCE_MS = 1500;        // 1.5 saat senyap → auto submit (dari 2.5s — kurang latency)
+  const SILENCE_THRESHOLD = 0.012; // turun dari 0.02 — kurang false-positive "senyap" semasa cakap perlahan
+  const SILENCE_MS = 2200;         // naik dari 1500 — bagi ruang pause semula jadi tengah ayat
   let silenceStart = null;
 
   silenceDetectInterval = setInterval(() => {
@@ -1476,6 +1485,14 @@ function stopSilenceDetection() {
 // ═══════════ START / STOP RECORDING ═══════════
 async function startRec() {
   if (isRecording) return;
+
+  // FIX: track boleh "mati" senyap-senyap (cth: tab kena freeze, OS cabut akses
+  // mic sekejap, headset bertukar device) — bila ni jadi, getUserMedia call asal
+  // still ada object micStream tapi track dah 'ended', so MediaRecorder akan
+  // rakam diam je → Deepgram balas transcript kosong → rasa macam "tak detect".
+  // Check track.readyState dan re-acquire kalau dah mati.
+  const trackDead = micStream && micStream.getAudioTracks().some(t => t.readyState === 'ended');
+  if (trackDead) { stopMicLevelMeter(); micStream = null; }
 
   // Pastikan ada mic stream (warmupMic dah panggil sebelum ni, tapi kalau gagal, cuba lagi)
   if (!micStream) {
@@ -1520,9 +1537,10 @@ async function startRec() {
     const audioBlob = new Blob(audioChunks, { type: mimeType || 'audio/webm' });
     audioChunks = [];
 
-    // Hantar ke /api/stt (Deepgram)
-    try {
-      setMicState('thinking', '⏳', 'Mentranskrip...');
+    // Hantar ke /api/stt (Deepgram) — retry SEKALI bila network blip (bukan bila
+    // Deepgram sendiri reject request), sebab tanpa retry, satu request gagal =
+    // collector kena ulang cakap balik dari awal = rasa "tak smooth".
+    async function callSTT() {
       const res = await fetch('/api/stt', {
         method: 'POST',
         headers: { 'Content-Type': mimeType || 'audio/webm' },
@@ -1530,6 +1548,19 @@ async function startRec() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'STT gagal');
+      return data;
+    }
+
+    try {
+      setMicState('thinking', '⏳', 'Mentranskrip...');
+      let data;
+      try {
+        data = await callSTT();
+      } catch (firstErr) {
+        // Cuba sekali lagi — kemungkinan network blip sekejap, bukan ralat tetap
+        setMicState('thinking', '⏳', 'Cuba semula...');
+        data = await callSTT();
+      }
 
       const transcript = (data.transcript || '').trim();
       if (!transcript) {
