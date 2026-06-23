@@ -55,9 +55,39 @@ export async function POST(request) {
     // bila ni jadi, cuba sekali lagi dengan model lain sebelum give up.
     const contentType = request.headers.get('content-type') || 'audio/webm';
 
+    // ── VOCAB BOOST: nama brand & istilah debt-collection yang Deepgram selalu
+    // silap dengar (RedOne, Celcom, Digi, Newvest, CTOS, PTP, dll). Dulu kita
+    // cuma "tampung" lepas silap jadi (STT_CORRECTIONS regex di app.js). Lagi
+    // baik betulkan di SUMBER — bagi Deepgram tahu istilah ni sebelum dia
+    // transcribe, supaya dia lagi cenderung dengar betul dari awal.
+    // - Nova-3: guna parameter `keyterm` (Keyterm Prompting — contextual, boleh
+    //   nama biasa & istilah pelbagai perkataan).
+    // - Nova-2 (fallback): `keyterm` TIDAK disokong — kena guna `keywords`
+    //   (lama, format beza: kena tambah intensifier cth "Celcom:2").
+    // STT_CORRECTIONS di app.js DIKEKALKAN sebagai safety-net peringkat ke-2 —
+    // keyterm tak 100% guarantee, jadi regex tetap tangkap yang masih tersilap.
+    const VOCAB_TERMS = [
+      'RedOne', 'Celcom', 'Digi', 'Maxis', 'U Mobile',
+      'CTOS', 'CCRIS', 'NPL', 'PTP', 'SPDCA', 'JomPay', 'FPX',
+      'Newvest', 'New Face', 'DCA', 'WhatsApp',
+      'AmBank', 'CIMB', 'Maybank', 'HLB', 'Public Bank',
+      'ringgit', 'hutang', 'bayar', 'ansuran', 'tertunggak', 'berjanji', 'janji',
+      'paylater', 'ewallet',
+    ];
+
+    function vocabQueryString(model) {
+      if (model === 'nova-2') {
+        // Keywords (Nova-2): format word:intensifier — intensifier sederhana (2)
+        // supaya tak over-boost & ganggu perkataan biasa lain.
+        return VOCAB_TERMS.map(t => `keywords=${encodeURIComponent(t + ':2')}`).join('&');
+      }
+      // Keyterm Prompting (Nova-3): plain string, satu parameter per term.
+      return VOCAB_TERMS.map(t => `keyterm=${encodeURIComponent(t)}`).join('&');
+    }
+
     async function callDeepgram(model) {
       const upstream = await fetch(
-        `https://api.deepgram.com/v1/listen?model=${model}&language=ms&smart_format=true&punctuate=true`,
+        `https://api.deepgram.com/v1/listen?model=${model}&language=ms&smart_format=true&punctuate=true&${vocabQueryString(model)}`,
         {
           method: 'POST',
           headers: {
