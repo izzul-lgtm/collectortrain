@@ -73,6 +73,25 @@ export async function POST(request) {
       'AmBank', 'CIMB', 'Maybank', 'HLB', 'Public Bank',
       'ringgit', 'hutang', 'bayar', 'ansuran', 'tertunggak', 'berjanji', 'janji',
       'paylater', 'ewallet',
+      // ── Frasa tahun (BM) ──
+      // PUNCA: Deepgram Numerals (auto-tukar perkataan→digit, cth "dua ribu
+      // dua puluh enam"→"2026") TIDAK menyokong bahasa Malaysia (ms) — list
+      // rasmi Deepgram cuma da/nl/en/fr/de/it/no/pl/pt/es/sv/ru/he/ro, ms tiada.
+      // Akibatnya tahun BM kekal sebagai RANGKAIAN beberapa perkataan ("dua
+      // ribu dua puluh enam" = 5 perkataan) berbanding English yang lagi
+      // ringkas ("twenty twenty-six" = 2 perkataan) — lagi banyak perkataan
+      // bersambung, lagi tinggi risiko SATU perkataan dalam rangkaian tu
+      // disalah dengar (cth "enam" jadi perkataan lain), dan seluruh tahun
+      // jadi salah sepenuhnya tanpa cara nak auto-betulkan (sebab feature
+      // format tu sendiri tak applicable untuk ms).
+      // FIX: boost setiap frasa tahun PENUH (bukan perkataan individu) sebagai
+      // SATU unit keyterm — bagi Deepgram lebih cenderung kenal seluruh
+      // rangkaian ni sekali gus, bukan cuba teka perkataan demi perkataan.
+      // Liputi julat tahun yang realistik untuk tarikh akaun/tertunggak dalam
+      // senario debt collection (~5 tahun ke belakang/depan dari semasa).
+      'dua ribu dua puluh dua', 'dua ribu dua puluh tiga', 'dua ribu dua puluh empat',
+      'dua ribu dua puluh lima', 'dua ribu dua puluh enam', 'dua ribu dua puluh tujuh',
+      'dua ribu dua puluh lapan',
     ];
 
     function vocabQueryString(model) {

@@ -251,8 +251,18 @@ function initApp(){
 
 function buildNav(){
   const nav=document.getElementById('sidebarNav');
+  // FIX (parity admin/manager vs collector): renderTraining() & renderMyHistory()
+  // dah generic dari awal (guna currentUser.id, tak ada check role) — tapi
+  // admin/manager nav (adminItems) tak pernah sertakan dua page ni, jadi
+  // admin/manager TAK BOLEH buat sesi latihan suara sendiri (cth nak test
+  // senario baru yang baru dicipta sendiri) atau tengok rekod sesi sendiri
+  // kalau pernah cuba — walaupun underlying function dah sedia boleh.
+  // Letak 'training' & 'my-history' selepas Dashboard supaya admin/manager
+  // boleh terus cuba latihan, sebelum bahagian "urus & pantau" yang lain.
   const adminItems=[
     {page:'dashboard',icon:'📈',label:'Dashboard'},
+    {page:'training',icon:'🎯',label:'Latihan Suara'},
+    {page:'my-history',icon:'📊',label:'Rekod Saya'},
     {page:'collectors',icon:'👥',label:'Semua Collector'},
     {page:'sessions',icon:'📋',label:'Sesi Latihan'},
     {page:'scenarios',icon:'🎭',label:'Urus Senario'},
