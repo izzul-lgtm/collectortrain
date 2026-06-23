@@ -29,14 +29,23 @@ export async function POST(request) {
     // Safari record dalam audio/mp4, Firefox dalam audio/ogg — hardcode audio/webm
     // menyebabkan Deepgram silap decode, accuracy drop, collector kena repeat lebih selalu.
     //
-    // FIX (Manglish accuracy): language=ms tadi adalah MONOLINGUAL Malay model.
-    // Bila collector campur perkataan English dalam ayat (cara kita cakap sebenar —
-    // "ringgit", "hutang", "bayar", "PTP" dicampur dengan English), model monolingual
-    // cuba paksa setiap bunyi jadi perkataan Malay/English yang paling "dekat" ikut bahasa
-    // yang diset — ini punca STT_CORRECTIONS kena tampung byk salah aneh macam
-    // "ringgit"→"ringette", "bayar"→"buyer", "hutang"→"good time"/"hooting".
-    // language=multi = Deepgram Multilingual Code-Switching — boleh detect & transkrip
-    // BM + English dalam SATU ayat yang sama tanpa kena declare bahasa fixed.
+    // REVERT (PENTING): language=multi BUKAN jawapan untuk Manglish — ini punca
+    // sebenar "ayat pelik sampai AI customer pun jadi pelik".
+    // Deepgram Multilingual Code-Switching (language=multi) pada Nova-3 HANYA
+    // support 10 bahasa ni: English, Spanish, French, German, Hindi, Italian,
+    // Japanese, Dutch, Russian, Portuguese. Bahasa Malaysia (ms) TIDAK disenaraikan.
+    // Bila collector cakap BM, Deepgram dalam mode `multi` tak boleh "balik" ke BM —
+    // dia terpaksa paksa setiap bunyi jadi salah satu drpd 10 bahasa yang dia kenal.
+    // Hasil: ayat jadi serpihan Spanish/Italian/Dutch/Hindi yang tak masuk akal
+    // (lagi teruk dari sekadar "ringgit"→"ringette" — ini satu ayat penuh boleh
+    // jadi bahasa lain sepenuhnya). Ayat hancur ni terus jadi mesej "collector"
+    // dalam history yang dihantar ke Claude → AI customer respond kat ayat yang
+    // tak masuk akal → seluruh sesi training jadi pelik.
+    // FIX: balik guna language=ms (monolingual Malay model). Model ms Deepgram
+    // memang dilatih untuk loanword English yang biasa campur dalam BM (ringgit,
+    // PTP, ansuran, dll) — STT_CORRECTIONS list di app.js cukup sebagai safety-net
+    // untuk residual mishear yang occasional, jauh lebih ringan dari masalah
+    // "tukar bahasa sepenuhnya" yang language=multi sebabkan.
     //
     // FIX (model): nova-3 ada peningkatan accuracy khusus untuk Bahasa Malaysia
     // (Deepgram lapor >20% pengurangan word-error-rate utk Malay berbanding nova-2),
@@ -48,7 +57,7 @@ export async function POST(request) {
 
     async function callDeepgram(model) {
       const upstream = await fetch(
-        `https://api.deepgram.com/v1/listen?model=${model}&language=multi&smart_format=true&punctuate=true`,
+        `https://api.deepgram.com/v1/listen?model=${model}&language=ms&smart_format=true&punctuate=true`,
         {
           method: 'POST',
           headers: {
