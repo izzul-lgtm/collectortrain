@@ -357,6 +357,29 @@ async function renderDashboard(){
       }).join('')}
     </div>
   </div>
+  <div class="card">
+    <div class="card-title">📈 Trend Markah Per Collector (10 Sesi Terkini)</div>
+    ${collectors.length===0?`<div class="empty-state"><div class="es-icon">📊</div><p>Tiada collector lagi.</p></div>`:
+    collectors.map(c=>{
+      const cs=sessions.filter(s=>s.collectorId===c.id).slice(-10);
+      if(!cs.length)return`<div style="margin-bottom:16px"><div style="font-size:13px;font-weight:500;margin-bottom:6px">${c.name}</div><div style="font-size:12px;color:var(--text3)">Belum ada sesi latihan.</div></div>`;
+      const avg=Math.round(cs.reduce((a,s)=>a+s.totalScore,0)/cs.length);
+      return`<div style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="font-size:13px;font-weight:500">${c.name}</span>
+          <span class="score-pill ${avg>=70?'score-high':avg>=50?'score-mid':'score-low'}" style="font-size:11px">purata ${avg}</span>
+        </div>
+        <div class="chart-bar-wrap" style="height:80px;align-items:flex-end;gap:6px">
+          ${cs.map((s,i)=>`
+          <div class="chart-bar-col" style="flex:1;min-width:0">
+            <div class="chart-bar-val" style="font-size:10px">${s.totalScore}</div>
+            <div class="chart-bar" style="height:${Math.max(8,s.totalScore*0.6)}px;background:${s.totalScore>=70?'#5CB85C':s.totalScore>=50?'#F0AD4E':'#E24B4A'}"></div>
+            <div class="chart-bar-label" style="font-size:9px">S${i+1}</div>
+          </div>`).join('')}
+        </div>
+      </div>`;
+    }).join('')}
+  </div>
   <div class="two-col">
     <div class="card">
       <div class="card-title">🎯 Aspek Paling Kerap Tersilap (Seluruh Pasukan)</div>
@@ -680,11 +703,19 @@ async function viewSession(id){
   </div>
   ${s.harassmentRisk&&s.harassmentRisk!=='none'?`<div class="alert alert-err" style="display:block">⚠ <strong>Isu Pematuhan/Harassment (${s.harassmentRisk}):</strong> ${s.harassmentNote||''}</div>`:''}
   <hr class="divider"/>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:1rem">
-    ${scoreRows(s).map(([l,v,m])=>`
+  <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:1rem">
+    ${scoreRows(s).map(([l,v,m,cat,reason])=>`
     <div style="background:var(--bg);border-radius:6px;padding:8px 12px">
-      <div style="font-size:11px;color:var(--text3)">${l}</div>
-      <div style="font-size:18px;font-weight:600;color:var(--purple)">${v}<span style="font-size:12px;color:var(--text3)">/${m}</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <div style="font-size:12px;font-weight:600;color:var(--text2)">${l}</div>
+        <div style="font-size:16px;font-weight:700;color:${v/m<0.5?'#E24B4A':v/m<0.75?'#F0AD4E':'var(--purple)'}">
+          ${v}<span style="font-size:11px;font-weight:400;color:var(--text3)">/${m}</span>
+        </div>
+      </div>
+      <div style="background:var(--border);border-radius:3px;height:5px;overflow:hidden;margin-bottom:${reason?'5px':'0'}">
+        <div style="height:100%;width:${m?v/m*100:0}%;background:${v/m<0.5?'#E24B4A':v/m<0.75?'#F0AD4E':'var(--purple)'};border-radius:3px"></div>
+      </div>
+      ${reason?`<div style="font-size:11px;color:var(--text3);line-height:1.5">${reason}</div>`:''}
     </div>`).join('')}
   </div>
   <hr class="divider"/>
@@ -700,6 +731,7 @@ async function viewSession(id){
   <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border)">
     <span class="chip chip-red" style="font-size:11px">${catIcon(m.category)} ${catLabel(m.category)}</span>
     <div style="font-size:12px;color:var(--text);margin-top:4px"><strong>Isu:</strong> ${m.issue||''}</div>
+    ${m.quote?`<div style="font-size:11px;color:var(--text3);font-style:italic;margin:2px 0">"${m.quote}"</div>`:''}
     <div style="font-size:12px;color:var(--purple)"><strong>Cadangan:</strong> ${m.suggestion||''}</div>
   </div>`).join('')}
   <hr class="divider"/>`:''}
