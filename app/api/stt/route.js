@@ -29,9 +29,18 @@ export async function POST(request) {
     // FIX: forward Content-Type sebenar dari browser (bukan hardcode audio/webm)
     // Safari record dalam audio/mp4, Firefox dalam audio/ogg — hardcode audio/webm
     // menyebabkan Deepgram silap decode, accuracy drop, collector kena repeat lebih selalu.
+    //
+    // FIX (Manglish accuracy): language=ms tadi adalah MONOLINGUAL Malay model.
+    // Bila collector campur perkataan English dalam ayat (cara kita cakap sebenar —
+    // "ringgit", "hutang", "bayar", "PTP" dicampur dengan English), model monolingual
+    // cuba paksa setiap bunyi jadi perkataan Malay/English yang paling "dekat" ikut bahasa
+    // yang diset — ini punca STT_CORRECTIONS kena tampung byk salah aneh macam
+    // "ringgit"→"ringette", "bayar"→"buyer", "hutang"→"good time"/"hooting".
+    // language=multi = Deepgram Multilingual Code-Switching — boleh detect & transkrip
+    // BM + English dalam SATU ayat yang sama tanpa kena declare bahasa fixed.
     const contentType = request.headers.get('content-type') || 'audio/webm';
     const upstream = await fetch(
-      'https://api.deepgram.com/v1/listen?model=nova-2&language=ms&smart_format=true&punctuate=true',
+      'https://api.deepgram.com/v1/listen?model=nova-2&language=multi&smart_format=true&punctuate=true',
       {
         method: 'POST',
         headers: {
