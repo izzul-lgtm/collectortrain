@@ -166,7 +166,10 @@ function fallbackPriority(scores,missed){
 
 // ═══════════ STATE ═══════════
 let currentUser=null, currentPage='';
-let scenario=null, callHistory=[], callSeconds=0, timerInterval=null;
+let scenario=null, callHistory=[], callFullTranscript=[], callSeconds=0, timerInterval=null;
+// callHistory → trimmed (20 turn) untuk Claude API (jimat token)
+// callFullTranscript → semua turn untuk eval QA
+const HISTORY_WINDOW=20;
 let recognition=null, isRecording=false, callActive=false;
 let audioQueue=[], isPlayingAudio=false, currentAudio=null;
 let micStream=null, micAudioCtx=null, micAnalyser=null, micLevelRAF=null;
@@ -774,7 +777,7 @@ async function openAddScenario(existingId){
   </div>
   <div class="form-row"><label>Tajuk Senario</label><input id="scTitle" value="${s?s.title:''}" placeholder="Penghutang Bekerjasama" /></div>
   <div class="two-col">
-    <div class="form-row"><label>Jumlah Hutang</label><input id="scAmount" value="${s?s.amount:'RM5,000'}" /></div>
+    <div class="form-row"><label>Jumlah Hutang</label><input id="scAmount" value="${s?s.amount:'RM5,000'}" placeholder="cth: RM1,234.50" pattern="^RM[\d,]+(\.[\d]{1,2})?$" title="Format: RM diikuti nombor sahaja, cth RM1,234.50" /></div>
     <div class="form-row"><label>Hari Tertunggak</label><input id="scDays" value="${s?s.days:30}" type="number" /></div>
   </div>
   <div class="two-col">
@@ -799,6 +802,9 @@ async function openAddScenario(existingId){
       <input id="scClientOther" value="${isCustomClient?s.client.replace(/"/g,'&quot;'):''}" placeholder="Taip nama client lain..." style="margin-top:6px;display:${isCustomClient?'block':'none'}" />
     </div>
     <div class="form-row"><label>No. IC</label><input id="scIc" value="${s?s.icNumber:''}" placeholder="901231-10-1234" /></div>
+  <div style="background:#FAEEDA;border:1px solid #EF9F27;border-radius:8px;padding:8px 12px;font-size:12px;color:#854F0B;margin-bottom:4px">
+    ⚠️ <b>Privasi:</b> Gunakan nombor IC, akaun, dan nombor telefon <b>fiktif/dummy</b> sahaja. Jangan masukkan data pelanggan sebenar dalam sistem latihan ini.
+  </div>
   </div>
   <div class="two-col">
     <div class="form-row"><label>Acc Number</label><input id="scAccNumber" value="${s?s.accNumber:''}" placeholder="1234567890" /></div>
@@ -1067,30 +1073,52 @@ function getVoiceId(){
   return activeVoiceId;
 }
 
-// Detect sentiment dari AI reply untuk adjust voice emotion
+// Detect sentiment dari AI reply untuk adjust voice emotion — scoring system
 function getVoiceSettings(text){
   if(!text)return {stability:0.5,similarity_boost:0.75,style:0.4};
   const t=text.toLowerCase();
-  // Marah/tension/jerit — nada tinggi, tak stabil, expressive
-  if(/marah|tension|bengang|geram|tak nak|pergi|letak telefon|!{2,}|dah la|buat apa|apa kejadah|menyampah|bising|tak faham ke|dah cakap dah|tak payah|suka hati|jangan kacau|leceh|penat la|bising la|jangan ganggu/.test(t))
-    return {stability:0.2,similarity_boost:0.85,style:0.85,use_speaker_boost:true};
-  // Menangis/tertekan/putus asa — nada perlahan, rendah, lembut
-  if(/nangis|menangis|sedih|tertekan|takut|tahu nak buat macam mana|dah tak tahu|minta maaf|harap maaf|tolong faham|susah sangat|dah cuba|penat dah|give up|tak larat|nak buat macam mana/.test(t))
-    return {stability:0.65,similarity_boost:0.8,style:0.15,use_speaker_boost:false};
-  // Keliru/confuse — nada soal balik, tak pasti
-  if(/ha\?|eh\?|apa|macam mana|tak faham|maksud|yang mana|yang ni ke|yang tu ke|tak ingat|lupa|betul ke|ye ke|serius|confirm|pastikan|check balik|berapa|bila/.test(t))
-    return {stability:0.55,similarity_boost:0.75,style:0.35,use_speaker_boost:false};
-  // Susah/masalah kewangan — berat, serius
-  if(/tak boleh bayar|tak ada duit|takde duit|poket|kering|hutang lain|kerja pun|gaji|tak cukup|nak makan pun|hidup|anak|keluarga|masalah sekarang|susah sekarang|tak mampu|tak ada kerja|baru kena buang/.test(t))
-    return {stability:0.6,similarity_boost:0.78,style:0.2,use_speaker_boost:false};
-  // Gelak/santai/agreeable
-  if(/haha|hehe|lawak|takpe|ok ok|boleh je|alright|ok la|fine|no problem|insyaallah|kalau macam tu/.test(t))
-    return {stability:0.7,similarity_boost:0.7,style:0.5,use_speaker_boost:false};
-  // Kasar/defensive — lebih tegas dari marah biasa
-  if(/saman je la|lapor|report|lawyer|saman|mahkamah|tak kisah|buat apa nak kisah|lantak/.test(t))
-    return {stability:0.3,similarity_boost:0.85,style:0.75,use_speaker_boost:true};
-  // Default — natural conversational
-  return {stability:0.5,similarity_boost:0.75,style:0.4};
+
+  // Kira intensity markers — exclamation & soal bertimbus
+  const bangCount=(text.match(/!+/g)||[]).reduce((s,m)=>s+m.length,0);
+  const questCount=(text.match(/\?+/g)||[]).length;
+
+  // Score setiap emosi — ambil yang paling tinggi
+  let scores={
+    marah:0, sedih:0, keliru:0, susah:0, santai:0, kasar:0
+  };
+  // Marah
+  if(/marah|tension|bengang|geram|tak nak|pergi|letak telefon|dah la|buat apa|apa kejadah|menyampah|tak faham ke|dah cakap dah|tak payah|suka hati|jangan kacau|leceh|penat la|jangan ganggu/.test(t)) scores.marah+=3;
+  scores.marah+=Math.min(bangCount,3); // tiap '!' tambah score, max +3
+  // Sedih/tertekan
+  if(/nangis|menangis|sedih|tertekan|takut|dah tak tahu|minta maaf|harap maaf|tolong faham|susah sangat|dah cuba|penat dah|give up|tak larat|nak buat macam mana/.test(t)) scores.sedih+=3;
+  if(/tahu nak buat macam mana/.test(t)) scores.sedih+=2;
+  // Keliru/confuse
+  if(/ha\?|eh\?|tak faham|maksud|yang mana|yang ni ke|yang tu ke|tak ingat|lupa|betul ke|ye ke|serius|confirm|pastikan|check balik/.test(t)) scores.keliru+=3;
+  scores.keliru+=Math.min(questCount,2); // soal bertimbus tambah keliru
+  // Susah kewangan
+  if(/tak boleh bayar|tak ada duit|takde duit|poket|kering|gaji|tak cukup|nak makan pun|anak|keluarga|masalah sekarang|susah sekarang|tak mampu|tak ada kerja|baru kena buang/.test(t)) scores.susah+=3;
+  if(/hutang lain|kerja pun|hidup/.test(t)) scores.susah+=1;
+  // Santai
+  if(/haha|hehe|lawak|takpe|ok ok|boleh je|alright|ok la|fine|no problem|insyaallah|kalau macam tu/.test(t)) scores.santai+=3;
+  // Kasar/defensive
+  if(/saman je la|lapor|report|lawyer|saman|mahkamah|tak kisah|buat apa nak kisah|lantak/.test(t)) scores.kasar+=3;
+
+  // Pilih emosi dominan
+  const top=Object.entries(scores).sort((a,b)=>b[1]-a[1])[0];
+  if(top[1]===0) return {stability:0.5,similarity_boost:0.75,style:0.4}; // default
+
+  // Intensity multiplier — 1.0 normal, 1.2 kalau score tinggi (>=5)
+  const intense=top[1]>=5;
+
+  switch(top[0]){
+    case 'marah':  return {stability:intense?0.15:0.2, similarity_boost:0.85, style:intense?0.95:0.85, use_speaker_boost:true};
+    case 'sedih':  return {stability:intense?0.7:0.65,  similarity_boost:0.8,  style:intense?0.1:0.15,  use_speaker_boost:false};
+    case 'keliru': return {stability:0.55, similarity_boost:0.75, style:intense?0.45:0.35, use_speaker_boost:false};
+    case 'susah':  return {stability:intense?0.65:0.6,  similarity_boost:0.78, style:intense?0.15:0.2,  use_speaker_boost:false};
+    case 'santai': return {stability:0.7,  similarity_boost:0.7,  style:0.5,  use_speaker_boost:false};
+    case 'kasar':  return {stability:intense?0.2:0.3,  similarity_boost:0.85, style:intense?0.85:0.75, use_speaker_boost:true};
+    default:       return {stability:0.5,  similarity_boost:0.75, style:0.4};
+  }
 }
 function getSysPrompt(){
   if(!scenario)return '';
@@ -1130,8 +1158,10 @@ Cakap macam manusia sebenar dalam panggilan telefon — bukan watak komedi atau 
   // Tukar RM ke sebutan natural: RM1234.50 → "seribu dua ratus tiga puluh empat ringgit lima puluh sen"
   function spokenRM(amtStr){
     if(!amtStr)return amtStr;
-    const m=amtStr.replace(/,/g,'').match(/[\d]+(?:\.[\d]{1,2})?/);
-    if(!m)return amtStr;
+    // Strip RM prefix, spaces, dan teks extra sebelum extract nombor
+    const cleaned=amtStr.replace(/^RM\s*/i,'').replace(/,/g,'').trim();
+    const m=cleaned.match(/^[\d]+(?:\.[\d]{1,2})?/);
+    if(!m)return amtStr; // fallback: sebut as-is kalau format pelik
     const [ringgit,sen]=(m[0]).split('.');
     const r=parseInt(ringgit)||0;
     const s=parseInt((sen||'0').padEnd(2,'0'))||0;
@@ -1167,17 +1197,19 @@ Cakap macam manusia sebenar dalam panggilan telefon — bukan watak komedi atau 
   const levelBehaviour={
     easy:`Aras Mudah — anda adalah penghutang yang MUDAH dilayan: cepat akur bila diberi alasan munasabah, tidak banyak bantahan, bersedia bagi PTP kalau diminta dengan baik, nada agak cooperative walaupun ada sedikit keberatan awal.`,
     med:`Aras Sederhana — anda adalah penghutang yang ADA RESISTANCE: bagi 1-2 bantahan atau alasan sebelum akur, perlu sedikit pujukan, mungkin minta masa lebih atau tawar PTP yang lewat, tapi akhirnya boleh reach agreement kalau collector approach dengan betul.`,
-    hard:`Aras Sukar — anda adalah penghutang yang DEGIL dan SUSAH DILAYAN: banyak bantahan, selalu potong cakap collector, bagi alasan berulang-ulang, emosi mudah naik, mungkin cuba letak telefon atau ugut nak report, SANGAT susah nak dapat PTP — collector kena kerja keras betul-betul baru dapat commitment.`
+    hard:`Aras Sukar — anda adalah penghutang yang DEGIL dan SUSAH DILAYAN: banyak bantahan, selalu potong cakap collector, bagi alasan berulang-ulang, emosi mudah naik, mungkin cuba letak telefon atau ugut nak report, SANGAT susah nak dapat PTP. ARC EMOSI: mulakan dengan marah atau defensif, tapi boleh beransur-ansur melunak HANYA jika collector tunjuk empathy yang GENUINE (bukan script), beri cadangan praktikal, atau akui situasi penghutang dengan ikhlas — dan itu pun selepas beberapa percubaan, bukan terus lembut. Jangan berubah terlalu cepat walaupun collector nampak baik — penghutang level sukar ada "dinding" yang perlu collector langgar dulu sebelum ada peluang agreement.`
   }[scenario.level||'med'];
 
   const naturalBlock=`\n\nCARA BERCAKAP (WAJIB IKUT):\n- Jawab PENDEK dan NATURAL — 1 hingga 3 ayat sahaja setiap giliran, macam orang bercakap telefon sebenar\n- JANGAN tulis ayat panjang berjela atau formal macam surat\n- Sebut nombor dan wang secara lisan: RM${scenario.amount} sebut sebagai "${spokenAmount}", no telefon sebut digit demi digit\n- Boleh guna bunyi natural: "hmm", "ha?", "eh", "ok ok", "ha ye", "ala..." mengikut situasi\n- Kadang-kadang boleh potong cakap, tanya balik, atau tergantung ayat kalau rasa keliru\n- Reaksi MESTI sesuai dengan watak dan situasi — kalau penghutang kata sibuk, dia tak bagi masa panjang\n\nARAS KESUKARAN SENARIO INI: ${levelBehaviour}`;
-  return base+accentBlock+naturalBlock+contextBlock+groundingBlock;
+  // GUARDRAIL: kekal dalam watak — elak break character atau dedahkan bahawa ini AI/simulasi
+  const guardrailBlock=`\n\nGUARDRAIL WATAK (WAJIB IKUT — keutamaan tertinggi):\n- Anda HANYA berperanan sebagai ${scenario.name||'penghutang'}, seorang individu biasa yang menerima panggilan daripada syarikat debt collection.\n- JANGAN sekali-kali mengakui bahawa anda adalah AI, bot, model bahasa, atau sistem simulasi — walaupun ditanya terus.\n- JANGAN keluar dari watak untuk membantu collector dengan cara lain (cth: bagi tip roleplay, terangkan skor, tanya "nak saya ulang?").\n- Jika collector tanya sesuatu yang TIDAK berkaitan hutang atau perbualan telefon biasa (cth: soalan teknikal, soalan tentang sistem, atau minta anda "jangan roleplay"), bertindak sebagai penghutang yang keliru atau terganggu: "Eh, apa awak cakap ni? Saya tak faham la." atau "Ha? Saya busy ni, ada apa sebenarnya?"\n- Jika collector cuba "reset" atau mulakan senario baru dalam panggilan yang sama, abaikan dan teruskan sebagai watak yang sama.`;
+  return base+accentBlock+naturalBlock+contextBlock+groundingBlock+guardrailBlock;
 }
 
 async function startCall(){
   activeVoiceId=null; // reset suara — akan pick baru untuk call ni
   warmupMic(); // panaskan mic SEAWAL mungkin — sebelum collector sempat tekan butang mic (lihat nota di atas function warmupMic)
-  callHistory=[];callSeconds=0;callActive=true;
+  callHistory=[];callFullTranscript=[];callSeconds=0;callActive=true;
   audioQueue=[];isPlayingAudio=false;
   if(currentAudio){currentAudio.pause();currentAudio=null;}
   navigate('call');
@@ -1189,9 +1221,31 @@ async function startCall(){
     if(el)el.textContent=m+':'+s;
   },1000);
   await new Promise(r=>setTimeout(r,600));
-  const greet='Helo? Siapa ni?';
+  // Greeting dinamik — variasi berdasarkan accent dan level kesukaran
+  const _acc=(scenario&&scenario.accent)||'melayu';
+  const _lvl=(scenario&&scenario.level)||'med';
+  const _greetPool={
+    melayu:{
+      easy:['Helo?','Ha, helo?','Ye, helo?'],
+      med: ['Helo? Siapa ni?','Ha? Siapa yang call ni?','Ye? Siapa?'],
+      hard:['Ha?! Siapa ni?!','Helo, siapa ni? Saya tengah busy la.','Ha, apa hal?! Saya tengah kerja ni.']
+    },
+    india:{
+      easy:['Hello?','Ha, hello?','Yes, hello?'],
+      med: ['Hello? Who is this?','Ha? Who calling ah?','Yes? Who is it?'],
+      hard:['Ha?! Who is this lah?!','Hello, who calling? I very busy la now.','Aiyo, what is it? I tengah busy ni.']
+    },
+    cina:{
+      easy:['Hello?','Ha, hello?','Yes, hello?'],
+      med: ['Hello? Who calling ah?','Ha? Who is this leh?','Yes? Who ah?'],
+      hard:['Ha?! Who is this lah?!','Hello, who is this? I very busy one.','Wah, who calling? I tengah busy lor.']
+    }
+  };
+  const _pool=(_greetPool[_acc]||_greetPool.melayu)[_lvl]||_greetPool.melayu.med;
+  const greet=_pool[Math.floor(Math.random()*_pool.length)];
   addBubble('debtor',greet);
-  callHistory.push({role:'assistant',content:greet});
+  callFullTranscript.push({role:"assistant",content:greet});
+  callHistory.push({role:"assistant",content:greet});
   speakEl(greet);
 }
 
@@ -1297,6 +1351,7 @@ function toggleMic() {
 
 // Kamus pembetulan STT — masih dipakai untuk betulkan output Deepgram
 const STT_CORRECTIONS = [
+  // ── Telco / brand names ──
   [/\bpr\s*one\b/gi, 'RedOne'], [/\bred\s*one\b/gi, 'RedOne'],
   [/\bcel\s*com\b/gi, 'Celcom'], [/\bsel\s*com\b/gi, 'Celcom'], [/\bcel\s*come\b/gi, 'Celcom'],
   [/\bde\s*gi\b/gi, 'Digi'], [/\bdi\s*gi\b/gi, 'Digi'], [/\bdigi\s*cel\b/gi, 'Digi'],
@@ -1310,6 +1365,33 @@ const STT_CORRECTIONS = [
   [/\bnew\s*vest\b/gi, 'Newvest'], [/\bnew\s*face\b/gi, 'New Face'],
   [/\bdc\s*a\b/gi, 'DCA'], [/\bde\s*ce\s*a\b/gi, 'DCA'],
   [/\bwhat\s*sapp\b/gi, 'WhatsApp'], [/\bwhat\s*app\b/gi, 'WhatsApp'],
+  // ── BM perkataan hutang — Deepgram selalu silap ──
+  [/\bbuyer\b/gi, 'bayar'],            // "bayar" → "buyer"
+  [/\bbuy her\b/gi, 'bayar'],
+  [/\bgood\s*time\b/gi, 'hutang'],    // "hutang" → "good time"
+  [/\bgoodtime\b/gi, 'hutang'],
+  [/\bhooting\b/gi, 'hutang'],
+  [/\bhootang\b/gi, 'hutang'],
+  [/\bringette\b/gi, 'ringgit'],       // "ringgit" → "ringette"
+  [/\bring it\b/gi, 'ringgit'],
+  [/\bpay\s*check\b/gi, 'PTP'],       // "PTP" → "paycheck"
+  [/\bpaycheck\b/gi, 'PTP'],
+  [/\btak\s*bole\b/gi, 'tak boleh'],  // common truncation
+  [/\bnak\s*bole\b/gi, 'nak boleh'],
+  [/\btunggak\b/gi, 'tertunggak'],     // partial word
+  [/\bber\s*janji\b/gi, 'berjanji'],
+  [/\bjan\s*ji\b/gi, 'janji'],
+  [/\bansurans\b/gi, 'ansuran'],       // "ansuran" → "ansurans"
+  [/\bansurance\b/gi, 'ansuran'],
+  [/\bpay\s*later\b/gi, 'paylater'],
+  [/\be\s*wallet\b/gi, 'ewallet'],
+  [/\bwallet\s*e\b/gi, 'ewallet'],
+  [/\bkas\s*im\b/gi, 'CCRIS'],        // misfire pada nama
+  [/\bam\s*bank\b/gi, 'AmBank'],
+  [/\bcimb\s*click\b/gi, 'CIMB'],
+  [/\bmay\s*bank\b/gi, 'Maybank'],
+  [/\bh\s*l\s*b\b/gi, 'HLB'],        // Hong Leong Bank
+  [/\bpublic\s*bang\b/gi, 'Public Bank'],
 ];
 function correctSTT(text) {
   let t = text;
@@ -1489,19 +1571,28 @@ async function processSpeech(rawText){
   const text=correctSTT(rawText); // betulkan STT errors sebelum hantar ke AI & transcript
   const lt=document.getElementById('liveText');if(lt)lt.textContent='';
   setMicState('thinking','⏳','AI sedang berfikir...');setStatus('','AI sedang berfikir...');
-  addBubble('collector',text);callHistory.push({role:'user',content:text});
+  // Push ke full transcript (untuk eval) DAN callHistory (untuk API)
+  addBubble('collector',text);
+  callFullTranscript.push({role:'user',content:text});
+  callHistory.push({role:'user',content:text});
+  // Trim callHistory untuk API — hantar HISTORY_WINDOW turn terkini sahaja
+  // Mesti kekalkan pasangan user+assistant (trim dari depan, 2 sekaligus)
+  while(callHistory.length>HISTORY_WINDOW*2){callHistory.splice(0,2);}
+  // max_tokens: hard level bagi lebih ruang untuk respon emosi panjang
+  const maxTok=(scenario&&scenario.level==='hard')?400:200;
   try{
     const res=await fetch('/api/claude',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:200,system:getSysPrompt(),messages:callHistory})});
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:maxTok,system:getSysPrompt(),messages:callHistory})});
     const data=await res.json();
     const reply=data.content?.[0]?.text||'Hmm...';
+    callFullTranscript.push({role:'assistant',content:reply});
     callHistory.push({role:'assistant',content:reply});addBubble('debtor',reply);
     speakEl(reply);
   }catch(e){addBubble('debtor','[Ralat AI. Cuba lagi.]');resetMicBtn();setStatus('green','Tekan mikrofon untuk bercakap.');}
 }
 
 async function evalCall(duration){
-  const transcript=callHistory.map(m=>`${m.role==='user'?'Collector':'Penghutang'}: ${m.content}`).join('\n');
+  const transcript=callFullTranscript.map(m=>`${m.role==='user'?'Collector':'Penghutang'}: ${m.content}`).join('\n');
   const checklist=(scenario&&scenario.checklist)||[];
   // 5 kategori scoring sentiasa dinilai — ini standard untuk SEMUA senario
   const fixedCriteria=[
@@ -1526,6 +1617,13 @@ async function evalCall(duration){
     :'Strategi sesuai: tawar pelan ansuran/penjadualan semula berstruktur, bukan desak bayaran sekaligus.';
   const fmtD=d=>d?new Date(d).toLocaleDateString('ms-MY'):'-';
 
+  // Hadkan transcript kepada 8000 aksara untuk elak context overflow pada panggilan sangat panjang
+  // Potong dari depan (bahagian awal kurang kritikal untuk QA) — kekal bahagian akhir panggilan
+  const MAX_TRANSCRIPT_CHARS = 8000;
+  const trimmedTranscript = transcript.length > MAX_TRANSCRIPT_CHARS
+    ? '[...awal panggilan dipotong untuk ruang...]\n' + transcript.slice(-MAX_TRANSCRIPT_CHARS)
+    : transcript;
+
   const prompt=`Anda seorang Quality Assurance Manager pakar debt collection di Malaysia. Tugas anda menilai prestasi COLLECTOR (BUKAN penghutang) dalam perbualan latihan di bawah secara KRITIKAL, SPESIFIK dan membina — fokus mencari kesilapan sebenar dan perkara yang sepatutnya dibuat tapi TIDAK dibuat, bukan pujian generik kosong.
 
 SENARIO: ${scenario?scenario.title:''}
@@ -1540,7 +1638,7 @@ PENGUMUMAN / POLISI WAJIB YANG COLLECTOR MESTI MAKLUMKAN KEPADA PENGHUTANG DALAM
 ${disclosuresText}
 
 PERBUALAN PENUH (Collector vs Penghutang):
-${transcript}
+${trimmedTranscript}
 
 Masa Panggilan: ${duration}
 
@@ -1553,6 +1651,7 @@ TUGAS ANDA — analisis transcript di atas baris demi baris, kemudian:
    - delivery: Cara penyampaian — kejelasan, struktur ayat, kawalan perbualan
    - counter: Keberkesanan hujah balas (counter) terhadap bantahan/dalih/emosi penghutang
    - action: Tindakan & pematuhan — ikut checklist di atas + SOP umum (pengesahan identiti/akaun, nyatakan tujuan panggilan, dapatkan PTP yang jelas & spesifik, dokumentasi, TIDAK mengugut/memaksa). Selitkan juga: (a) Dispute Handling — jika penghutang bangkitkan bantahan/dispute (dakwa sudah bayar, jumlah tak tepat, dsb), adakah collector tangani dengan betul (semak, jelaskan, jangan abaikan/tolak bantahan secara sambil lewa)? (b) Ketepatan Notes — adakah maklumat yang disebut/disahkan collector (jumlah, tarikh, tempoh, No. IC, Acc Number, Service No., Acc Type, Client, dsb) tepat dan konsisten dengan SENARIO & Maklumat Akaun Pelanggan di atas, atau adakah collector tersilap nyatakan maklumat akaun? (c) Pengumuman Wajib — adakah collector menyebut SECARA EKSPLISIT setiap item dalam senarai "PENGUMUMAN/POLISI WAJIB" di atas (jika senarai tu tak kosong)? Jika ada satu sahaja yang tertinggal, markah aspek action MESTI rendah.
+   - balance: Strategi mengikut tahap baki hutang (${tierLabel} — ${tierHint})
 
 2. strengths: 1-4 perkara yang collector BETUL-BETUL buat dengan baik (spesifik, bukan umum).
 
@@ -1573,7 +1672,7 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
 
   try{
     const res=await fetch('/api/claude',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:3000,messages:[{role:'user',content:prompt}]})});
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:4000,messages:[{role:'user',content:prompt}]})});
     const data=await res.json();
     const raw=(data.content?.[0]?.text||'{}').replace(/```json|```/g,'').trim();
     let r;
@@ -1606,7 +1705,7 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
       missed,priorityFocus,
       harassmentRisk,
       harassmentNote:r.harassmentNote||'',
-      feedback:r.feedback||'',transcript:callHistory
+      feedback:r.feedback||'',transcript:callFullTranscript
     };
     // Simpan ke Supabase dalam try/catch BERASINGAN dari parsing AI di atas —
     // kalau save DB ni gagal (cth network blip), collector masih nak nampak
@@ -1636,7 +1735,7 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
       totalScore:0,scores:{tone:0,delivery:0,counter:0,action:0,balance:0},
       strengths:[],missed:[],priorityFocus:null,harassmentRisk:'none',harassmentNote:'',
       feedback:'Tidak dapat menganalisis sesi ini — sila cuba sekali lagi.',
-      scenarioName:scenario?scenario.title:'',duration,transcript:callHistory
+      scenarioName:scenario?scenario.title:'',duration,transcript:callFullTranscript
     };
     navigate('score');
   }
