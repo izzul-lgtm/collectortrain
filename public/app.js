@@ -1538,7 +1538,7 @@ function convertBMNumbers(text) {
   // "dua ribu dua puluh enam" → "2026"
   // Ini handled oleh replaceBMNums() di atas (>= 2000 → tukar), tapi tambah
   // frasa "tahun" + BM sebagai hint kalau replaceBMNums tak catch
-  let t = str;
+  let t = text;
   // Normalkan "dua puluh" yang mungkin di-STT-kan terpisah dengan dash/space
   t = t.replace(/dua\s*-\s*puluh/gi, 'dua puluh')
        .replace(/tiga\s*-\s*puluh/gi, 'tiga puluh')
