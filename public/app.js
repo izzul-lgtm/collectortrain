@@ -76,6 +76,67 @@ async function loadSessions(force){
   return sessionsCache;
 }
 
+// ═══════════ PENDING SESSION QUEUE (Offline / Supabase down recovery) ═══════════
+// Kalau Supabase tak boleh reach semasa save session, kita simpan dulu
+// dalam localStorage sebagai "pending" — dan auto-retry bila app load
+// semula atau bila user buka mana-mana page (setiap 60 saat).
+const PENDING_KEY='ct_pending_sessions';
+function getPendingSessions(){try{return JSON.parse(localStorage.getItem(PENDING_KEY)||'[]');}catch{return[];}}
+function savePendingSessions(arr){localStorage.setItem(PENDING_KEY,JSON.stringify(arr));}
+function addPendingSession(sessionData){
+  const arr=getPendingSessions();
+  // Elak duplicate kalau id sama dah ada dalam queue
+  if(!arr.find(x=>x.id===sessionData.id))arr.push(sessionData);
+  savePendingSessions(arr);
+  showPendingBanner();
+}
+function removePendingSession(id){
+  savePendingSessions(getPendingSessions().filter(x=>x.id!==id));
+}
+
+function showPendingBanner(){
+  const pending=getPendingSessions();
+  let banner=document.getElementById('pendingSyncBanner');
+  if(pending.length===0){if(banner)banner.remove();return;}
+  if(!banner){
+    banner=document.createElement('div');
+    banner.id='pendingSyncBanner';
+    banner.style.cssText='position:fixed;bottom:16px;right:16px;background:#854F0B;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;z-index:9999;display:flex;align-items:center;gap:10px;box-shadow:0 4px 16px rgba(0,0,0,0.3);max-width:320px;';
+    document.body.appendChild(banner);
+  }
+  banner.innerHTML=`⏳ <span>${pending.length} sesi belum tersimpan — akan cuba semula...</span> <button onclick="retryPendingSessions()" style="background:#fff;color:#854F0B;border:none;border-radius:6px;padding:3px 8px;font-size:12px;cursor:pointer;font-weight:600">Cuba Sekarang</button>`;
+}
+
+async function retryPendingSessions(){
+  const pending=getPendingSessions();
+  if(pending.length===0){showPendingBanner();return;}
+  let successCount=0;
+  for(const s of pending){
+    try{
+      await sessionApi.create(s);
+      removePendingSession(s.id);
+      successCount++;
+    }catch(e){
+      // Masih gagal — tunggu retry seterusnya
+    }
+  }
+  if(successCount>0){
+    await loadSessions(true);
+    showPendingBanner();
+    if(getPendingSessions().length===0){
+      const banner=document.getElementById('pendingSyncBanner');
+      if(banner){
+        banner.style.background='#166534';
+        banner.innerHTML='✅ Semua sesi berjaya disimpan!';
+        setTimeout(()=>banner.remove(),3000);
+      }
+    }
+  }
+}
+
+// Auto-retry setiap 60 saat kalau ada pending sessions
+setInterval(()=>{if(getPendingSessions().length>0)retryPendingSessions();},60000);
+
 // ═══════════ USERS API (Supabase, via /api/users + /api/auth/*) ═══════
 // Sama sebab macam scenarios di atas — users (admin/manager/collector)
 // dulu hidup dalam localStorage (plaintext password pun di situ, boleh
@@ -254,6 +315,8 @@ function initApp(){
   rb.className='user-role-badge badge-'+currentUser.role;
   buildNav();
   navigate(currentUser.role==='collector'?'training':'dashboard');
+  // Tunjuk banner & cuba retry kalau ada pending sessions dari sesi lepas
+  if(getPendingSessions().length>0){showPendingBanner();retryPendingSessions();}
 }
 
 function buildNav(){
@@ -876,6 +939,110 @@ async function renderScenarios(){
   </div>`);
 }
 
+// ═══════════ SCENARIO FORM DRAFT AUTO-SAVE ═══════════
+// Scenario form boleh ada banyak field — kalau browser refresh atau crash
+// semasa tengah edit, semua input hilang. Fix: auto-save draft ke localStorage
+// setiap 30 saat. Draft dikosongkan bila form berjaya disimpan atau dibatal.
+const SCENARIO_DRAFT_KEY='ct_scenario_draft';
+let _scenarioDraftTimer=null;
+
+function readScenarioFormDraft(){
+  // Baca semua field dari form semasa
+  const scClientSel=(document.getElementById('scClient')||{}).value||'';
+  return {
+    emoji:(document.getElementById('scEmoji')||{}).value||'',
+    name:(document.getElementById('scName')||{}).value||'',
+    gender:(document.getElementById('scGender')||{}).value||'male',
+    accent:(document.getElementById('scAccent')||{}).value||'melayu',
+    title:(document.getElementById('scTitle')||{}).value||'',
+    amount:(document.getElementById('scAmount')||{}).value||'',
+    days:(document.getElementById('scDays')||{}).value||'30',
+    level:(document.getElementById('scLevel')||{}).value||'med',
+    balanceTier:(document.getElementById('scBalanceTier')||{}).value||'high',
+    prompt:(document.getElementById('scPrompt')||{}).value||'',
+    clientSel:scClientSel,
+    clientOther:(document.getElementById('scClientOther')||{}).value||'',
+    icNumber:(document.getElementById('scIc')||{}).value||'',
+    accNumber:(document.getElementById('scAccNumber')||{}).value||'',
+    serviceNo:(document.getElementById('scServiceNo')||{}).value||'',
+    accType:(document.getElementById('scAccType')||{}).value||'',
+    regDate:(document.getElementById('scRegDate')||{}).value||'',
+    termDate:(document.getElementById('scTermDate')||{}).value||'',
+    checklist:Array.from(document.querySelectorAll('#checklistRows .checklist-row'))
+      .map(r=>({cat:r.querySelector('.cl-cat').value,text:r.querySelector('.cl-text').value})),
+    disclosures:Array.from(document.querySelectorAll('#disclosureRows .disclosure-row .dc-text'))
+      .map(i=>i.value),
+    _existingId:(document.getElementById('modalBox')||{}).dataset&&document.getElementById('modalBox').dataset.scenarioEditId||'',
+    _savedAt:Date.now()
+  };
+}
+
+function startScenarioDraftTimer(){
+  stopScenarioDraftTimer();
+  _scenarioDraftTimer=setInterval(()=>{
+    // Pastikan form masih terbuka
+    if(!document.getElementById('scName'))return;
+    const draft=readScenarioFormDraft();
+    localStorage.setItem(SCENARIO_DRAFT_KEY,JSON.stringify(draft));
+    // Tunjuk indicator kecil
+    let ind=document.getElementById('scenarioDraftInd');
+    if(!ind){
+      ind=document.createElement('span');
+      ind.id='scenarioDraftInd';
+      ind.style.cssText='font-size:11px;color:var(--text3);margin-left:8px;';
+      const footer=document.querySelector('.modal-footer');
+      if(footer)footer.insertBefore(ind,footer.firstChild);
+    }
+    ind.textContent='Draft auto-saved '+new Date().toLocaleTimeString('ms-MY',{hour:'2-digit',minute:'2-digit'});
+  },30000);
+}
+
+function stopScenarioDraftTimer(){
+  if(_scenarioDraftTimer){clearInterval(_scenarioDraftTimer);_scenarioDraftTimer=null;}
+}
+
+function clearScenarioDraft(){
+  localStorage.removeItem(SCENARIO_DRAFT_KEY);
+  stopScenarioDraftTimer();
+}
+
+function applyScenarioDraft(draft){
+  // Apply stored draft values back into the already-rendered form
+  const set=(id,val)=>{const el=document.getElementById(id);if(el&&val!==undefined&&val!=='')el.value=val;};
+  set('scEmoji',draft.emoji);
+  set('scName',draft.name);
+  set('scGender',draft.gender);
+  set('scAccent',draft.accent);
+  set('scTitle',draft.title);
+  set('scAmount',draft.amount);
+  set('scDays',draft.days);
+  set('scLevel',draft.level);
+  set('scBalanceTier',draft.balanceTier);
+  set('scPrompt',draft.prompt);
+  set('scIc',draft.icNumber);
+  set('scAccNumber',draft.accNumber);
+  set('scServiceNo',draft.serviceNo);
+  set('scAccType',draft.accType);
+  set('scRegDate',draft.regDate);
+  set('scTermDate',draft.termDate);
+  // Client dropdown
+  const clientSel=document.getElementById('scClient');
+  if(clientSel&&draft.clientSel){clientSel.value=draft.clientSel;toggleClientOther();}
+  if(draft.clientOther){const co=document.getElementById('scClientOther');if(co)co.value=draft.clientOther;}
+  // Checklist rows — clear existing (kosong masa form open) then re-add
+  const clWrap=document.getElementById('checklistRows');
+  if(clWrap&&draft.checklist&&draft.checklist.length){
+    clWrap.innerHTML='';
+    draft.checklist.forEach(c=>addChecklistRow(c.cat,c.text));
+  }
+  // Disclosure rows
+  const dcWrap=document.getElementById('disclosureRows');
+  if(dcWrap&&draft.disclosures&&draft.disclosures.length){
+    dcWrap.innerHTML='';
+    draft.disclosures.forEach(d=>addDisclosureRow(d));
+  }
+}
+
 async function openAddScenario(existingId){
   const scenarios=await loadScenarios();
   const s=existingId?scenarios.find(x=>x.id===existingId):null;
@@ -994,6 +1161,31 @@ async function openAddScenario(existingId){
   clData.forEach(c=>addChecklistRow(c.cat,c.text));
   const existingDisclosures=(s&&s.disclosures&&s.disclosures.length)?s.disclosures:[];
   existingDisclosures.forEach(d=>addDisclosureRow(d));
+
+  // ── Draft recovery ──
+  // Kalau bukan edit existing scenario (modal kosong), check ada draft tersimpan tak.
+  // Kalau ada, tanya user nak restore atau buang.
+  if(!existingId){
+    const raw=localStorage.getItem(SCENARIO_DRAFT_KEY);
+    if(raw){
+      try{
+        const draft=JSON.parse(raw);
+        // Draft valid kalau ada nama atau prompt yang dah ditaip
+        if(draft.name||draft.prompt){
+          const age=Math.round((Date.now()-draft._savedAt)/60000);
+          const restore=confirm(\`Ada draf yang belum disimpan (\u00b1\${age} minit lepas).\n\nMahu restore draf tersebut?\`);
+          if(restore){
+            applyScenarioDraft(draft);
+          }else{
+            clearScenarioDraft();
+          }
+        }
+      }catch(e){localStorage.removeItem(SCENARIO_DRAFT_KEY);}
+    }
+  }
+  // Simpan existingId kat modal supaya readScenarioFormDraft boleh detect mod edit
+  document.getElementById('modalBox').dataset.scenarioEditId=existingId||'';
+  startScenarioDraftTimer();
 }
 
 // Tunjuk/sembunyi input bebas "nama client lain" bila pilihan "Lain-lain"
@@ -1085,6 +1277,7 @@ async function saveScenario(existingId){
   try{
     await scenarioApi.save(data);
     await loadScenarios(true); // refresh cache supaya semua page (training/manager) nampak data terkini
+    clearScenarioDraft(); // Berjaya simpan — buang draft
     closeModal();
     renderScenarios();
   }catch(e){
@@ -2101,24 +2294,23 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
       feedback:r.feedback||'',transcript:callFullTranscript
     };
     // Simpan ke Supabase dalam try/catch BERASINGAN dari parsing AI di atas —
-    // kalau save DB ni gagal (cth network blip), collector masih nak nampak
-    // hasil penilaian yang Claude baru jana (jangan buang feedback yang dah
-    // berjaya dianalisis hanya sebab DB write gagal sekejap).
+    // kalau save DB ni gagal (cth network blip / Supabase down), collector
+    // masih nampak hasil penilaian. Sesi yang gagal masuk pending queue dalam
+    // localStorage — auto-retry setiap 60s atau bila user tekan "Cuba Sekarang".
     try{
       await sessionApi.create(sessionData);
       await loadSessions(true); // refresh cache supaya dashboard/manager terus nampak sesi baru
     }catch(saveErr){
       console.error('Gagal simpan sesi ke Supabase (cubaan 1):',saveErr);
-      // Cuba SEKALI lagi dengan id baru — litupi kes jarang (id sama tertimpa
-      // request lain hampir serentak). Kalau cubaan kedua pun gagal, baru
-      // mengalah & beritahu collector terus terang.
+      // Cuba sekali lagi dengan id baru (litupi kes id collision serentak)
       try{
         sessionData.id='sess_'+Date.now()+'_'+Math.random().toString(36).slice(2,8);
         await sessionApi.create(sessionData);
         await loadSessions(true);
       }catch(saveErr2){
-        console.error('Gagal simpan sesi ke Supabase (cubaan 2, mengalah):',saveErr2);
-        sessionData.feedback+=' (⚠ Nota: hasil ni TAK tersimpan dalam "Rekod Latihan" — ada ralat simpan ke pangkalan data. Sila screenshot skrin ni & ralat dalam console browser (F12 → Console) untuk dilaporkan.)';
+        console.error('Gagal simpan sesi ke Supabase (cubaan 2), masuk pending queue:',saveErr2);
+        // Simpan dalam pending queue — auto-retry, jangan panik collector
+        addPendingSession(sessionData);
       }
     }
     window._lastScore={...sessionData};
@@ -2136,7 +2328,7 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
 
 // ═══════════ MODAL ═══════════
 function openModal(html){document.getElementById('modalBox').innerHTML=html;document.getElementById('modalOverlay').classList.add('open');}
-function closeModal(e){if(!e||e.target===document.getElementById('modalOverlay'))document.getElementById('modalOverlay').classList.remove('open');}
+function closeModal(e){if(!e||e.target===document.getElementById('modalOverlay')){document.getElementById('modalOverlay').classList.remove('open');stopScenarioDraftTimer();}}
 
 // ═══════════ UTILS ═══════════
 function setContent(html){document.getElementById('mainContent').innerHTML=html;}
