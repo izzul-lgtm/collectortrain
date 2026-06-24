@@ -237,6 +237,27 @@ function fallbackPriority(scores,missed){
 
 // ═══════════ STATE ═══════════
 let currentUser=null, currentPage='';
+
+// Filter state untuk page "Sesi Latihan" (manager/admin) & "Rekod Saya" (collector).
+// Disimpan di sini (bukan dalam form je) supaya filter tak hilang bila page
+// di-render semula (contoh: lepas tutup modal "Lihat" sesi).
+let sessionsFilter={collectorId:'',scenario:'',skor:'',dateFrom:'',dateTo:''};
+let myHistoryFilter={scenario:'',skor:'',dateFrom:'',dateTo:''};
+
+// Tapis array sesi berdasarkan satu set filter (dipakai oleh renderSessions
+// & renderMyHistory — logik sama, beza saja sumber filter & ada/tiada collectorId).
+function applySessionFilters(sessions,f){
+  return sessions.filter(s=>{
+    if(f.collectorId&&s.collectorId!==f.collectorId)return false;
+    if(f.scenario&&s.scenarioName!==f.scenario)return false;
+    if(f.skor==='high'&&!(s.totalScore>=70))return false;
+    if(f.skor==='mid'&&!(s.totalScore>=50&&s.totalScore<70))return false;
+    if(f.skor==='low'&&!(s.totalScore<50))return false;
+    if(f.dateFrom&&new Date(s.date)<new Date(f.dateFrom))return false;
+    if(f.dateTo&&new Date(s.date)>new Date(f.dateTo+'T23:59:59'))return false;
+    return true;
+  });
+}
 let scenario=null, callHistory=[], callFullTranscript=[], callSeconds=0, timerInterval=null;
 // callHistory → trimmed (20 turn) untuk Claude API (jimat token)
 // callFullTranscript → semua turn untuk eval QA
@@ -761,12 +782,31 @@ function copyScoreSummary(){
 
 async function renderMyHistory(){
   const all=await loadSessions();
-  const sessions=all.filter(s=>s.collectorId===currentUser.id).reverse();
+  const mine=all.filter(s=>s.collectorId===currentUser.id).reverse();
+  const scenarioNames=[...new Set(mine.map(s=>s.scenarioName))].sort();
+  const sessions=applySessionFilters(mine,myHistoryFilter);
   const weakness=tallyWeakness(sessions);
   const latestFocus=sessions.length?sessions[0].priorityFocus:null; // sessions[0] = sesi terbaru (list dah reverse)
+  const filterBar=`
+  <div class="card filter-bar">
+    <select id="filtMyScenario" onchange="myHistoryFilter.scenario=this.value;renderMyHistory();">
+      <option value="">Semua Senario</option>
+      ${scenarioNames.map(n=>`<option value="${n}" ${myHistoryFilter.scenario===n?'selected':''}>${n}</option>`).join('')}
+    </select>
+    <select id="filtMySkor" onchange="myHistoryFilter.skor=this.value;renderMyHistory();">
+      <option value="">Semua Markah</option>
+      <option value="high" ${myHistoryFilter.skor==='high'?'selected':''}>Tinggi (≥70)</option>
+      <option value="mid" ${myHistoryFilter.skor==='mid'?'selected':''}>Sederhana (50-69)</option>
+      <option value="low" ${myHistoryFilter.skor==='low'?'selected':''}>Rendah (&lt;50)</option>
+    </select>
+    <input type="date" id="filtMyFrom" value="${myHistoryFilter.dateFrom}" onchange="myHistoryFilter.dateFrom=this.value;renderMyHistory();" title="Dari tarikh"/>
+    <input type="date" id="filtMyTo" value="${myHistoryFilter.dateTo}" onchange="myHistoryFilter.dateTo=this.value;renderMyHistory();" title="Hingga tarikh"/>
+    <button class="btn btn-secondary" onclick="myHistoryFilter={scenario:'',skor:'',dateFrom:'',dateTo:''};renderMyHistory();">Reset</button>
+  </div>`;
   setContent(`
-  <div class="page-header"><div class="page-title">Rekod Latihan Saya</div><div class="page-sub">${sessions.length} sesi latihan</div></div>
-  ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📊</div><p>Belum ada sesi latihan. Mulakan latihan pertama anda!</p></div></div>`:''}
+  <div class="page-header"><div class="page-title">Rekod Latihan Saya</div><div class="page-sub">${sessions.length} dari ${mine.length} sesi latihan</div></div>
+  ${mine.length>0?filterBar:''}
+  ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📊</div><p>${mine.length===0?'Belum ada sesi latihan. Mulakan latihan pertama anda!':'Tiada sesi sepadan dengan filter.'}</p></div></div>`:''}
   ${sessions.length>0?`
   <div class="stats-grid">
     <div class="stat-card"><div class="stat-label">Jumlah Sesi</div><div class="stat-val">${sessions.length}</div></div>
@@ -849,11 +889,33 @@ async function renderCollectors(){
 }
 
 async function renderSessions(){
-  const sessions=(await loadSessions()).slice().reverse();
+  const allSessions=(await loadSessions()).slice().reverse();
   const users=await loadUsers();
+  const collectors=users.filter(u=>u.role==='collector');
+  const scenarioNames=[...new Set(allSessions.map(s=>s.scenarioName))].sort();
+  const sessions=applySessionFilters(allSessions,sessionsFilter);
   setContent(`
-  <div class="page-header"><div class="page-title">Sesi Latihan</div><div class="page-sub">${sessions.length} sesi keseluruhan</div></div>
-  ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📋</div><p>Belum ada sesi latihan.</p></div></div>`:''}
+  <div class="page-header"><div class="page-title">Sesi Latihan</div><div class="page-sub">${sessions.length} dari ${allSessions.length} sesi</div></div>
+  <div class="card filter-bar">
+    <select id="filtSessionsCollector" onchange="sessionsFilter.collectorId=this.value;renderSessions();">
+      <option value="">Semua Collector</option>
+      ${collectors.map(c=>`<option value="${c.id}" ${sessionsFilter.collectorId===c.id?'selected':''}>${c.name}</option>`).join('')}
+    </select>
+    <select id="filtSessionsScenario" onchange="sessionsFilter.scenario=this.value;renderSessions();">
+      <option value="">Semua Senario</option>
+      ${scenarioNames.map(n=>`<option value="${n}" ${sessionsFilter.scenario===n?'selected':''}>${n}</option>`).join('')}
+    </select>
+    <select id="filtSessionsSkor" onchange="sessionsFilter.skor=this.value;renderSessions();">
+      <option value="">Semua Markah</option>
+      <option value="high" ${sessionsFilter.skor==='high'?'selected':''}>Tinggi (≥70)</option>
+      <option value="mid" ${sessionsFilter.skor==='mid'?'selected':''}>Sederhana (50-69)</option>
+      <option value="low" ${sessionsFilter.skor==='low'?'selected':''}>Rendah (&lt;50)</option>
+    </select>
+    <input type="date" id="filtSessionsFrom" value="${sessionsFilter.dateFrom}" onchange="sessionsFilter.dateFrom=this.value;renderSessions();" title="Dari tarikh"/>
+    <input type="date" id="filtSessionsTo" value="${sessionsFilter.dateTo}" onchange="sessionsFilter.dateTo=this.value;renderSessions();" title="Hingga tarikh"/>
+    <button class="btn btn-secondary" onclick="sessionsFilter={collectorId:'',scenario:'',skor:'',dateFrom:'',dateTo:''};renderSessions();">Reset</button>
+  </div>
+  ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📋</div><p>Tiada sesi latihan sepadan dengan filter.</p></div></div>`:''}
   ${sessions.length>0?`<div class="card">
     <div class="table-wrap"><table>
       <tr><th>Collector</th><th>Senario</th><th>Masa</th><th>Markah</th><th>Risiko Harassment</th><th>Tarikh</th><th></th></tr>
@@ -878,8 +940,9 @@ async function viewSession(id){
   const all=await loadSessions();
   const s=all.find(s=>s.id===id);
   if(!s)return;
-  const users=await loadUsers();
-  const u=findUserById(users,s.collectorId);
+  // Collector tengok rekod sendiri = tak payah call /api/users (route tu
+  // admin/manager-only, collector akan dapat 403). currentUser dah cukup.
+  const u=currentUser.role==='collector'?currentUser:findUserById(await loadUsers(),s.collectorId);
   openModal(`
   <div class="modal-title">📋 Detail Sesi Latihan</div>
   <div style="display:flex;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:8px">
