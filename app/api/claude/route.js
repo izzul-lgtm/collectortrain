@@ -39,12 +39,13 @@ export async function POST(request) {
   // PENTING: cap ni pernah jadi punca evalCall() (app.js) gagal — panggilan
   // latihan yang panjang buat Claude jana lebih banyak missed[]/quote dalam
   // JSON penilaian, lalu output terputus sebelum sempat habis → JSON.parse()
-  // gagal → fallback "Tidak dapat menganalisis sesi ini". Cap dinaikkan ke
-  // 3000 (cukup luang untuk JSON penilaian penuh + buffer), DAN evalCall()
-  // sendiri kini hadkan saiz output (missed[] max 5 item, feedback ringkas)
-  // supaya saiz JSON tak bergantung kepada tempoh panggilan — dua lapisan
-  // perlindungan, bukan hanya naikkan nombor.
-  const safeMaxTokens = Math.min(Number(max_tokens) || 200, 3000);
+  // gagal → fallback "Tidak dapat menganalisis sesi ini". Cap ditetapkan ke
+  // 2600 — cukup luang untuk JSON penilaian penuh (missed[] max 5 item,
+  // feedback 2-3 ayat ringkas, lihat evalCall() dalam app.js) + buffer, TAPI
+  // tak terlalu tinggi supaya generation Claude tak ambil masa lebih lama
+  // dari perlu (result "Keputusan Latihan" terasa perlahan kalau cap tinggi
+  // sangat berbanding saiz output sebenar yang dijangka).
+  const safeMaxTokens = Math.min(Number(max_tokens) || 200, 2600);
 
   // Prompt caching — system prompt yang sama dihantar setiap turn dalam satu call.
   // Dengan cache_control: { type: 'ephemeral' }, Anthropic cache token system prompt

@@ -267,6 +267,7 @@ let audioQueue=[], isPlayingAudio=false, currentAudio=null;
 let micStream=null, micAudioCtx=null, micAnalyser=null, micLevelRAF=null;
 let micPeakSinceStart=0; // peak bunyi dikesan sejak recognition.onstart turn semasa
 let endCallInProgress=false; // guard: elak double-trigger (cth double-click/double-tap "Tamatkan Panggilan") hantar 2x evalCall() utk panggilan yang sama
+let scoreLoadingInterval=null; // id setInterval utk rotate mesej spinner skrin "Menganalisis sesi..." — di-clear bila result sedia/gagal
 
 // ═══════════ AUTH ═══════════
 function switchAuthTab(tab){
@@ -1729,14 +1730,24 @@ async function endCall(){
     document.getElementById('mainContent').innerHTML=`
     <div style="text-align:center;padding:3rem 1rem">
       <div style="font-size:48px;margin-bottom:16px;animation:spin 1.5s linear infinite;display:inline-block">⏳</div>
-      <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:8px">Menganalisis sesi latihan...</div>
-      <div style="font-size:13px;color:var(--text3)">AI sedang menilai prestasi anda. Sila tunggu 10–20 saat.</div>
+      <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:8px" id="scoreLoadingMsg">Menganalisis nada & cara penyampaian...</div>
+      <div style="font-size:13px;color:var(--text3)">AI sedang menilai prestasi anda. Boleh sehingga seminit untuk panggilan yang panjang.</div>
     </div>
     <style>@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style>
   `;
+    // Rotate mesej setiap 4 saat — bukan utk laju, tapi elak rasa "stuck"/diam
+    // semasa AI tengah jana penilaian (proses non-streaming, semua/tiada).
+    const loadingMsgs=['Menganalisis nada & cara penyampaian...','Menyemak hujah balas & rundingan...','Menyemak SOP & pematuhan...','Menilai strategi mengikut baki hutang...','Menyediakan maklum balas akhir...'];
+    let loadingMsgIdx=0;
+    scoreLoadingInterval=setInterval(()=>{
+      loadingMsgIdx=(loadingMsgIdx+1)%loadingMsgs.length;
+      const el=document.getElementById('scoreLoadingMsg');
+      if(el)el.textContent=loadingMsgs[loadingMsgIdx];
+    },4000);
     await evalCall(duration);
   }finally{
     endCallInProgress=false;
+    if(scoreLoadingInterval){clearInterval(scoreLoadingInterval);scoreLoadingInterval=null;}
   }
 }
 
@@ -2366,7 +2377,7 @@ TUGAS ANDA — analisis transcript di atas baris demi baris, kemudian:
 
 2. strengths: 1-4 perkara yang collector BETUL-BETUL buat dengan baik (spesifik, bukan umum).
 
-3. missed: WAJIB 3-5 perkara checklist/SOP yang PATUT dilakukan collector TAPI TIDAK dilakukan, atau dilakukan dengan salah/lemah (MAKSIMUM 5 — pilih yang PALING penting/kritikal sahaja, walaupun panggilan panjang/banyak isu). Ini bahagian PALING PENTING dalam latihan ini — JANGAN biarkan kosong walaupun panggilan nampak baik; setiap panggilan ADA ruang penambahbaikan, cari ia walaupun kecil. PENTING: jika mana-mana item dalam "PENGUMUMAN/POLISI WAJIB" di atas TIDAK disebut langsung oleh collector sepanjang transcript, WAJIB masukkan sebagai SATU item 'missed' (category: action, issue mulakan dengan "Pengumuman wajib tidak disampaikan: ...") — beri keutamaan tertinggi kepada isu jenis ni berbanding isu gaya/SOP umum yang lain, sebab ia kegagalan pematuhan, bukan sekadar kelemahan rundingan. Untuk SETIAP item beri (kekalkan ringkas, 1-2 ayat setiap field):
+3. missed: WAJIB 3-5 perkara checklist/SOP yang PATUT dilakukan collector TAPI TIDAK dilakukan, atau dilakukan dengan salah/lemah (MAKSIMUM 5 — pilih yang PALING penting/kritikal sahaja, walaupun panggilan panjang/banyak isu). Ini bahagian PALING PENTING dalam latihan ini — JANGAN biarkan kosong walaupun panggilan nampak baik; setiap panggilan ADA ruang penambahbaikan, cari ia walaupun kecil. PENTING: jika mana-mana item dalam "PENGUMUMAN/POLISI WAJIB" di atas TIDAK disebut langsung oleh collector sepanjang transcript, WAJIB masukkan sebagai SATU item 'missed' (category: action, issue mulakan dengan "Pengumuman wajib tidak disampaikan: ...") — beri keutamaan tertinggi kepada isu jenis ni berbanding isu gaya/SOP umum yang lain, sebab ia kegagalan pematuhan, bukan sekadar kelemahan rundingan. Untuk SETIAP item beri (kekalkan ringkas, 1 ayat setiap field):
    - category: salah satu dari tone/delivery/counter/action/balance
    - issue: apa yang tak dibuat/salah (spesifik kepada perbualan ini, bukan teori umum)
    - suggestion: ayat atau tindakan SPESIFIK (boleh terus dipakai/dihafal) yang patut collector guna sebagai gantinya
@@ -2376,14 +2387,14 @@ TUGAS ANDA — analisis transcript di atas baris demi baris, kemudian:
 
 5. priorityFocus: SATU aspek (category sama macam atas) yang PALING perlu collector fokus dalam sesi latihan SETERUSNYA (biasanya aspek dengan markah terendah atau isu paling kritikal), dengan "tip" ringkas 1 ayat — spesifik & boleh terus diamalkan, bukan nasihat umum.
 
-6. feedback: ringkasan keseluruhan 3-4 ayat dalam Bahasa Malaysia, nada membina (constructive coaching), bukan menghukum. WAJIB spesifik kepada panggilan ini (rujuk isu/kekuatan sebenar dari transcript, bukan ayat generik macam "secara keseluruhan baik"), dan tutup dengan 1 ayat galakan/arah tindakan konkrit untuk sesi latihan akan datang — bukan sekadar pujian kosong.
+6. feedback: ringkasan keseluruhan 2-3 ayat dalam Bahasa Malaysia, nada membina (constructive coaching), bukan menghukum. WAJIB spesifik kepada panggilan ini (rujuk isu/kekuatan sebenar dari transcript, bukan ayat generik macam "secara keseluruhan baik"), dan tutup dengan 1 ayat galakan/arah tindakan konkrit untuk sesi latihan akan datang — bukan sekadar pujian kosong.
 
 Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
 {"totalScore":<0-100>,"scores":{"tone":<0-20>,"delivery":<0-20>,"counter":<0-20>,"action":<0-20>,"balance":<0-20>},"scoreReasons":{"tone":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","delivery":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","counter":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","action":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","balance":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript"},"strengths":["..."],"missed":[{"category":"tone|delivery|counter|action|balance","issue":"...","suggestion":"...","quote":"..."}],"harassmentRisk":"none|low|medium|high","harassmentNote":"","priorityFocus":{"category":"tone|delivery|counter|action|balance","tip":"..."},"feedback":"..."}`;
 
   try{
     const res=await fetch('/api/claude',{method:'POST',headers:authHeaders(),
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:4000,messages:[{role:'user',content:prompt}]})});
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:2600,messages:[{role:'user',content:prompt}]})});
     const data=await res.json();
     const raw=(data.content?.[0]?.text||'{}').replace(/```json|```/g,'').trim();
     let r;
