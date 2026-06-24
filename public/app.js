@@ -1211,7 +1211,7 @@ async function openAddScenario(existingId){
         // Draft valid kalau ada nama atau prompt yang dah ditaip
         if(draft.name||draft.prompt){
           const age=Math.round((Date.now()-draft._savedAt)/60000);
-          const restore=confirm(\`Ada draf yang belum disimpan (\u00b1\${age} minit lepas).\n\nMahu restore draf tersebut?\`);
+          const restore=confirm('Ada draf yang belum disimpan (\u00b1'+age+' minit lepas).\n\nMahu restore draf tersebut?');
           if(restore){
             applyScenarioDraft(draft);
           }else{
