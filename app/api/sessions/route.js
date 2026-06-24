@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../../../lib/supabaseAdmin';
+import { requireAuth } from '../../../lib/requireAuth';
 
 function toClientShape(row) {
   return {
@@ -41,7 +42,10 @@ function toDbShape(data) {
   };
 }
 
-export async function GET() {
+export async function GET(request) {
+  const authError = await requireAuth(request);
+  if (authError) return authError;
+
   try {
     const sb = supabaseAdmin();
     const { data, error } = await sb
@@ -56,6 +60,9 @@ export async function GET() {
 }
 
 export async function POST(req) {
+  const authError = await requireAuth(req);
+  if (authError) return authError;
+
   try {
     const body = await req.json();
     if (!body.id || !body.collectorId) {

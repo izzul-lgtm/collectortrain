@@ -1,4 +1,11 @@
 // ═══════════ DATABASE (localStorage — kosong sekarang, semua dah pindah ke Supabase) ═══════════
+// Helper: inject x-user-id header untuk semua API calls yang perlu auth.
+// /api/auth/* (login, register, session) dikecualikan — tu memang pre-login.
+function authHeaders(extra) {
+  const id = localStorage.getItem('ct_session_id') || '';
+  return { 'Content-Type': 'application/json', 'x-user-id': id, ...extra };
+}
+
 const DB = {
   get(k){try{return JSON.parse(localStorage.getItem('ct_'+k)||'null');}catch{return null;}},
   set(k,v){localStorage.setItem('ct_'+k,JSON.stringify(v));}
@@ -24,19 +31,19 @@ const DB = {
 // bukan baca localStorage yang instant — semua caller pun ditukar jadi async.
 const scenarioApi = {
   async list(){
-    const res=await fetch('/api/scenarios');
+    const res=await fetch('/api/scenarios',{headers:authHeaders()});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Gagal ambil senario.');
     return data.scenarios||[];
   },
   async save(scenario){
-    const res=await fetch('/api/scenarios',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(scenario)});
+    const res=await fetch('/api/scenarios',{method:'POST',headers:authHeaders(),body:JSON.stringify(scenario)});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Gagal simpan senario.');
     return data.scenario;
   },
   async remove(id){
-    const res=await fetch('/api/scenarios',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+    const res=await fetch('/api/scenarios',{method:'DELETE',headers:authHeaders(),body:JSON.stringify({id})});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Gagal padam senario.');
     return true;
@@ -50,13 +57,13 @@ const scenarioApi = {
 // collector dari mana-mana device, bukan terhad ke browser collector tu.
 const sessionApi = {
   async list(){
-    const res=await fetch('/api/sessions');
+    const res=await fetch('/api/sessions',{headers:authHeaders()});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Gagal ambil sesi latihan.');
     return data.sessions||[];
   },
   async create(sessionData){
-    const res=await fetch('/api/sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(sessionData)});
+    const res=await fetch('/api/sessions',{method:'POST',headers:authHeaders(),body:JSON.stringify(sessionData)});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Gagal simpan sesi latihan.');
     return data.session;
@@ -77,13 +84,13 @@ async function loadSessions(force){
 // auth/login) — password mentah tak pernah sampai balik ke browser lagi.
 const userApi = {
   async list(){
-    const res=await fetch('/api/users');
+    const res=await fetch('/api/users',{headers:authHeaders()});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Gagal ambil senarai pengguna.');
     return data.users||[];
   },
   async remove(id){
-    const res=await fetch('/api/users',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+    const res=await fetch('/api/users',{method:'DELETE',headers:authHeaders(),body:JSON.stringify({id})});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Gagal padam pengguna.');
     return true;
@@ -1337,7 +1344,7 @@ async function playNext(){
   try{
     const res=await fetch('/api/tts',{
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:authHeaders(),
       body:JSON.stringify({text:getAudioTagInstruction(text),gender:scenario?.gender||'male',geminiVoice:getGeminiVoice()})
     });
     if(!res.ok)throw new Error(res.status);
@@ -1803,7 +1810,7 @@ async function startRec() {
     async function callSTT() {
       const res = await fetch('/api/stt', {
         method: 'POST',
-        headers: { 'Content-Type': mimeType || 'audio/webm' },
+        headers: { 'Content-Type': mimeType || 'audio/webm', 'x-user-id': localStorage.getItem('ct_session_id')||'' },
         body: audioBlob,
       });
       const data = await res.json();
@@ -1879,7 +1886,7 @@ async function processSpeech(rawText){
   // max_tokens: hard level bagi lebih ruang untuk respon emosi panjang
   const maxTok=(scenario&&scenario.level==='hard')?400:200;
   try{
-    const res=await fetch('/api/claude',{method:'POST',headers:{'Content-Type':'application/json'},
+    const res=await fetch('/api/claude',{method:'POST',headers:authHeaders(),
       body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:maxTok,system:getSysPrompt(),messages:callHistory})});
     const data=await res.json();
     const reply=data.content?.[0]?.text||'Hmm...';
@@ -1969,7 +1976,7 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
 {"totalScore":<0-100>,"scores":{"tone":<0-20>,"delivery":<0-20>,"counter":<0-20>,"action":<0-20>,"balance":<0-20>},"scoreReasons":{"tone":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","delivery":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","counter":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","action":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","balance":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript"},"strengths":["..."],"missed":[{"category":"tone|delivery|counter|action|balance","issue":"...","suggestion":"...","quote":"..."}],"harassmentRisk":"none|low|medium|high","harassmentNote":"","priorityFocus":{"category":"tone|delivery|counter|action|balance","tip":"..."},"feedback":"..."}`;
 
   try{
-    const res=await fetch('/api/claude',{method:'POST',headers:{'Content-Type':'application/json'},
+    const res=await fetch('/api/claude',{method:'POST',headers:authHeaders(),
       body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:4000,messages:[{role:'user',content:prompt}]})});
     const data=await res.json();
     const raw=(data.content?.[0]?.text||'{}').replace(/```json|```/g,'').trim();

@@ -2,6 +2,8 @@
 // Emotion/style dihandle melalui audio tags dalam text ([angry], [sad], dll)
 // Style instruction guna systemInstruction field yang berasingan dari text.
 
+import { requireAuth } from '../../../lib/requireAuth';
+
 const GEMINI_VOICES = {
   male:   ['Orus','Fenrir','Charon','Puck'],
   female: ['Kore','Aoede','Leda','Zephyr']
@@ -20,6 +22,9 @@ function pickGeminiVoice(gender) {
 }
 
 export async function POST(request) {
+  const authError = await requireAuth(request);
+  if (authError) return authError;
+
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return Response.json({ error: 'GEMINI_API_KEY belum diset.' }, { status: 500 });

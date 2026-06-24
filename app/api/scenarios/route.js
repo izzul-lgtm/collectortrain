@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../../../lib/supabaseAdmin';
+import { requireAuth } from '../../../lib/requireAuth';
 
 // Tukar antara bentuk row Postgres (snake_case) ↔ bentuk yang app.js harap
 // (camelCase, sama macam shape localStorage lama) — supaya app.js tak perlu
@@ -57,7 +58,10 @@ function toDbShape(data) {
   };
 }
 
-export async function GET() {
+export async function GET(request) {
+  const authError = await requireAuth(request);
+  if (authError) return authError;
+
   try {
     const sb = supabaseAdmin();
     const { data, error } = await sb
@@ -72,6 +76,9 @@ export async function GET() {
 }
 
 export async function POST(req) {
+  const authError = await requireAuth(req, { roles: ['admin', 'manager'] });
+  if (authError) return authError;
+
   try {
     const body = await req.json();
     if (!body.id || !body.name || !body.title || !body.prompt) {
@@ -94,6 +101,9 @@ export async function POST(req) {
 }
 
 export async function DELETE(req) {
+  const authError = await requireAuth(req, { roles: ['admin'] });
+  if (authError) return authError;
+
   try {
     const { id } = await req.json();
     if (!id) return Response.json({ error: 'id diperlukan.' }, { status: 400 });

@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../../../lib/supabaseAdmin';
+import { requireAuth } from '../../../lib/requireAuth';
 
 // PENTING: password_hash JANGAN SEKALI-KALI dihantar balik ke client —
 // route ni sengaja .select() column tertentu sahaja (bukan '*') untuk
@@ -12,7 +13,10 @@ function toClientShape(row) {
   };
 }
 
-export async function GET() {
+export async function GET(request) {
+  const authError = await requireAuth(request, { roles: ['admin', 'manager'] });
+  if (authError) return authError;
+
   try {
     const sb = supabaseAdmin();
     const { data, error } = await sb
@@ -27,6 +31,9 @@ export async function GET() {
 }
 
 export async function DELETE(req) {
+  const authError = await requireAuth(req, { roles: ['admin'] });
+  if (authError) return authError;
+
   try {
     const { id } = await req.json();
     if (!id) return Response.json({ error: 'id diperlukan.' }, { status: 400 });

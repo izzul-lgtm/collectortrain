@@ -1,7 +1,12 @@
 // Proxies audio ke Deepgram Speech-to-Text API.
 // API key disimpan di server (env var) — tak pernah dedah ke browser.
 
+import { requireAuth } from '../../../lib/requireAuth';
+
 export async function POST(request) {
+  const authError = await requireAuth(request);
+  if (authError) return authError;
+
   const apiKey = process.env.DEEPGRAM_API_KEY;
   if (!apiKey) {
     return Response.json(

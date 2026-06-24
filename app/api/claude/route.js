@@ -2,7 +2,12 @@
 // The API key lives only here, as a Vercel/Next.js environment
 // variable — it is never sent to or stored in the browser.
 
+import { requireAuth } from '../../../lib/requireAuth';
+
 export async function POST(request) {
+  const authError = await requireAuth(request);
+  if (authError) return authError;
+
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return Response.json(
@@ -36,6 +41,17 @@ export async function POST(request) {
   // perlindungan, bukan hanya naikkan nombor.
   const safeMaxTokens = Math.min(Number(max_tokens) || 200, 3000);
 
+  // Prompt caching — system prompt yang sama dihantar setiap turn dalam satu call.
+  // Dengan cache_control: { type: 'ephemeral' }, Anthropic cache token system prompt
+  // selama 5 minit. Cache read = 10% harga je berbanding input token biasa.
+  // Cara: tukar system dari plain string jadi array dengan cache breakpoint.
+  // Nota: caching only kicks in kalau system prompt > 1024 token (getSysPrompt()
+  // dalam CollectorTrain biasanya ~800-1200 token bergantung scenario — panjang
+  // scenario.prompt yang custom boleh tips over the threshold dengan mudah).
+  const systemPayload = system
+    ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
+    : undefined;
+
   try {
     const upstream = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -43,11 +59,12 @@ export async function POST(request) {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
+        "anthropic-beta": "prompt-caching-2024-07-31",
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
         max_tokens: safeMaxTokens,
-        ...(system ? { system } : {}),
+        ...(systemPayload ? { system: systemPayload } : {}),
         messages,
       }),
     });
