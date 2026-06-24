@@ -3,10 +3,15 @@
 // variable — it is never sent to or stored in the browser.
 
 import { requireAuth } from '../../../lib/requireAuth';
+import { rateLimit } from '../../../lib/rateLimit';
 
 export async function POST(request) {
   const authError = await requireAuth(request);
   if (authError) return authError;
+
+  // Rate limit: max 40 request/minit per user — protect Claude API credit (cukup untuk nego panjang ~20 giliran)
+  const limitError = rateLimit(request, 'claude', { max: 40, windowMs: 60_000 });
+  if (limitError) return limitError;
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {

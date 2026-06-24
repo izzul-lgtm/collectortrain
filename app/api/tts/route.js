@@ -3,6 +3,7 @@
 // Style instruction guna systemInstruction field yang berasingan dari text.
 
 import { requireAuth } from '../../../lib/requireAuth';
+import { rateLimit } from '../../../lib/rateLimit';
 
 const GEMINI_VOICES = {
   male:   ['Orus','Fenrir','Charon','Puck'],
@@ -24,6 +25,10 @@ function pickGeminiVoice(gender) {
 export async function POST(request) {
   const authError = await requireAuth(request);
   if (authError) return authError;
+
+  // Rate limit: max 40 request/minit per user — protect Gemini TTS credit (cukup untuk nego panjang ~20 giliran)
+  const limitError = rateLimit(request, 'tts', { max: 40, windowMs: 60_000 });
+  if (limitError) return limitError;
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {

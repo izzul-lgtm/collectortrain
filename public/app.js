@@ -70,9 +70,12 @@ const sessionApi = {
   }
 };
 let sessionsCache=null;
+let sessionsCacheAt=0;
+const CACHE_TTL=5*60*1000; // 5 minit — kalau tab lama buka, data auto-refresh
 async function loadSessions(force){
-  if(sessionsCache&&!force)return sessionsCache;
+  if(sessionsCache&&!force&&(Date.now()-sessionsCacheAt<CACHE_TTL))return sessionsCache;
   sessionsCache=await sessionApi.list();
+  sessionsCacheAt=Date.now();
   return sessionsCache;
 }
 
@@ -263,6 +266,8 @@ async function doLogin(){
     const user=await userApi.login(id,pass);
     currentUser=user;
     localStorage.setItem('ct_session_id',user.id); // supaya refresh page tak terus logout
+    // Cache maklumat asas user — guna sebagai fallback kalau Supabase tak boleh reach masa restore sesi
+    localStorage.setItem('ct_cached_user',JSON.stringify({id:user.id,name:user.name,role:user.role}));
     document.getElementById('authScreen').classList.remove('active');
     document.getElementById('mainApp').classList.add('active');
     initApp();
@@ -299,6 +304,7 @@ function doLogout(){
   currentUser=null;
   usersCache=null; // elak data pengguna sebelum ni terbawa kalau orang lain login di device sama
   localStorage.removeItem('ct_session_id');
+  localStorage.removeItem('ct_cached_user'); // buang cached user semasa logout
   stopCall();
   document.getElementById('mainApp').classList.remove('active');
   document.getElementById('authScreen').classList.add('active');
@@ -463,7 +469,7 @@ async function renderDashboard(){
         ${WEEKS.map((w,i)=>`<div style="flex:1;text-align:center;font-size:11px;font-weight:600;color:${i===3?'var(--purple)':'var(--text3)'}">${w.label}${i===3?' ★':''}</div>`).join('')}
       </div>
     </div>
-    ${collectors.length===0?`<div class="empty-state"><div class="es-icon">👥</div><p>Tiada collector lagi.</p></div>`:''}
+    ${collectors.length===0?`<div class="empty-state"><div class="es-icon">👥</div><p>Belum ada collector berdaftar.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Daftar akaun collector dari menu <strong>Urus Pengguna</strong>.</p></div>`:''}
     ${collectors.map(c=>{
       const wData=weeklyData(c.id);
       const arrow=trendArrow(wData);
@@ -519,7 +525,7 @@ async function renderDashboard(){
     </div>
     <div class="card">
       <div class="card-title">Sesi Terbaru</div>
-      ${recentSessions.length===0?`<div class="empty-state"><div class="es-icon">📋</div><p>Tiada sesi lagi</p></div>`:''}
+      ${recentSessions.length===0?`<div class="empty-state"><div class="es-icon">📋</div><p>Tiada sesi latihan lagi.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Collector boleh mulakan latihan dari menu <strong>Latihan Suara</strong>.</p></div>`:''}
       ${recentSessions.map(s=>{
         const u=findUserById(users,s.collectorId);
         return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
@@ -533,7 +539,7 @@ async function renderDashboard(){
   <div class="two-col">
     <div class="card">
       <div class="card-title">🎯 Aspek Paling Kerap Tersilap (Seluruh Pasukan)</div>
-      ${weakness.length===0?`<div class="empty-state"><div class="es-icon">📊</div><p>Belum cukup data sesi.</p></div>`:
+      ${weakness.length===0?`<div class="empty-state"><div class="es-icon">📊</div><p>Belum cukup data untuk analisis.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Perlukan sekurang-kurangnya 3 sesi latihan.</p></div>`:
       weakness.slice(0,5).map(([cat,count])=>{
         const pct=weaknessTotal?Math.round(count/weaknessTotal*100):0;
         return`<div style="margin-bottom:12px">
@@ -568,9 +574,11 @@ async function renderDashboard(){
 // perlu refetch network setiap kali — cuma reload bila benar-benar perlu
 // (first load, atau lepas simpan/padam senario di halaman manager).
 let scenariosCache=null;
+let scenariosCacheAt=0;
 async function loadScenarios(force){
-  if(scenariosCache&&!force)return scenariosCache;
+  if(scenariosCache&&!force&&(Date.now()-scenariosCacheAt<CACHE_TTL))return scenariosCache;
   scenariosCache=await scenarioApi.list();
+  scenariosCacheAt=Date.now();
   return scenariosCache;
 }
 
@@ -714,11 +722,41 @@ function renderScoreScreen(){
         <div style="padding:8px 12px;border-radius:8px;font-size:13px;background:${m.role==='user'?'var(--purple-light)':'var(--bg)'};color:${m.role==='user'?'var(--purple)':'var(--text)'}">${m.content}</div></div>`).join('')}
       </div>
     </div>
-    <div style="display:flex;gap:8px">
-      <button class="btn btn-primary" style="flex:1" onclick="navigate('training')">🔁 Latihan Semula</button>
-      <button class="btn btn-secondary" style="flex:1" onclick="navigate('my-history')">📊 Lihat Rekod</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary" style="flex:1;min-width:120px" onclick="navigate('training')">🔁 Latihan Semula</button>
+      <button class="btn btn-secondary" style="flex:1;min-width:120px" onclick="navigate('my-history')">📊 Lihat Rekod</button>
+      <button class="btn btn-secondary" style="flex:1;min-width:120px" onclick="copyScoreSummary()">📋 Salin Ringkasan</button>
     </div>
   </div>`);
+}
+
+function copyScoreSummary(){
+  const s=window._lastScore;
+  if(!s)return;
+  const catLabels={tone:'Tone / Nada',delivery:'Cara Penyampaian',counter:'Hujah Balas',action:'Tindakan & Pematuhan',balance:'Strategi Baki Hutang'};
+  const scoreLines=Object.entries(s.scores||{}).map(([k,v])=>`  ${catLabels[k]||k}: ${v}/20`).join('\n');
+  const strengthLines=(s.strengths||[]).map(t=>`  ✅ ${t}`).join('\n');
+  const missedLines=(s.missed||[]).map(m=>`  ⚠ ${m.issue||''} → ${m.suggestion||''}`).join('\n');
+  const harassment=s.harassmentRisk&&s.harassmentRisk!=='none'?`\n⚠ Isu Pematuhan (${s.harassmentRisk}): ${s.harassmentNote||''}\n`:'';
+  const text=[
+    `📊 Keputusan Latihan CollectorTrain`,
+    `Senario: ${s.scenarioName||'-'} · Masa: ${s.duration||'-'}`,
+    `Markah Keseluruhan: ${s.totalScore}/100`,
+    ``,
+    `Pecahan Markah:`,
+    scoreLines,
+    harassment,
+    strengthLines?`Kekuatan:\n${strengthLines}`:'',
+    missedLines?`Perlu Diperbaiki:\n${missedLines}`:'',
+    s.priorityFocus?`\n🎯 Fokus Seterusnya (${catLabels[s.priorityFocus.category]||s.priorityFocus.category}):\n  ${s.priorityFocus.tip||''}`:'',
+    ``,
+    `💬 Maklum Balas AI:`,
+    s.feedback||'',
+  ].filter(Boolean).join('\n');
+  navigator.clipboard.writeText(text).then(()=>{
+    const btn=Array.from(document.querySelectorAll('button')).find(b=>b.textContent.includes('Salin Ringkasan'));
+    if(btn){const orig=btn.textContent;btn.textContent='✅ Disalin!';setTimeout(()=>{btn.textContent=orig;},2000);}
+  }).catch(()=>alert('Gagal salin — sila highlight teks dan salin manual.'));
 }
 
 async function renderMyHistory(){
@@ -1153,7 +1191,7 @@ async function openAddScenario(existingId){
     <button type="button" class="btn btn-secondary" style="margin-top:6px;font-size:12px;padding:6px 10px" onclick="addDisclosureRow('')">+ Tambah Pengumuman</button>
   </div>
   <div class="modal-footer">
-    <button class="btn btn-secondary" onclick="closeModal()">Batal</button>
+    <button class="btn btn-secondary" onclick="cancelScenarioForm()">Batal</button>
     <button class="btn btn-primary" onclick="saveScenario('${existingId||''}')">Simpan</button>
   </div>`);
   // Hanya load extra checklist items — 5 kategori utama auto-score oleh AI
@@ -1186,6 +1224,18 @@ async function openAddScenario(existingId){
   // Simpan existingId kat modal supaya readScenarioFormDraft boleh detect mod edit
   document.getElementById('modalBox').dataset.scenarioEditId=existingId||'';
   startScenarioDraftTimer();
+}
+
+// Batal form senario — kalau ada kandungan dalam draft, tanya dulu sebelum tutup.
+function cancelScenarioForm(){
+  const name=(document.getElementById("scName")||{}).value||"";
+  const prompt=(document.getElementById("scPrompt")||{}).value||"";
+  const hasContent=name.trim()||prompt.trim();
+  if(hasContent&&!confirm("Borang belum disimpan. Batalkan dan buang perubahan?")){
+    return;
+  }
+  clearScenarioDraft();
+  closeModal();
 }
 
 // Tunjuk/sembunyi input bebas "nama client lain" bila pilihan "Lain-lain"
@@ -1595,7 +1645,7 @@ async function endCall(){
   // cuba POST /api/sessions 2x. Fix: guard senyap, klik kedua/seterusnya
   // diabaikan terus sehingga sesi yang pertama habis disimpan.
   if(endCallInProgress)return;
-  endCallInProgress=true;
+  endCallInProgress=true; // set SEBELUM await — elak double-tap lepas dalam masa stopCall() berjalan
   try{
     stopCall();
     const m=Math.floor(callSeconds/60),s=callSeconds%60;
@@ -2341,17 +2391,53 @@ function setContent(html){document.getElementById('mainContent').innerHTML=html;
 // refresh, walaupun baru je login. Fix: simpan ID pengguna (BUKAN
 // password) dalam localStorage semasa login, dan cuba restore sesi tu
 // secara automatik setiap kali app.js load.
+//
+// OFFLINE FALLBACK: Kalau Supabase tak boleh reach masa restore (timeout /
+// maintenance), guna maklumat user yang di-cache dalam localStorage semasa
+// login terakhir — collector masih boleh masuk app & buat training.
+// Banner kecil akan tunjuk "⚠ Offline mode" supaya user sedar ada isu.
+// Bila Supabase balik online, sesi akan verify semula pada request API seterusnya.
 (async function restoreSession(){
+  const savedId=localStorage.getItem('ct_session_id');
+  if(!savedId)return;
+
+  // Cuba verify dengan Supabase dulu (normal flow)
   try{
-    const savedId=localStorage.getItem('ct_session_id');
-    if(!savedId)return;
     const u=await userApi.session(savedId);
-    if(!u)return; // ID dah tak wujud (cth akaun dipadam) — kekal di skrin login
+    if(!u){
+      // ID tak wujud (akaun dipadam) — kekal di skrin login, buang cache lama
+      localStorage.removeItem('ct_session_id');
+      localStorage.removeItem('ct_cached_user');
+      return;
+    }
+    // Berjaya verify — update cache dengan data terkini & proceed
+    localStorage.setItem('ct_cached_user',JSON.stringify({id:u.id,name:u.name,role:u.role}));
     currentUser=u;
     document.getElementById('authScreen').classList.remove('active');
     document.getElementById('mainApp').classList.add('active');
     initApp();
   }catch(e){
-    // network/localStorage tak available — biar fallback senyap ke skrin login biasa, jangan crash app.
+    // Supabase tak boleh reach — cuba guna cached user sebagai fallback
+    try{
+      const cached=JSON.parse(localStorage.getItem('ct_cached_user')||'null');
+      if(!cached||!cached.id||!cached.name||!cached.role)return; // tiada cache — kena login balik
+      currentUser=cached;
+      document.getElementById('authScreen').classList.remove('active');
+      document.getElementById('mainApp').classList.add('active');
+      initApp();
+      // Tunjuk banner offline mode supaya user sedar
+      setTimeout(()=>{
+        let banner=document.getElementById('offlineModeBanner');
+        if(!banner){
+          banner=document.createElement('div');
+          banner.id='offlineModeBanner';
+          banner.style.cssText='position:fixed;top:0;left:0;right:0;background:#854F0B;color:#fff;padding:8px 16px;font-size:13px;z-index:99999;text-align:center;';
+          banner.innerHTML='⚠️ <strong>Mod Terhad:</strong> Tidak dapat sambung ke pelayan. Data mungkin tidak terkini. <button onclick="window.location.reload()" style="margin-left:10px;background:#fff;color:#854F0B;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer;font-weight:600">Cuba Semula</button>';
+          document.body.prepend(banner);
+        }
+      },500);
+    }catch(e2){
+      // Langsung tak boleh recover — biar kat login screen
+    }
   }
 })();

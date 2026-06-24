@@ -2,10 +2,15 @@
 // API key disimpan di server (env var) — tak pernah dedah ke browser.
 
 import { requireAuth } from '../../../lib/requireAuth';
+import { rateLimit } from '../../../lib/rateLimit';
 
 export async function POST(request) {
   const authError = await requireAuth(request);
   if (authError) return authError;
+
+  // Rate limit: max 60 request/minit per user — protect Deepgram STT credit (cukup untuk nego panjang ~30 giliran)
+  const limitError = rateLimit(request, 'stt', { max: 60, windowMs: 60_000 });
+  if (limitError) return limitError;
 
   const apiKey = process.env.DEEPGRAM_API_KEY;
   if (!apiKey) {
