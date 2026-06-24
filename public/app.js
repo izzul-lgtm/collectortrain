@@ -1057,20 +1057,12 @@ async function deleteUser(id){
 // ElevenLabs (Voice Library → cari loghat yang sesuai → copy Voice ID).
 // Pool 20 suara dari ElevenLabs — dibahagi male/female
 // Bila start call baru, sistem random pilih satu suara yang belum pernah
-// dipakai dalam sesi terkini supaya tak bosan dengar suara sama
+// Gemini 3.1 Flash TTS voices
+// Male:   Orus (dalam/serius), Fenrir (kasar/tegas), Charon (neutral), Puck (muda/ekspresif)
+// Female: Kore (serius/tegang), Aoede (warm/natural), Leda (muda/casual), Zephyr (lembut)
 const VOICE_POOL = {
-  male: [
-    'd0grukerEzs069eKIauC','cHDwXsKG0qHMNLIjOusN','42bu2zNrjJXYzreZrTEu',
-    'Q2ELiWzbuj5F0eFHXK6S','1wuUVbmqPGK24IaC0QTh','dNnVzcebCLVAswzGKvfO',
-    'lMSqoJeA0cBBNA9FeHAs','SrWU271vZiNf2mrBhzL5','jtEc6V0BMZoMqpAMRJbl',
-    'lvNyQwaZPcGFiNUWWiVa'
-  ],
-  female: [
-    'PId0lEbL3SOYkQZSraml','nfMYisZqs1GOjTFllho3','vRaj2Gd0mefB1EU96ua2',
-    'INmScOFtmeMGA4p0XRr1','qKNMkrcmsdf29T6K7Dbu','15Y62ZlO8it2f5wduybx',
-    'GlqBE2PF88HyOJJBxQ9T','ZSNL4hPqCnqoMPaI4jGX','MpbYQvoTmXjHkaxtLiSh',
-    'onQAwbsky3pmzMu2uapN'
-  ]
+  male:   ['Orus','Fenrir','Charon','Puck'],
+  female: ['Kore','Aoede','Leda','Zephyr']
 };
 
 // PUNCA BUG "scenario gagal simpan / training tak match scenario yang
@@ -1110,52 +1102,64 @@ function getVoiceId(){
   return activeVoiceId;
 }
 
-// Detect sentiment dari AI reply untuk adjust voice emotion — scoring system
-function getVoiceSettings(text){
-  if(!text)return {stability:0.5,similarity_boost:0.75,style:0.4};
+
+// Pilih Gemini voice — konsisten dalam satu sesi (activeVoiceId)
+// Voice dipilih masa call mula, sama sampai call tamat
+function getGeminiVoice(){
+  if(activeVoiceId) return activeVoiceId;
+  if(!scenario) return 'Charon';
+  const gender=scenario.gender||'male';
+  activeVoiceId=pickVoice(gender);
+  return activeVoiceId;
+}
+// Convert emotion dari debtor AI reply → Gemini audio tags
+// Audio tags inject TERUS dalam text sebelum hantar ke TTS
+// Gemini akan cakap ikut tag tu — jauh lagi natural dari ElevenLabs numbers
+function getAudioTagInstruction(text){
+  if(!text) return text;
   const t=text.toLowerCase();
 
-  // Kira intensity markers — exclamation & soal bertimbus
+  // Kira intensity markers
   const bangCount=(text.match(/!+/g)||[]).reduce((s,m)=>s+m.length,0);
   const questCount=(text.match(/\?+/g)||[]).length;
 
-  // Score setiap emosi — ambil yang paling tinggi
-  let scores={
-    marah:0, sedih:0, keliru:0, susah:0, santai:0, kasar:0
-  };
-  // Marah
+  // Score emosi — sama logic seperti getVoiceSettings lama
+  let scores={marah:0,sedih:0,keliru:0,susah:0,santai:0,kasar:0};
+
   if(/marah|tension|bengang|geram|tak nak|pergi|letak telefon|dah la|buat apa|apa kejadah|menyampah|tak faham ke|dah cakap dah|tak payah|suka hati|jangan kacau|leceh|penat la|jangan ganggu/.test(t)) scores.marah+=3;
-  scores.marah+=Math.min(bangCount,3); // tiap '!' tambah score, max +3
-  // Sedih/tertekan
+  scores.marah+=Math.min(bangCount,3);
+
   if(/nangis|menangis|sedih|tertekan|takut|dah tak tahu|minta maaf|harap maaf|tolong faham|susah sangat|dah cuba|penat dah|give up|tak larat|nak buat macam mana/.test(t)) scores.sedih+=3;
   if(/tahu nak buat macam mana/.test(t)) scores.sedih+=2;
-  // Keliru/confuse
+
   if(/ha\?|eh\?|tak faham|maksud|yang mana|yang ni ke|yang tu ke|tak ingat|lupa|betul ke|ye ke|serius|confirm|pastikan|check balik/.test(t)) scores.keliru+=3;
-  scores.keliru+=Math.min(questCount,2); // soal bertimbus tambah keliru
-  // Susah kewangan
+  scores.keliru+=Math.min(questCount,2);
+
   if(/tak boleh bayar|tak ada duit|takde duit|poket|kering|gaji|tak cukup|nak makan pun|anak|keluarga|masalah sekarang|susah sekarang|tak mampu|tak ada kerja|baru kena buang/.test(t)) scores.susah+=3;
   if(/hutang lain|kerja pun|hidup/.test(t)) scores.susah+=1;
-  // Santai
+
   if(/haha|hehe|lawak|takpe|ok ok|boleh je|alright|ok la|fine|no problem|insyaallah|kalau macam tu/.test(t)) scores.santai+=3;
-  // Kasar/defensive
+
   if(/saman je la|lapor|report|lawyer|saman|mahkamah|tak kisah|buat apa nak kisah|lantak/.test(t)) scores.kasar+=3;
 
-  // Pilih emosi dominan
   const top=Object.entries(scores).sort((a,b)=>b[1]-a[1])[0];
-  if(top[1]===0) return {stability:0.5,similarity_boost:0.75,style:0.4}; // default
-
-  // Intensity multiplier — 1.0 normal, 1.2 kalau score tinggi (>=5)
   const intense=top[1]>=5;
 
-  switch(top[0]){
-    case 'marah':  return {stability:intense?0.15:0.2, similarity_boost:0.85, style:intense?0.95:0.85, use_speaker_boost:true};
-    case 'sedih':  return {stability:intense?0.7:0.65,  similarity_boost:0.8,  style:intense?0.1:0.15,  use_speaker_boost:false};
-    case 'keliru': return {stability:0.55, similarity_boost:0.75, style:intense?0.45:0.35, use_speaker_boost:false};
-    case 'susah':  return {stability:intense?0.65:0.6,  similarity_boost:0.78, style:intense?0.15:0.2,  use_speaker_boost:false};
-    case 'santai': return {stability:0.7,  similarity_boost:0.7,  style:0.5,  use_speaker_boost:false};
-    case 'kasar':  return {stability:intense?0.2:0.3,  similarity_boost:0.85, style:intense?0.85:0.75, use_speaker_boost:true};
-    default:       return {stability:0.5,  similarity_boost:0.75, style:0.4};
-  }
+  // Map emosi → Gemini audio tags
+  // Tags inject di awal text supaya affect keseluruhan delivery
+  if(top[1]===0) return text; // default — no tag, natural tone
+
+  const tagMap={
+    marah:  intense ? '[angry] [frustrated] ' : '[irritated] ',
+    sedih:  intense ? '[sad] [soft] '         : '[melancholic] ',
+    keliru: '[confused] ',
+    susah:  intense ? '[sad] [worried] '      : '[concerned] ',
+    santai: '[casual] [relaxed] ',
+    kasar:  intense ? '[hostile] [dismissive] ': '[defensive] '
+  };
+
+  const tag = tagMap[top[0]] || '';
+  return tag + text;
 }
 function getSysPrompt(){
   if(!scenario)return '';
@@ -1334,7 +1338,7 @@ async function playNext(){
     const res=await fetch('/api/tts',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({text,voiceId:getVoiceId(),voiceSettings:getVoiceSettings(text)})
+      body:JSON.stringify({text:getAudioTagInstruction(text),gender:scenario?.gender||'male',geminiVoice:getGeminiVoice()})
     });
     if(!res.ok)throw new Error(res.status);
     const blob=await res.blob();const url=URL.createObjectURL(blob);
