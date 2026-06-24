@@ -1,0 +1,17 @@
+{
+  "regions": ["sin1"],
+  "functions": {
+    "app/api/tts/route.js": {
+      "regions": ["sin1"]
+    },
+    "app/api/claude/route.js": {
+      "regions": ["sin1"]
+    },
+    "app/api/stt/route.js": {
+      "regions": ["sin1"]
+    },
+    "app/api/sessions/route.js": {
+      "regions": ["sin1"]
+    }
+  }
+}
