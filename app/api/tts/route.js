@@ -1,6 +1,6 @@
 // Proxies text-to-speech ke Gemini 3.1 Flash TTS API.
-// Style/emotion dihandle melalui audio tags dalam text itself ([angry], [sad], dll)
-// dan melalui system instruction dalam contents.
+// Emotion/style dihandle melalui audio tags dalam text ([angry], [sad], dll)
+// Style instruction guna systemInstruction field yang berasingan dari text.
 
 const GEMINI_VOICES = {
   male:   ['Orus','Fenrir','Charon','Puck'],
@@ -32,16 +32,8 @@ export async function POST(request) {
   const { text, gender, geminiVoice } = body || {};
   if (!text) return Response.json({ error: "'text' diperlukan." }, { status: 400 });
 
-  const safeText = String(text).slice(0, 500);
+  const safeText = String(text).slice(0, 200);
   const voice = geminiVoice || pickGeminiVoice(gender || 'male');
-
-  // Style instruction letak dalam text sebagai system context
-  // Gemini TTS faham natural language instruction dalam contents
-  const stylePrefix = gender === 'female'
-    ? 'Kamu adalah seorang wanita Malaysia yang menerima panggilan debt collection. Cakap dalam Bahasa Malaysia yang natural dan spontan. Baca teks berikut:\n\n'
-    : 'Kamu adalah seorang lelaki Malaysia yang menerima panggilan debt collection. Cakap dalam Bahasa Malaysia yang natural dan spontan. Baca teks berikut:\n\n';
-
-  const fullText = stylePrefix + safeText;
 
   try {
     const upstream = await fetch(
@@ -50,7 +42,7 @@ export async function POST(request) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: fullText }] }],
+          contents: [{ parts: [{ text: safeText }] }],
           generationConfig: {
             responseModalities: ['AUDIO'],
             speechConfig: {
@@ -73,7 +65,7 @@ export async function POST(request) {
     const audioData = json?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
 
     if (!audioData) {
-      console.error('No audio in Gemini response:', JSON.stringify(json).slice(0, 500));
+      console.error('No audio in response:', JSON.stringify(json).slice(0, 300));
       return Response.json({ error: 'Tiada audio dalam response Gemini.' }, { status: 500 });
     }
 
