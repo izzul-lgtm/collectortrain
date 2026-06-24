@@ -1713,7 +1713,19 @@ async function endCall(){
     stopCall();
     const m=Math.floor(callSeconds/60),s=callSeconds%60;
     const duration=m+'m '+s+'s';
-    navigate('score');
+    // PUNCA BUG "tak nampak 'tunggu sebentar', terus ke training/dashboard,
+    // result baru muncul tiba-tiba": navigate('score') kat sini panggil
+    // renderScoreScreen() — yang kalau window._lastScore BELUM ada (sesi
+    // pertama lepas refresh, contohnya), terus navigate('training') secara
+    // fire-and-forget (async, tak di-await). Render training tu boleh siap
+    // LEPAS spinner bawah ni diletak (race condition — bergantung kelajuan
+    // fetch senario) dan overwrite balik spinner dengan page training, sebab
+    // evalCall() di bawah masih jalan 10-20 saat. Fix: jangan panggil
+    // navigate('score') di sini langsung — set currentPage & letak spinner
+    // terus tanpa render function. navigate('score') sebenar berlaku dalam
+    // evalCall() bila window._lastScore dah sedia.
+    currentPage='score';
+    document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
     document.getElementById('mainContent').innerHTML=`
     <div style="text-align:center;padding:3rem 1rem">
       <div style="font-size:48px;margin-bottom:16px;animation:spin 1.5s linear infinite;display:inline-block">⏳</div>
