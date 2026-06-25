@@ -623,13 +623,18 @@ async function renderTraining(){
   <div class="page-header"><div class="page-title">Latihan Suara</div><div class="page-sub">Pilih senario dan mulakan panggilan latihan</div></div>
   <div class="card">
     <div class="card-title">Pilih Senario</div>
-    <div class="sc-grid" id="scGrid">
+    <div class="sc-list" id="scGrid">
       ${scenarios.map((s,i)=>`
       <div class="sc-card ${scenario&&scenario.id===s.id?'selected':''}" onclick="selectScenario('${s.id}')">
         <div class="sc-emoji">${s.emoji}</div>
-        <div class="sc-name">${s.title}</div>
-        <div class="sc-desc">${s.desc}</div>
-        <span class="level-badge level-${s.level}">${s.level==='easy'?'Mudah':s.level==='med'?'Sederhana':'Sukar'}</span>
+        <div class="sc-body">
+          <div class="sc-name">${s.title}</div>
+          <div class="sc-desc">${s.desc}</div>
+          <div class="sc-meta">
+            <span class="level-badge level-${s.level}">${s.level==='easy'?'Mudah':s.level==='med'?'Sederhana':'Sukar'}</span>
+          </div>
+        </div>
+        <div class="sc-check">${scenario&&scenario.id===s.id?'✓':''}</div>
       </div>`).join('')}
     </div>
     ${scenario?`<div style="background:var(--bg);border-radius:var(--radius-sm);padding:10px 14px;margin-top:4px">
@@ -740,7 +745,7 @@ function renderScoreScreen(){
         </div>
         <div style="font-size:13px;color:var(--text);margin-bottom:3px"><strong>Isu:</strong> ${m.issue||''}</div>
         ${m.quote?`<div style="font-size:12px;color:var(--text3);font-style:italic;margin-bottom:3px">"${m.quote}"</div>`:''}
-        <div style="font-size:13px;color:var(--purple)"><strong>Cadangan:</strong> ${m.suggestion||''}</div>
+        <div style="font-size:13px;color:var(--brand)"><strong>Cadangan:</strong> ${m.suggestion||''}</div>
       </div>`).join('')}
     </div>`:''}
     ${s.priorityFocus?`
@@ -996,7 +1001,7 @@ async function viewSession(id){
     <span class="chip chip-red" style="font-size:11px">${catIcon(m.category)} ${catLabel(m.category)}</span>
     <div style="font-size:12px;color:var(--text);margin-top:4px"><strong>Isu:</strong> ${m.issue||''}</div>
     ${m.quote?`<div style="font-size:11px;color:var(--text3);font-style:italic;margin:2px 0">"${m.quote}"</div>`:''}
-    <div style="font-size:12px;color:var(--purple)"><strong>Cadangan:</strong> ${m.suggestion||''}</div>
+    <div style="font-size:12px;color:var(--brand)"><strong>Cadangan:</strong> ${m.suggestion||''}</div>
   </div>`).join('')}
   <hr class="divider"/>`:''}
   ${s.priorityFocus?`
