@@ -610,52 +610,158 @@ async function loadScenarios(force){
 }
 
 async function renderTraining(){
-  setContent('<div class="page-header"><div class="page-title">Latihan Suara</div></div><div class="card">Memuatkan senario...</div>');
+  setContent('<div class="page-header"><div class="page-title">Voice Training</div></div><div class="card">Loading scenarios...</div>');
   let scenarios;
   try{
     scenarios=await loadScenarios();
   }catch(e){
-    setContent(`<div class="page-header"><div class="page-title">Latihan Suara</div></div><div class="card">⚠ Gagal memuatkan senario: ${e.message}</div>`);
+    setContent(`<div class="page-header"><div class="page-title">Voice Training</div></div><div class="card">⚠ Failed to load scenarios: ${e.message}</div>`);
     return;
   }
   if(!scenario&&scenarios.length)scenario=scenarios[0];
-  setContent(`
-  <div class="page-header"><div class="page-title">Latihan Suara</div><div class="page-sub">Pilih senario dan mulakan panggilan latihan</div></div>
-  <div class="card">
-    <div class="card-title">Pilih Senario</div>
-    <div class="sc-list" id="scGrid">
-      ${scenarios.map((s,i)=>`
-      <div class="sc-card ${scenario&&scenario.id===s.id?'selected':''}" onclick="selectScenario('${s.id}')">
-        <div class="sc-emoji">${s.emoji}</div>
-        <div class="sc-body">
-          <div class="sc-name">${s.title}</div>
-          <div class="sc-desc">${s.desc}</div>
-          <div class="sc-meta">
-            <span class="level-badge level-${s.level}">${s.level==='easy'?'Mudah':s.level==='med'?'Sederhana':'Sukar'}</span>
+
+  function scPreviewHTML(s){
+    if(!s)return`<div class="sc-preview-empty"><div style="font-size:36px;margin-bottom:10px">👆</div><div style="font-size:13px;color:var(--text3)">Select a scenario to view details</div></div>`;
+    const lvlLabel=s.level==='easy'?'Easy':s.level==='med'?'Medium':'Hard';
+    const accentLabel=s.accent==='melayu'?'Malay':s.accent==='cina'?'Mandarin Manglish':'Tamil';
+    const genderLabel=s.gender==='male'?'Male':'Female';
+    const row=(label,val)=>val?`<div class="preview-row"><span class="preview-label">${label}</span><span class="preview-val">${val}</span></div>`:'';
+    const disclosureList=(s.disclosures||[]).length
+      ?`<div class="preview-section-title">📢 Required Disclosures</div>${(s.disclosures||[]).map(d=>`<div class="preview-disclosure">• ${d}</div>`).join('')}`
+      :'';
+    const checklistHTML=(s.checklist||[]).length
+      ?`<div class="preview-section-title" style="margin-top:14px">✅ Evaluation Checklist</div>${(s.checklist||[]).map(c=>`<div class="preview-checklist-item"><span class="preview-cl-cat">${c.cat}</span><span class="preview-cl-text">${c.text}</span></div>`).join('')}`
+      :'';
+    return`
+      <div class="sc-preview-header">
+        <div style="font-size:32px">${s.emoji}</div>
+        <div style="flex:1;min-width:0">
+          <div class="sc-preview-title">${s.title}</div>
+          <div class="sc-preview-sub">${s.description||s.desc||''}</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+            <span class="level-badge level-${s.level}">${lvlLabel}</span>
+            <span class="preview-badge-neutral">${accentLabel} · ${genderLabel}</span>
+            ${s.client?`<span class="preview-badge-client">${s.client}</span>`:''}
           </div>
         </div>
-        <div class="sc-check">${scenario&&scenario.id===s.id?'✓':''}</div>
-      </div>`).join('')}
+      </div>
+      <div class="preview-divider"></div>
+      <div class="preview-section-title">📋 Customer Account Information</div>
+      ${row('Amount Outstanding',s.amount)}
+      ${row('Days Overdue',s.days?s.days+' days':'')}
+      ${row('IC Number',s.icNumber)}
+      ${row('Acc Number',s.accNumber)}
+      ${row('Service No.',s.serviceNo)}
+      ${row('Acc Type',s.accType)}
+      ${row('Registration Date',s.registrationDate?new Date(s.registrationDate).toLocaleDateString('en-MY'):'')}
+      ${row('Termination Date',s.terminationDate?new Date(s.terminationDate).toLocaleDateString('en-MY'):'')}
+      <div class="preview-divider"></div>
+      <div class="preview-section-title">🎭 Debtor Situation & Approach</div>
+      <div class="preview-mood-box">${s.prompt||''}</div>
+      ${disclosureList}
+      ${checklistHTML}
+    `;
+  }
+
+  setContent(`
+  <div class="page-header"><div class="page-title">Voice Training</div><div class="page-sub">Select a scenario, review the details, then start the call</div></div>
+  <div class="training-layout">
+    <div class="training-left">
+      <div class="card" style="margin-bottom:0">
+        <div class="card-title">Select Scenario</div>
+        <div class="sc-list" id="scGrid">
+          ${scenarios.map(s=>`
+          <div class="sc-card ${scenario&&scenario.id===s.id?'selected':''}" onclick="selectScenario('${s.id}')">
+            <div class="sc-emoji">${s.emoji}</div>
+            <div class="sc-body">
+              <div class="sc-name">${s.title}</div>
+              <div class="sc-desc">${s.description||s.desc||''}</div>
+              <div class="sc-meta">
+                <span class="level-badge level-${s.level}">${s.level==='easy'?'Easy':s.level==='med'?'Medium':'Hard'}</span>
+                ${s.client?`<span class="preview-badge-client" style="font-size:10px">${s.client}</span>`:''}
+              </div>
+            </div>
+            <div class="sc-check">${scenario&&scenario.id===s.id?'✓':''}</div>
+          </div>`).join('')}
+        </div>
+      </div>
     </div>
-    ${scenario?`<div style="background:var(--bg);border-radius:var(--radius-sm);padding:10px 14px;margin-top:4px">
-      <span style="font-weight:500;font-size:13px">${scenario.name}</span>
-      <span style="color:var(--text3);font-size:12px"> · ${scenario.amount} · ${scenario.days} hari tunggakan</span>
-    </div>`:''}
-  </div>
-  ${!TTS_ENABLED?`<div style="display:flex;align-items:center;gap:10px;background:#fff8e1;border:1.5px solid #f9a825;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:8px">
-    <span style="font-size:20px">🔇</span>
-    <div>
-      <div style="font-weight:600;font-size:13px;color:#e65100">Mod Senyap — Suara AI Dimatikan</div>
-      <div style="font-size:12px;color:#bf360c;margin-top:2px">Latihan masih boleh dijalankan. Teks penghutang akan muncul dalam chat seperti biasa.</div>
+    <div class="training-right">
+      <div class="card sc-preview-card" id="scPreviewCard">
+        ${scPreviewHTML(scenario)}
+      </div>
+      ${!TTS_ENABLED?`<div style="display:flex;align-items:center;gap:10px;background:#fff8e1;border:1.5px solid #f9a825;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:12px">
+        <span style="font-size:20px">🔇</span>
+        <div>
+          <div style="font-weight:600;font-size:13px;color:#e65100">Silent Mode — AI Voice Disabled</div>
+          <div style="font-size:12px;color:#bf360c;margin-top:2px">Training can still run. Debtor text will appear in chat as usual.</div>
+        </div>
+      </div>`:''}
+      <button class="btn btn-primary" style="width:100%;padding:13px;font-size:15px;margin-top:0" onclick="startCall()">🎙 Start Training Call</button>
     </div>
-  </div>`:''}
-  <button class="btn btn-primary" style="width:100%;padding:12px;font-size:15px" onclick="startCall()">🎙 Mula Panggilan Latihan</button>`);
+  </div>`);
 }
 
 function selectScenario(id){
   const scenarios=scenariosCache||[];
   scenario=scenarios.find(s=>s.id===id)||scenarios[0];
-  renderTraining();
+  // Update UI without full re-render — just swap selected state & preview
+  document.querySelectorAll('.sc-card').forEach(el=>{
+    const isThis=el.getAttribute('onclick')||''===`selectScenario('${id}')`;
+    el.classList.remove('selected');
+    el.querySelector('.sc-check').textContent='';
+  });
+  const allCards=document.querySelectorAll('.sc-card');
+  allCards.forEach(el=>{
+    if((el.getAttribute('onclick')||'')==`selectScenario('${id}')`){
+      el.classList.add('selected');
+      const chk=el.querySelector('.sc-check');
+      if(chk)chk.textContent='✓';
+    }
+  });
+  // Update preview panel
+  const preview=document.getElementById('scPreviewCard');
+  if(preview&&scenario){
+    const lvlLabel=scenario.level==='easy'?'Easy':scenario.level==='med'?'Medium':'Hard';
+    const accentLabel=scenario.accent==='melayu'?'Malay':scenario.accent==='cina'?'Mandarin Manglish':'Tamil';
+    const genderLabel=scenario.gender==='male'?'Male':'Female';
+    const row=(label,val)=>val?`<div class="preview-row"><span class="preview-label">${label}</span><span class="preview-val">${val}</span></div>`:'';
+    const disclosureList=(scenario.disclosures||[]).length
+      ?`<div class="preview-section-title">📢 Required Disclosures</div>${(scenario.disclosures||[]).map(d=>`<div class="preview-disclosure">• ${d}</div>`).join('')}`
+      :'';
+    const checklistHTML=(scenario.checklist||[]).length
+      ?`<div class="preview-section-title" style="margin-top:14px">✅ Evaluation Checklist</div>${(scenario.checklist||[]).map(c=>`<div class="preview-checklist-item"><span class="preview-cl-cat">${c.cat}</span><span class="preview-cl-text">${c.text}</span></div>`).join('')}`
+      :'';
+    preview.innerHTML=`
+      <div class="sc-preview-header">
+        <div style="font-size:32px">${scenario.emoji}</div>
+        <div style="flex:1;min-width:0">
+          <div class="sc-preview-title">${scenario.title}</div>
+          <div class="sc-preview-sub">${scenario.description||scenario.desc||''}</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+            <span class="level-badge level-${scenario.level}">${lvlLabel}</span>
+            <span class="preview-badge-neutral">${accentLabel} · ${genderLabel}</span>
+            ${scenario.client?`<span class="preview-badge-client">${scenario.client}</span>`:''}
+          </div>
+        </div>
+      </div>
+      <div class="preview-divider"></div>
+      <div class="preview-section-title">📋 Customer Account Information</div>
+      ${row('Amount Outstanding',scenario.amount)}
+      ${row('Days Overdue',scenario.days?scenario.days+' days':'')}
+      ${row('IC Number',scenario.icNumber)}
+      ${row('Acc Number',scenario.accNumber)}
+      ${row('Service No.',scenario.serviceNo)}
+      ${row('Acc Type',scenario.accType)}
+      ${row('Registration Date',scenario.registrationDate?new Date(scenario.registrationDate).toLocaleDateString('en-MY'):'')}
+      ${row('Termination Date',scenario.terminationDate?new Date(scenario.terminationDate).toLocaleDateString('en-MY'):'')}
+      <div class="preview-divider"></div>
+      <div class="preview-section-title">🎭 Debtor Situation & Approach</div>
+      <div class="preview-mood-box">${scenario.prompt||''}</div>
+      ${disclosureList}
+      ${checklistHTML}
+    `;
+  }
 }
 
 function renderCallScreen(){
@@ -2390,6 +2496,8 @@ Masa Panggilan: ${duration}
 
 PENTING: Jika transcript amat pendek (kurang 5 giliran perbualan), tetap beri markah ADIL berdasarkan apa yang ADA — jangan bagi 2/20 secara default. Walaupun singkat, analisis nada, cara sebut nama, cara bagi salam/perkenalan, dan sama ada collector terus ke tujuan panggilan dengan betul.
 
+PENTING — HARASSMENT ASSESSMENT: Nilai harassmentRisk berdasarkan TINDAKAN COLLECTOR SAHAJA (baris "Collector:" dalam transcript). ABAIKAN sepenuhnya apa yang "Penghutang:" cakap — dialog debtor adalah AI simulation dan tidak relevan untuk penilaian etika. harassmentNote mesti hurai tindakan/ayat COLLECTOR yang bermasalah dalam Bahasa Malaysia, bukan translate atau petik dialog debtor.
+
 TUGAS ANDA — analisis transcript di atas baris demi baris, kemudian:
 
 1. Markah 5 aspek (setiap satu 0-20, jumlah maksimum 100) DAN bagi "scoreReasons" — 1-2 ayat per kategori yang WAJIB sebut (a) apa yang collector buat/tidak buat dalam kategori tu, (b) contoh SPESIFIK dari transcript (petik ayat pendek atau situasi), dan (c) kenapa markah tu diberikan (bukan sekadar cakap "baik" atau "lemah" tanpa bukti):
@@ -2407,7 +2515,7 @@ TUGAS ANDA — analisis transcript di atas baris demi baris, kemudian:
    - suggestion: ayat atau tindakan SPESIFIK (boleh terus dipakai/dihafal) yang patut collector guna sebagai gantinya
    - quote: petikan ringkas (≤15 patah perkataan) dari ayat collector dalam transcript yang berkaitan isu ini, atau "" jika tiada ayat spesifik berkaitan
 
-4. harassmentRisk: "none" jika tiada isu langsung, "low"/"medium"/"high" jika collector menggunakan nada mengugut/memaksa/mendesak melampau, malu-malukan, atau melanggar etika debt collection. Jika bukan "none", isi harassmentNote (1 ayat ringkas, rujuk contoh dari transcript) — ini akan dipaparkan kepada manager untuk semakan pematuhan.
+4. harassmentRisk: "none" jika tiada isu langsung, "low"/"medium"/"high" jika collector menggunakan nada mengugut/memaksa/mendesak melampau, malu-malukan, atau melanggar etika debt collection. Jika bukan "none", isi harassmentNote (1 ayat ringkas dalam Bahasa Malaysia — hurai TINDAKAN collector yang bermasalah, JANGAN translate atau petik dialog debtor secara literal, fokus kepada APA yang collector buat yang melanggar etika) — ini akan dipaparkan kepada manager untuk semakan pematuhan.
 
 5. priorityFocus: SATU aspek (category sama macam atas) yang PALING perlu collector fokus dalam sesi latihan SETERUSNYA (biasanya aspek dengan markah terendah atau isu paling kritikal), dengan "tip" ringkas 1 ayat — spesifik & boleh terus diamalkan, bukan nasihat umum.
 
