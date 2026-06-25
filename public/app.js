@@ -194,6 +194,19 @@ function fmtDateTime(d){
   return dt.toLocaleDateString('ms-MY')+' '+dt.toLocaleTimeString('ms-MY',{hour:'2-digit',minute:'2-digit'});
 }
 
+// FIX: kad preview senario (sebelum mula call) dulu tunjuk teks {name}/{amount}/{days}
+// literal sebab tak di-substitute — collector nampak "Anda berlakon sebagai {name}..."
+// sedangkan prompt sebenar yang dihantar ke AI (buildSystemPrompt) dah substitute betul.
+// Helper ni dipakai khusus untuk PAPARAN preview supaya collector nampak nama/amount
+// sebenar sebelum start call, tanpa ubah logik buildSystemPrompt yang sedia ada.
+function fillScenarioPlaceholders(text,s){
+  if(!text||!s)return text||'';
+  return text
+    .replace(/{name}/g,s.name||'')
+    .replace(/{amount}/g,s.amount||'')
+    .replace(/{days}/g,s.days||'');
+}
+
 // ═══════════ KATEGORI PENILAIAN ═══════════
 const SCORE_CATS = ['tone','delivery','counter','action','balance'];
 function catLabel(cat){
@@ -243,6 +256,78 @@ let currentUser=null, currentPage='';
 // di-render semula (contoh: lepas tutup modal "Lihat" sesi).
 let sessionsFilter={collectorId:'',scenario:'',skor:'',dateFrom:'',dateTo:''};
 let myHistoryFilter={scenario:'',skor:'',dateFrom:'',dateTo:''};
+
+// PAGINATION — senarai sesi boleh sampai 100+ rekod, elak list semua sekali
+// (lambat & sukar nak scroll). Papar ikut "muka surat" dengan butang Sebelum/Next.
+const SESSIONS_PAGE_SIZE=20;
+let sessionsPage=1;     // muka surat semasa — "Sesi Latihan" (admin/manager)
+let myHistoryPage=1;    // muka surat semasa — "Rekod Saya" (collector)
+
+// Render bar "Muka X dari Y" + butang Sebelum/Next. `onPageChange` ialah nama
+// fungsi JS (string) yang dipanggil bila tukar muka surat, cth "goSessionsPage".
+function paginationBar(currentPage,totalItems,pageSize,onPageChange){
+  const totalPages=Math.max(1,Math.ceil(totalItems/pageSize));
+  if(totalPages<=1)return'';
+  return`
+  <div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:14px 0 4px">
+    <button class="btn btn-secondary" style="padding:5px 12px;font-size:12px" ${currentPage<=1?'disabled':''} onclick="${onPageChange}(${currentPage-1})">‹ Sebelum</button>
+    <span style="font-size:12px;color:var(--text3)">Muka ${currentPage} dari ${totalPages}</span>
+    <button class="btn btn-secondary" style="padding:5px 12px;font-size:12px" ${currentPage>=totalPages?'disabled':''} onclick="${onPageChange}(${currentPage+1})">Next ›</button>
+  </div>`;
+}
+function goSessionsPage(p){sessionsPage=p;renderSessions();}
+function goMyHistoryPage(p){myHistoryPage=p;renderMyHistory();}
+
+// Filter dashboard "Hari Ini / Bulan Ini / Tahun Ini / Semua" — supaya admin/manager
+// senang nak tengok prestasi ikut tempoh tertentu tanpa kira manual dari senarai penuh.
+let dashboardPeriod='all';
+function getPeriodRange(period){
+  const now=new Date();
+  if(period==='day'){
+    const start=new Date(now);start.setHours(0,0,0,0);
+    const end=new Date(start);end.setDate(end.getDate()+1);
+    return{start,end};
+  }
+  if(period==='month'){
+    const start=new Date(now.getFullYear(),now.getMonth(),1);
+    const end=new Date(now.getFullYear(),now.getMonth()+1,1);
+    return{start,end};
+  }
+  if(period==='year'){
+    const start=new Date(now.getFullYear(),0,1);
+    const end=new Date(now.getFullYear()+1,0,1);
+    return{start,end};
+  }
+  return null; // 'all' — tiada had tarikh
+}
+// Tempoh SEBELUM tempoh semasa (sama jenis) — untuk kira trend ▲▼ vs tempoh lepas
+function getPrevPeriodRange(period){
+  const now=new Date();
+  if(period==='day'){
+    const start=new Date(now);start.setHours(0,0,0,0);start.setDate(start.getDate()-1);
+    const end=new Date(start);end.setDate(end.getDate()+1);
+    return{start,end};
+  }
+  if(period==='month'){
+    const start=new Date(now.getFullYear(),now.getMonth()-1,1);
+    const end=new Date(now.getFullYear(),now.getMonth(),1);
+    return{start,end};
+  }
+  if(period==='year'){
+    const start=new Date(now.getFullYear()-1,0,1);
+    const end=new Date(now.getFullYear(),0,1);
+    return{start,end};
+  }
+  return null;
+}
+function filterSessionsByRange(sessions,range){
+  if(!range)return sessions;
+  return sessions.filter(s=>{const d=new Date(s.date);return d>=range.start&&d<range.end;});
+}
+function periodLabel(period){
+  return{day:'Hari Ini',month:'Bulan Ini',year:'Tahun Ini'}[period]||'Keseluruhan';
+}
+function setDashboardPeriod(p){dashboardPeriod=p;renderDashboard();}
 
 // Tapis array sesi berdasarkan satu set filter (dipakai oleh renderSessions
 // & renderMyHistory — logik sama, beza saja sumber filter & ada/tiada collectorId).
@@ -409,6 +494,19 @@ async function renderDashboard(){
   const weakness=tallyWeakness(sessions);
   const weaknessTotal=weakness.reduce((a,[,c])=>a+c,0);
 
+  // ── Filter "Hari Ini / Bulan Ini / Tahun Ini" ──────────────────────────
+  // Senang admin/manager nak tengok prestasi ikut tempoh tertentu, tanpa
+  // kira/scroll manual dari senarai penuh. Default 'all' = macam sebelum ni.
+  const periodRange=getPeriodRange(dashboardPeriod);
+  const prevPeriodRange=getPrevPeriodRange(dashboardPeriod);
+  const periodSessions=filterSessionsByRange(sessions,periodRange);
+  const prevPeriodSessions=prevPeriodRange?filterSessionsByRange(sessions,prevPeriodRange):[];
+  const periodAvg=periodSessions.length?Math.round(periodSessions.reduce((a,s)=>a+s.totalScore,0)/periodSessions.length):0;
+  const prevPeriodAvg=prevPeriodSessions.length?Math.round(prevPeriodSessions.reduce((a,s)=>a+s.totalScore,0)/prevPeriodSessions.length):null;
+  const periodDiff=(dashboardPeriod!=='all'&&prevPeriodAvg!==null)?periodAvg-prevPeriodAvg:null;
+  const periodFlagged=periodSessions.filter(s=>s.harassmentRisk&&s.harassmentRisk!=='none');
+  const periodBtn=(p,label)=>`<button class="btn ${dashboardPeriod===p?'btn-primary':'btn-secondary'}" style="padding:6px 14px;font-size:12px" onclick="setDashboardPeriod('${p}')">${label}</button>`;
+
   // ── Weekly aggregation ─────────────────────────────────────────────────
   // 4 minggu terkini, setiap minggu Isnin-Ahad
   function getWeeks(n){
@@ -477,12 +575,20 @@ async function renderDashboard(){
   setContent(`
   <div class="page-header"><div class="page-title">Dashboard</div><div class="page-sub">Overview prestasi collector</div></div>
 
+  <div class="card" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px">
+    <span style="font-size:12px;color:var(--text3);margin-right:4px">Tempoh Prestasi:</span>
+    ${periodBtn('day','Hari Ini')}
+    ${periodBtn('month','Bulan Ini')}
+    ${periodBtn('year','Tahun Ini')}
+    ${periodBtn('all','Keseluruhan')}
+  </div>
+
   <div class="stats-grid">
-    <div class="stat-card"><div class="stat-label">Jumlah Sesi</div><div class="stat-val">${totalSessions}</div><div class="stat-sub">Keseluruhan</div></div>
-    <div class="stat-card"><div class="stat-label">Purata Markah</div><div class="stat-val">${avgScore}</div><div class="stat-sub">/ 100 keseluruhan</div></div>
+    <div class="stat-card"><div class="stat-label">Jumlah Sesi</div><div class="stat-val">${periodSessions.length}</div><div class="stat-sub">${periodLabel(dashboardPeriod)}</div></div>
+    <div class="stat-card"><div class="stat-label">Purata Markah</div><div class="stat-val">${periodAvg}</div><div class="stat-sub">${periodDiff!==null?`<span style="color:${periodDiff>=0?'var(--green)':'var(--red)'}">${periodDiff>=0?'▲ +':'▼ '}${periodDiff} vs tempoh lepas</span>`:'/ 100'}</div></div>
     <div class="stat-card"><div class="stat-label">Sesi Hari Ini</div><div class="stat-val">${todaySessions}</div><div class="stat-sub">Latihan hari ini</div></div>
     <div class="stat-card"><div class="stat-label">Markah Minggu Ini</div><div class="stat-val">${thisWeekAvg!==null?thisWeekAvg:'—'}</div><div class="stat-sub">${weekDiff!==null?`<span style="color:${weekDiff>=0?'var(--green)':'var(--red)'}">${weekDiff>=0?'▲ +':'▼ '}${weekDiff} vs minggu lepas</span>`:`${thisWeekSessions.length} sesi minggu ini`}</div></div>
-    <div class="stat-card"><div class="stat-label">Isu Pematuhan</div><div class="stat-val" style="color:${flaggedSessions.length?'var(--red)':'inherit'}">${flaggedSessions.length}</div><div class="stat-sub">Sesi berisiko</div></div>
+    <div class="stat-card"><div class="stat-label">Isu Pematuhan</div><div class="stat-val" style="color:${periodFlagged.length?'var(--red)':'inherit'}">${periodFlagged.length}</div><div class="stat-sub">Sesi berisiko · ${periodLabel(dashboardPeriod)}</div></div>
   </div>
 
   <div class="card">
@@ -525,28 +631,26 @@ async function renderDashboard(){
 
   <div class="two-col">
     <div class="card">
-      <div class="card-title">Prestasi Keseluruhan Per Collector</div>
+      <div class="card-title">Prestasi Per Collector — ${periodLabel(dashboardPeriod)}</div>
       ${collectors.length===0?`<div class="empty-state"><div class="es-icon">👥</div><p>Tiada collector lagi</p></div>`:''}
       ${collectors.map(c=>{
-        const cs=sessions.filter(s=>s.collectorId===c.id);
+        const cs=periodSessions.filter(s=>s.collectorId===c.id);
         const avg=cs.length?Math.round(cs.reduce((a,s)=>a+s.totalScore,0)/cs.length):0;
-        const twS=cs.filter(s=>{const d=new Date(s.date);return d>=thisWeek.start&&d<thisWeek.end;});
-        const lwS=cs.filter(s=>{const d=new Date(s.date);return d>=lastWeek.start&&d<lastWeek.end;});
-        const twAvg=twS.length?Math.round(twS.reduce((a,s)=>a+s.totalScore,0)/twS.length):null;
-        const lwAvg=lwS.length?Math.round(lwS.reduce((a,s)=>a+s.totalScore,0)/lwS.length):null;
-        const diff=(twAvg!==null&&lwAvg!==null)?twAvg-lwAvg:null;
+        const prevCs=prevPeriodSessions.filter(s=>s.collectorId===c.id);
+        const prevAvg=prevCs.length?Math.round(prevCs.reduce((a,s)=>a+s.totalScore,0)/prevCs.length):null;
+        const diff=(dashboardPeriod!=='all'&&prevAvg!==null)?avg-prevAvg:null;
         return`<div style="margin-bottom:14px">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
             <span style="font-size:13px;font-weight:500">${c.name}</span>
             <div style="display:flex;align-items:center;gap:6px">
               ${diff!==null?`<span style="font-size:11px;color:${diff>=0?'var(--green)':'var(--red)'}">${diff>=0?'▲ +':'▼ '}${diff}</span>`:''}
-              <span class="score-pill ${avg>=70?'score-high':avg>=50?'score-mid':'score-low'}">${avg}</span>
+              <span class="score-pill ${avg>=70?'score-high':avg>=50?'score-mid':'score-low'}">${cs.length?avg:'—'}</span>
             </div>
           </div>
           <div style="background:var(--bg);border-radius:3px;height:6px;overflow:hidden">
             <div style="height:100%;width:${avg}%;background:${avg>=70?'#5CB85C':avg>=50?'#F0AD4E':'#E24B4A'};border-radius:3px;transition:width 0.5s"></div>
           </div>
-          <div style="font-size:11px;color:var(--text3);margin-top:2px">${cs.length} sesi · minggu ini: ${twAvg!==null?twAvg:'tiada sesi'}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px">${cs.length} sesi · ${periodLabel(dashboardPeriod)}</div>
         </div>`;
       }).join('')}
     </div>
@@ -657,7 +761,7 @@ async function renderTraining(){
       ${row('Termination Date',s.terminationDate?new Date(s.terminationDate).toLocaleDateString('en-MY'):'')}
       <div class="preview-divider"></div>
       <div class="preview-section-title">🎭 Debtor Situation & Approach</div>
-      <div class="preview-mood-box">${s.prompt||''}</div>
+      <div class="preview-mood-box">${fillScenarioPlaceholders(s.prompt,s)}</div>
       ${disclosureList}
       ${checklistHTML}
     `;
@@ -757,7 +861,7 @@ function selectScenario(id){
       ${row('Termination Date',scenario.terminationDate?new Date(scenario.terminationDate).toLocaleDateString('en-MY'):'')}
       <div class="preview-divider"></div>
       <div class="preview-section-title">🎭 Debtor Situation & Approach</div>
-      <div class="preview-mood-box">${scenario.prompt||''}</div>
+      <div class="preview-mood-box">${fillScenarioPlaceholders(scenario.prompt,scenario)}</div>
       ${disclosureList}
       ${checklistHTML}
     `;
@@ -911,21 +1015,27 @@ async function renderMyHistory(){
   const sessions=applySessionFilters(mine,myHistoryFilter);
   const weakness=tallyWeakness(sessions);
   const latestFocus=sessions.length?sessions[0].priorityFocus:null; // sessions[0] = sesi terbaru (list dah reverse)
+  // Clamp muka surat (cth: filter baru jadikan jumlah sesi lebih kecil dari myHistoryPage semasa)
+  const totalPages=Math.max(1,Math.ceil(sessions.length/SESSIONS_PAGE_SIZE));
+  if(myHistoryPage>totalPages)myHistoryPage=totalPages;
+  if(myHistoryPage<1)myHistoryPage=1;
+  const pageStart=(myHistoryPage-1)*SESSIONS_PAGE_SIZE;
+  const pageSessions=sessions.slice(pageStart,pageStart+SESSIONS_PAGE_SIZE);
   const filterBar=`
   <div class="card filter-bar">
-    <select id="filtMyScenario" onchange="myHistoryFilter.scenario=this.value;renderMyHistory();">
+    <select id="filtMyScenario" onchange="myHistoryFilter.scenario=this.value;myHistoryPage=1;renderMyHistory();">
       <option value="">Semua Senario</option>
       ${scenarioNames.map(n=>`<option value="${n}" ${myHistoryFilter.scenario===n?'selected':''}>${n}</option>`).join('')}
     </select>
-    <select id="filtMySkor" onchange="myHistoryFilter.skor=this.value;renderMyHistory();">
+    <select id="filtMySkor" onchange="myHistoryFilter.skor=this.value;myHistoryPage=1;renderMyHistory();">
       <option value="">Semua Markah</option>
       <option value="high" ${myHistoryFilter.skor==='high'?'selected':''}>Tinggi (≥70)</option>
       <option value="mid" ${myHistoryFilter.skor==='mid'?'selected':''}>Sederhana (50-69)</option>
       <option value="low" ${myHistoryFilter.skor==='low'?'selected':''}>Rendah (&lt;50)</option>
     </select>
-    <input type="date" id="filtMyFrom" value="${myHistoryFilter.dateFrom}" onchange="myHistoryFilter.dateFrom=this.value;renderMyHistory();" title="Dari tarikh"/>
-    <input type="date" id="filtMyTo" value="${myHistoryFilter.dateTo}" onchange="myHistoryFilter.dateTo=this.value;renderMyHistory();" title="Hingga tarikh"/>
-    <button class="btn btn-secondary" onclick="myHistoryFilter={scenario:'',skor:'',dateFrom:'',dateTo:''};renderMyHistory();">Reset</button>
+    <input type="date" id="filtMyFrom" value="${myHistoryFilter.dateFrom}" onchange="myHistoryFilter.dateFrom=this.value;myHistoryPage=1;renderMyHistory();" title="Dari tarikh"/>
+    <input type="date" id="filtMyTo" value="${myHistoryFilter.dateTo}" onchange="myHistoryFilter.dateTo=this.value;myHistoryPage=1;renderMyHistory();" title="Hingga tarikh"/>
+    <button class="btn btn-secondary" onclick="myHistoryFilter={scenario:'',skor:'',dateFrom:'',dateTo:''};myHistoryPage=1;renderMyHistory();">Reset</button>
   </div>`;
   setContent(`
   <div class="page-header"><div class="page-title">Rekod Latihan Saya</div><div class="page-sub">${sessions.length} dari ${mine.length} sesi latihan</div></div>
@@ -968,8 +1078,8 @@ async function renderMyHistory(){
     <div class="card-title">Semua Sesi</div>
     <div class="table-wrap"><table>
       <tr><th>#</th><th>Senario</th><th>Masa</th><th>Markah</th><th>Tarikh</th><th></th></tr>
-      ${sessions.map((s,i)=>`<tr>
-        <td>${sessions.length-i}</td>
+      ${pageSessions.map((s,i)=>`<tr>
+        <td>${sessions.length-pageStart-i}</td>
         <td>${s.scenarioName}</td>
         <td>${s.duration}</td>
         <td><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span></td>
@@ -977,6 +1087,7 @@ async function renderMyHistory(){
         <td><button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="viewSession('${s.id}')">Lihat</button></td>
       </tr>`).join('')}
     </table></div>
+    ${paginationBar(myHistoryPage,sessions.length,SESSIONS_PAGE_SIZE,'goMyHistoryPage')}
   </div>`:''}
   `);
 }
@@ -1018,32 +1129,38 @@ async function renderSessions(){
   const collectors=users.filter(u=>u.role==='collector');
   const scenarioNames=[...new Set(allSessions.map(s=>s.scenarioName))].sort();
   const sessions=applySessionFilters(allSessions,sessionsFilter);
+  // Clamp muka surat (cth: filter baru jadikan jumlah sesi lebih kecil dari sessionsPage semasa)
+  const totalPages=Math.max(1,Math.ceil(sessions.length/SESSIONS_PAGE_SIZE));
+  if(sessionsPage>totalPages)sessionsPage=totalPages;
+  if(sessionsPage<1)sessionsPage=1;
+  const pageStart=(sessionsPage-1)*SESSIONS_PAGE_SIZE;
+  const pageSessions=sessions.slice(pageStart,pageStart+SESSIONS_PAGE_SIZE);
   setContent(`
   <div class="page-header"><div class="page-title">Sesi Latihan</div><div class="page-sub">${sessions.length} dari ${allSessions.length} sesi</div></div>
   <div class="card filter-bar">
-    <select id="filtSessionsCollector" onchange="sessionsFilter.collectorId=this.value;renderSessions();">
+    <select id="filtSessionsCollector" onchange="sessionsFilter.collectorId=this.value;sessionsPage=1;renderSessions();">
       <option value="">Semua Collector</option>
       ${collectors.map(c=>`<option value="${c.id}" ${sessionsFilter.collectorId===c.id?'selected':''}>${c.name}</option>`).join('')}
     </select>
-    <select id="filtSessionsScenario" onchange="sessionsFilter.scenario=this.value;renderSessions();">
+    <select id="filtSessionsScenario" onchange="sessionsFilter.scenario=this.value;sessionsPage=1;renderSessions();">
       <option value="">Semua Senario</option>
       ${scenarioNames.map(n=>`<option value="${n}" ${sessionsFilter.scenario===n?'selected':''}>${n}</option>`).join('')}
     </select>
-    <select id="filtSessionsSkor" onchange="sessionsFilter.skor=this.value;renderSessions();">
+    <select id="filtSessionsSkor" onchange="sessionsFilter.skor=this.value;sessionsPage=1;renderSessions();">
       <option value="">Semua Markah</option>
       <option value="high" ${sessionsFilter.skor==='high'?'selected':''}>Tinggi (≥70)</option>
       <option value="mid" ${sessionsFilter.skor==='mid'?'selected':''}>Sederhana (50-69)</option>
       <option value="low" ${sessionsFilter.skor==='low'?'selected':''}>Rendah (&lt;50)</option>
     </select>
-    <input type="date" id="filtSessionsFrom" value="${sessionsFilter.dateFrom}" onchange="sessionsFilter.dateFrom=this.value;renderSessions();" title="Dari tarikh"/>
-    <input type="date" id="filtSessionsTo" value="${sessionsFilter.dateTo}" onchange="sessionsFilter.dateTo=this.value;renderSessions();" title="Hingga tarikh"/>
-    <button class="btn btn-secondary" onclick="sessionsFilter={collectorId:'',scenario:'',skor:'',dateFrom:'',dateTo:''};renderSessions();">Reset</button>
+    <input type="date" id="filtSessionsFrom" value="${sessionsFilter.dateFrom}" onchange="sessionsFilter.dateFrom=this.value;sessionsPage=1;renderSessions();" title="Dari tarikh"/>
+    <input type="date" id="filtSessionsTo" value="${sessionsFilter.dateTo}" onchange="sessionsFilter.dateTo=this.value;sessionsPage=1;renderSessions();" title="Hingga tarikh"/>
+    <button class="btn btn-secondary" onclick="sessionsFilter={collectorId:'',scenario:'',skor:'',dateFrom:'',dateTo:''};sessionsPage=1;renderSessions();">Reset</button>
   </div>
   ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📋</div><p>Tiada sesi latihan sepadan dengan filter.</p></div></div>`:''}
   ${sessions.length>0?`<div class="card">
     <div class="table-wrap"><table>
       <tr><th>Collector</th><th>Senario</th><th>Masa</th><th>Markah</th><th>Risiko Harassment</th><th>Tarikh</th><th></th></tr>
-      ${sessions.map(s=>{
+      ${pageSessions.map(s=>{
         const u=findUserById(users,s.collectorId);
         return`<tr>
           <td><div style="font-weight:500">${u?u.name:'—'}</div><div style="font-size:11px;color:var(--text3)">${s.collectorId}</div></td>
@@ -1056,6 +1173,7 @@ async function renderSessions(){
         </tr>`;
       }).join('')}
     </table></div>
+    ${paginationBar(sessionsPage,sessions.length,SESSIONS_PAGE_SIZE,'goSessionsPage')}
   </div>`:''}
   `);
 }
