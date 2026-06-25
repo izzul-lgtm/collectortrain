@@ -1,5 +1,22 @@
-// Proxies audio ke Deepgram Speech-to-Text API.
+// Proxies audio ke Groq (Whisper large-v3-turbo) Speech-to-Text API.
 // API key disimpan di server (env var) — tak pernah dedah ke browser.
+//
+// SWITCH DARI DEEPGRAM (lihat route.js.deepgram.bak untuk versi lama):
+// Testing real Iz tunjuk Whisper large-v3-turbo jauh lebih accurate utk BM
+// berbanding Deepgram nova-3/nova-2 untuk audio collector sebenar.
+// Trade-off yang kita TERIMA bila tukar:
+// - Tiada keyterm/keywords boosting macam Deepgram. Whisper cuma ada `prompt`
+//   (max ~224 token, soft hint style/spelling, BUKAN guaranteed boost).
+//   VOCAB_TERMS kekal, tapi jadi SATU ayat prompt — bukan per-term parameter.
+// - Tiada smart_format (auto nombor/tarikh). Tak retain frasa tahun BM
+//   sebagai keyterm sebab Whisper general multilingual model, biasanya lebih
+//   konsisten translate nombor verbal → digit drpd Deepgram language=ms.
+//   STT_CORRECTIONS (app.js) + convertBMNumbers (app.js) kekal sebagai
+//   safety-net — tak diubah di sini.
+// - Tiada skor "confidence" sebenar dari Whisper response_format=json.
+//   confidence di bawah ialah STAND-IN (1 = ada transcript, 0 = kosong) —
+//   cukup untuk logic existing client (cuma check transcript kosong/tak),
+//   jangan anggap ia confidence score sebenar macam Deepgram.
 
 import { requireAuth } from '../../../lib/requireAuth';
 import { rateLimit } from '../../../lib/rateLimit';
@@ -8,14 +25,14 @@ export async function POST(request) {
   const authError = await requireAuth(request);
   if (authError) return authError;
 
-  // Rate limit: max 60 request/minit per user — protect Deepgram STT credit (cukup untuk nego panjang ~30 giliran)
+  // Rate limit: max 60 request/minit per user — protect Groq STT credit (cukup utk nego panjang ~30 giliran)
   const limitError = rateLimit(request, 'stt', { max: 60, windowMs: 60_000 });
   if (limitError) return limitError;
 
-  const apiKey = process.env.DEEPGRAM_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
     return Response.json(
-      { error: 'DEEPGRAM_API_KEY belum diset di server (env var).' },
+      { error: 'GROQ_API_KEY belum diset di server (env var).' },
       { status: 500 }
     );
   }
@@ -31,126 +48,66 @@ export async function POST(request) {
     return Response.json({ error: 'Audio kosong.' }, { status: 400 });
   }
 
+  // Groq /audio/transcriptions perlukan multipart/form-data dengan filename
+  // (bukan raw body macam Deepgram) — kena map Content-Type browser ke
+  // extension supaya Groq decode betul. Safari rakam audio/mp4, Firefox
+  // audio/ogg, Chrome audio/webm — sama isu yang kita dah handle utk Deepgram.
+  const rawContentType = request.headers.get('content-type') || 'audio/webm';
+  const contentType = rawContentType.split(';')[0].trim(); // buang ";codecs=opus"
+  const EXT_MAP = {
+    'audio/webm': 'webm',
+    'audio/ogg': 'ogg',
+    'audio/mp4': 'mp4',
+    'audio/mpeg': 'mp3',
+    'audio/wav': 'wav',
+    'audio/m4a': 'm4a',
+  };
+  const ext = EXT_MAP[contentType] || 'webm';
+
+  // VOCAB HINT: gantian untuk keyterm Deepgram. Whisper prompt cuma "soft
+  // guidance", jadi tumpukan pada brand/istilah yang paling kerap silap
+  // dengar — jangan dump semua term + frasa tahun (boleh lebih 224 token
+  // dan lemahkan signal). Frasa tahun tak diulang sini (lihat komen atas).
+  const VOCAB_HINT =
+    'Perbualan debt collection Bahasa Malaysia. Istilah: RedOne, Celcom, Digi, ' +
+    'Maxis, U Mobile, CTOS, CCRIS, NPL, PTP, SPDCA, JomPay, FPX, Newvest, ' +
+    'DCA, WhatsApp, AmBank, CIMB, Maybank, HLB, Public Bank, ringgit, hutang, ' +
+    'ansuran, tertunggak, berjanji bayar.';
+
+  async function callGroq(model) {
+    const form = new FormData();
+    form.append('file', new Blob([audioBuffer], { type: contentType }), `audio.${ext}`);
+    form.append('model', model);
+    form.append('language', 'ms');
+    form.append('prompt', VOCAB_HINT);
+    form.append('response_format', 'json');
+    form.append('temperature', '0');
+
+    const upstream = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+    });
+    if (!upstream.ok) {
+      const errText = await upstream.text();
+      const err = new Error('Groq error: ' + errText);
+      err.status = upstream.status;
+      throw err;
+    }
+    const data = await upstream.json();
+    const transcript = (data?.text || '').trim();
+    return { transcript, confidence: transcript ? 1 : 0 };
+  }
+
   try {
-    // smart_format: auto format nombor, tarikh, mata wang
-    // punctuate: tambah tanda baca automatik
-    // diarize: false — satu speaker je (collector)
-    // FIX: forward Content-Type sebenar dari browser (bukan hardcode audio/webm)
-    // Safari record dalam audio/mp4, Firefox dalam audio/ogg — hardcode audio/webm
-    // menyebabkan Deepgram silap decode, accuracy drop, collector kena repeat lebih selalu.
-    //
-    // REVERT (PENTING): language=multi BUKAN jawapan untuk Manglish — ini punca
-    // sebenar "ayat pelik sampai AI customer pun jadi pelik".
-    // Deepgram Multilingual Code-Switching (language=multi) pada Nova-3 HANYA
-    // support 10 bahasa ni: English, Spanish, French, German, Hindi, Italian,
-    // Japanese, Dutch, Russian, Portuguese. Bahasa Malaysia (ms) TIDAK disenaraikan.
-    // Bila collector cakap BM, Deepgram dalam mode `multi` tak boleh "balik" ke BM —
-    // dia terpaksa paksa setiap bunyi jadi salah satu drpd 10 bahasa yang dia kenal.
-    // Hasil: ayat jadi serpihan Spanish/Italian/Dutch/Hindi yang tak masuk akal
-    // (lagi teruk dari sekadar "ringgit"→"ringette" — ini satu ayat penuh boleh
-    // jadi bahasa lain sepenuhnya). Ayat hancur ni terus jadi mesej "collector"
-    // dalam history yang dihantar ke Claude → AI customer respond kat ayat yang
-    // tak masuk akal → seluruh sesi training jadi pelik.
-    // FIX: balik guna language=ms (monolingual Malay model). Model ms Deepgram
-    // memang dilatih untuk loanword English yang biasa campur dalam BM (ringgit,
-    // PTP, ansuran, dll) — STT_CORRECTIONS list di app.js cukup sebagai safety-net
-    // untuk residual mishear yang occasional, jauh lebih ringan dari masalah
-    // "tukar bahasa sepenuhnya" yang language=multi sebabkan.
-    //
-    // FIX (model): nova-3 ada peningkatan accuracy khusus untuk Bahasa Malaysia
-    // (Deepgram lapor >20% pengurangan word-error-rate utk Malay berbanding nova-2),
-    // jadi jadikan default. nova-2 disimpan sebagai FALLBACK — Deepgram kadang balas
-    // transcript kosong + confidence 0 untuk audio yang sebenarnya ada percakapan
-    // (isu dilaporkan sendiri oleh community Deepgram, bukan isu pada code kita) —
-    // bila ni jadi, cuba sekali lagi dengan model lain sebelum give up.
-    const contentType = request.headers.get('content-type') || 'audio/webm';
-
-    // ── VOCAB BOOST: nama brand & istilah debt-collection yang Deepgram selalu
-    // silap dengar (RedOne, Celcom, Digi, Newvest, CTOS, PTP, dll). Dulu kita
-    // cuma "tampung" lepas silap jadi (STT_CORRECTIONS regex di app.js). Lagi
-    // baik betulkan di SUMBER — bagi Deepgram tahu istilah ni sebelum dia
-    // transcribe, supaya dia lagi cenderung dengar betul dari awal.
-    // - Nova-3: guna parameter `keyterm` (Keyterm Prompting — contextual, boleh
-    //   nama biasa & istilah pelbagai perkataan).
-    // - Nova-2 (fallback): `keyterm` TIDAK disokong — kena guna `keywords`
-    //   (lama, format beza: kena tambah intensifier cth "Celcom:2").
-    // STT_CORRECTIONS di app.js DIKEKALKAN sebagai safety-net peringkat ke-2 —
-    // keyterm tak 100% guarantee, jadi regex tetap tangkap yang masih tersilap.
-    const VOCAB_TERMS = [
-      'RedOne', 'Celcom', 'Digi', 'Maxis', 'U Mobile',
-      'CTOS', 'CCRIS', 'NPL', 'PTP', 'SPDCA', 'JomPay', 'FPX',
-      'Newvest', 'New Face', 'DCA', 'WhatsApp',
-      'AmBank', 'CIMB', 'Maybank', 'HLB', 'Public Bank',
-      'ringgit', 'hutang', 'bayar', 'ansuran', 'tertunggak', 'berjanji', 'janji',
-      'paylater', 'ewallet',
-      // ── Frasa tahun (BM) ──
-      // PUNCA: Deepgram Numerals (auto-tukar perkataan→digit, cth "dua ribu
-      // dua puluh enam"→"2026") TIDAK menyokong bahasa Malaysia (ms) — list
-      // rasmi Deepgram cuma da/nl/en/fr/de/it/no/pl/pt/es/sv/ru/he/ro, ms tiada.
-      // Akibatnya tahun BM kekal sebagai RANGKAIAN beberapa perkataan ("dua
-      // ribu dua puluh enam" = 5 perkataan) berbanding English yang lagi
-      // ringkas ("twenty twenty-six" = 2 perkataan) — lagi banyak perkataan
-      // bersambung, lagi tinggi risiko SATU perkataan dalam rangkaian tu
-      // disalah dengar (cth "enam" jadi perkataan lain), dan seluruh tahun
-      // jadi salah sepenuhnya tanpa cara nak auto-betulkan (sebab feature
-      // format tu sendiri tak applicable untuk ms).
-      // FIX: boost setiap frasa tahun PENUH (bukan perkataan individu) sebagai
-      // SATU unit keyterm — bagi Deepgram lebih cenderung kenal seluruh
-      // rangkaian ni sekali gus, bukan cuba teka perkataan demi perkataan.
-      // Liputi julat tahun yang realistik untuk tarikh akaun/tertunggak dalam
-      // senario debt collection (~5 tahun ke belakang/depan dari semasa).
-      'dua ribu dua puluh dua', 'dua ribu dua puluh tiga', 'dua ribu dua puluh empat',
-      'dua ribu dua puluh lima', 'dua ribu dua puluh enam', 'dua ribu dua puluh tujuh',
-      'dua ribu dua puluh lapan',
-    ];
-
-    function vocabQueryString(model) {
-      if (model === 'nova-2') {
-        // Keywords (Nova-2): format word:intensifier — intensifier sederhana (2)
-        // supaya tak over-boost & ganggu perkataan biasa lain.
-        return VOCAB_TERMS.map(t => `keywords=${encodeURIComponent(t + ':2')}`).join('&');
-      }
-      // Keyterm Prompting (Nova-3): plain string, satu parameter per term.
-      return VOCAB_TERMS.map(t => `keyterm=${encodeURIComponent(t)}`).join('&');
-    }
-
-    async function callDeepgram(model) {
-      const upstream = await fetch(
-        `https://api.deepgram.com/v1/listen?model=${model}&language=ms&smart_format=true&punctuate=true&${vocabQueryString(model)}`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Token ${apiKey}`,
-            'Content-Type': contentType,
-          },
-          body: audioBuffer,
-        }
-      );
-      if (!upstream.ok) {
-        const errText = await upstream.text();
-        const err = new Error('Deepgram error: ' + errText);
-        err.status = upstream.status;
-        throw err;
-      }
-      const data = await upstream.json();
-      const transcript = data?.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
-      const confidence = data?.results?.channels?.[0]?.alternatives?.[0]?.confidence || 0;
-      return { transcript, confidence };
-    }
-
-    let result = await callDeepgram('nova-3');
-
-    // Blank + confidence 0 walaupun audio bukan kosong — kemungkinan besar quirk
-    // Deepgram tu, bukan memang senyap (client dah filter clip senyap sebelum hantar).
-    // Cuba sekali lagi dengan model berbeza — request sama, model lain selalunya
-    // bagi hasil berbeza untuk kes conservative-gating macam ni.
-    if (!result.transcript && result.confidence === 0) {
-      console.log('[STT] nova-3 balas kosong, cuba fallback nova-2...');
-      try {
-        result = await callDeepgram('nova-2');
-      } catch (fallbackErr) {
-        // kalau fallback pun gagal, teruskan dengan result asal (kosong) — jangan crash
-      }
+    let result;
+    try {
+      result = await callGroq('whisper-large-v3-turbo');
+    } catch (turboErr) {
+      // Fallback ke whisper-large-v3 (lebih perlahan, kadang lebih tepat
+      // utk audio sukar) — pattern sama macam fallback nova-3→nova-2 lama.
+      console.log('[STT] whisper-large-v3-turbo gagal, cuba fallback whisper-large-v3...', turboErr.message);
+      result = await callGroq('whisper-large-v3');
     }
 
     return Response.json(result);
