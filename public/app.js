@@ -264,11 +264,6 @@ let scenario=null, callHistory=[], callFullTranscript=[], callSeconds=0, timerIn
 const HISTORY_WINDOW=20;
 let recognition=null, isRecording=false, callActive=false;
 let audioQueue=[], isPlayingAudio=false, currentAudio=null;
-// ── TTS BUDGET FLAG ──────────────────────────────────────────────
-// Set TRUE bila TTS (Gemini/ElevenLabs) dah ada budget.
-// FALSE = text-only mode: AI reply papar sebagai bubble, mic terus ready.
-const TTS_ENABLED = false;
-// ────────────────────────────────────────────────────────────────
 let micStream=null, micAudioCtx=null, micAnalyser=null, micLevelRAF=null;
 let micPeakSinceStart=0; // peak bunyi dikesan sejak recognition.onstart turn semasa
 let endCallInProgress=false; // guard: elak double-trigger (cth double-click/double-tap "Tamatkan Panggilan") hantar 2x evalCall() utk panggilan yang sama
@@ -661,7 +656,7 @@ function renderCallScreen(){
           </div>
           <div class="call-timer" id="callTimer">00:00</div>
         </div>
-        <div class="status-bar"><div class="status-dot green" id="statusDot"></div><span id="statusText">Sesi aktif</span>${!TTS_ENABLED?'<span style="margin-left:auto;font-size:11px;background:#f59e0b22;color:#d97706;border:1px solid #d97706;border-radius:4px;padding:2px 7px;font-weight:600;">🔇 Text-only</span>':''}</div>
+        <div class="status-bar"><div class="status-dot green" id="statusDot"></div><span id="statusText">Sesi aktif</span></div>
         <div class="transcript" id="transcriptBox"></div>
         <div class="mic-area">
           <div class="live-text" id="liveText"></div>
@@ -1761,17 +1756,6 @@ async function playNext(){
   if(!audioQueue.length){isPlayingAudio=false;if(callActive){setStatus('green','Tekan mikrofon untuk bercakap.');resetMicBtn();}return;}
   isPlayingAudio=true;
   const text=audioQueue.shift();
-
-  // ── TEXT-ONLY MODE (TTS_ENABLED = false) ──
-  // Langkau /api/tts — terus ready untuk collector bercakap.
-  if(!TTS_ENABLED){
-    isPlayingAudio=false;
-    audioQueue=[];
-    if(callActive){setStatus('green','Tekan mikrofon untuk bercakap.');resetMicBtn();}
-    return;
-  }
-  // ──────────────────────────────────────────
-
   setStatus('purple',scenario.name+' sedang bercakap...');
   setMicState('speaking','🔊','AI sedang bercakap...');
   try{
