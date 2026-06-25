@@ -264,6 +264,11 @@ let scenario=null, callHistory=[], callFullTranscript=[], callSeconds=0, timerIn
 const HISTORY_WINDOW=20;
 let recognition=null, isRecording=false, callActive=false;
 let audioQueue=[], isPlayingAudio=false, currentAudio=null;
+// ─── TTS TOGGLE ────────────────────────────────────────────────────────────────
+// Set ke `true` bila budget ada dan Gemini TTS key aktif semula.
+// Bila `false`: suara AI dimatikan, teks tetap muncul, latihan jalan seperti biasa.
+const TTS_ENABLED = false;
+// ───────────────────────────────────────────────────────────────────────────────
 let micStream=null, micAudioCtx=null, micAnalyser=null, micLevelRAF=null;
 let micPeakSinceStart=0; // peak bunyi dikesan sejak recognition.onstart turn semasa
 let endCallInProgress=false; // guard: elak double-trigger (cth double-click/double-tap "Tamatkan Panggilan") hantar 2x evalCall() utk panggilan yang sama
@@ -632,6 +637,13 @@ async function renderTraining(){
       <span style="color:var(--text3);font-size:12px"> · ${scenario.amount} · ${scenario.days} hari tunggakan</span>
     </div>`:''}
   </div>
+  ${!TTS_ENABLED?`<div style="display:flex;align-items:center;gap:10px;background:#fff8e1;border:1.5px solid #f9a825;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:8px">
+    <span style="font-size:20px">🔇</span>
+    <div>
+      <div style="font-weight:600;font-size:13px;color:#e65100">Mod Senyap — Suara AI Dimatikan</div>
+      <div style="font-size:12px;color:#bf360c;margin-top:2px">Latihan masih boleh dijalankan. Teks penghutang akan muncul dalam chat seperti biasa.</div>
+    </div>
+  </div>`:''}
   <button class="btn btn-primary" style="width:100%;padding:12px;font-size:15px" onclick="startCall()">🎙 Mula Panggilan Latihan</button>`);
 }
 
@@ -656,7 +668,7 @@ function renderCallScreen(){
           </div>
           <div class="call-timer" id="callTimer">00:00</div>
         </div>
-        <div class="status-bar"><div class="status-dot green" id="statusDot"></div><span id="statusText">Sesi aktif</span></div>
+        <div class="status-bar"><div class="status-dot green" id="statusDot"></div><span id="statusText">Sesi aktif</span>${!TTS_ENABLED?'<span style="margin-left:auto;font-size:11px;font-weight:600;color:#e65100;background:#fff3e0;border:1px solid #ffb74d;border-radius:20px;padding:2px 8px">🔇 Mod Senyap</span>':''}</div>
         <div class="transcript" id="transcriptBox"></div>
         <div class="mic-area">
           <div class="live-text" id="liveText"></div>
@@ -1751,7 +1763,14 @@ async function endCall(){
   }
 }
 
-async function speakEl(text){audioQueue.push(text);if(!isPlayingAudio)playNext();}
+async function speakEl(text){
+  if(!TTS_ENABLED){
+    // TTS dimatikan — skip terus ke state sedia terima input
+    if(callActive){setStatus('green','Tekan mikrofon untuk bercakap.');resetMicBtn();}
+    return;
+  }
+  audioQueue.push(text);if(!isPlayingAudio)playNext();
+}
 async function playNext(){
   if(!audioQueue.length){isPlayingAudio=false;if(callActive){setStatus('green','Tekan mikrofon untuk bercakap.');resetMicBtn();}return;}
   isPlayingAudio=true;
