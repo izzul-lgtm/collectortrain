@@ -751,6 +751,7 @@ async function renderTraining(){
       </div>
       <div class="preview-divider"></div>
       <div class="preview-section-title">📋 Customer Account Information</div>
+      ${row('Debtor Name',s.name)}
       ${row('Amount Outstanding',s.amount)}
       ${row('Days Overdue',s.days?s.days+' days':'')}
       ${row('IC Number',s.icNumber)}
@@ -851,6 +852,7 @@ function selectScenario(id){
       </div>
       <div class="preview-divider"></div>
       <div class="preview-section-title">📋 Customer Account Information</div>
+      ${row('Debtor Name',scenario.name)}
       ${row('Amount Outstanding',scenario.amount)}
       ${row('Days Overdue',scenario.days?scenario.days+' days':'')}
       ${row('IC Number',scenario.icNumber)}
