@@ -278,14 +278,14 @@ function trendForObjectionType(periodSessions,prevPeriodSessions,ot){
   const curAvg=Math.round(cur.reduce((a,s)=>a+(s.totalScore||0),0)/cur.length);
   const prevAvg=Math.round(prev.reduce((a,s)=>a+(s.totalScore||0),0)/prev.length);
   const diff=curAvg-prevAvg;
-  if(diff>=5)return{icon:'▲',color:'var(--green)',label:`+${diff} vs tempoh lepas`};
-  if(diff<=-5)return{icon:'▼',color:'var(--red)',label:`${diff} vs tempoh lepas`};
-  return{icon:'→',color:'var(--amber)',label:`${diff>=0?'+':''}${diff} vs tempoh lepas`};
+  if(diff>=5)return{icon:'▲',color:'var(--green)',label:`+${diff} vs previous period`};
+  if(diff<=-5)return{icon:'▼',color:'var(--red)',label:`${diff} vs previous period`};
+  return{icon:'→',color:'var(--amber)',label:`${diff>=0?'+':''}${diff} vs previous period`};
 }
 // Sokong sesi lama (format communication/empathy/compliance/effectiveness) & sesi baru (format scores{})
 function scoreRows(s){
   if(s.scores){
-    return SCORE_CATS.map(c=>[catLabel(c),s.scores[c]||0,20,c,(s.scoreReasons&&s.scoreReasons[c])||'']);
+    return SCORE_CATS.map(c=>[catLabel(c),s.scores[c]||0,(s.scoreMax&&s.scoreMax[c])||20,c,(s.scoreReasons&&s.scoreReasons[c])||'']);
   }
   return [['Komunikasi',s.communication||0,25],['Empati',s.empathy||0,25],['Pematuhan',s.compliance||0,25],['Keberkesanan',s.effectiveness||0,25]];
 }
@@ -337,7 +337,7 @@ function paginationBar(currentPage,totalItems,pageSize,onPageChange){
   if(totalPages<=1)return'';
   return`
   <div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:14px 0 4px">
-    <button class="btn btn-secondary" style="padding:5px 12px;font-size:12px" ${currentPage<=1?'disabled':''} onclick="${onPageChange}(${currentPage-1})">‹ Sebelum</button>
+    <button class="btn btn-secondary" style="padding:5px 12px;font-size:12px" ${currentPage<=1?'disabled':''} onclick="${onPageChange}(${currentPage-1})">‹ Previous</button>
     <span style="font-size:12px;color:var(--text3)">Muka ${currentPage} dari ${totalPages}</span>
     <button class="btn btn-secondary" style="padding:5px 12px;font-size:12px" ${currentPage>=totalPages?'disabled':''} onclick="${onPageChange}(${currentPage+1})">Next ›</button>
   </div>`;
@@ -367,7 +367,7 @@ function getPeriodRange(period){
   }
   return null; // 'all' — tiada had tarikh
 }
-// Tempoh SEBELUM tempoh semasa (sama jenis) — untuk kira trend ▲▼ vs tempoh lepas
+// Tempoh SEBELUM tempoh semasa (sama jenis) — untuk kira trend ▲▼ vs previous period
 function getPrevPeriodRange(period){
   const now=new Date();
   if(period==='day'){
@@ -633,7 +633,7 @@ async function renderDashboard(){
     }).join('');
   }
 
-  // Stat card: minggu ini vs minggu lepas (semua collector)
+  // Stat card: minggu ini vs last week (semua collector)
   const thisWeekSessions=sessions.filter(s=>{const d=new Date(s.date);return d>=thisWeek.start&&d<thisWeek.end;});
   const lastWeekSessions=sessions.filter(s=>{const d=new Date(s.date);return d>=lastWeek.start&&d<lastWeek.end;});
   const thisWeekAvg=thisWeekSessions.length?Math.round(thisWeekSessions.reduce((a,s)=>a+s.totalScore,0)/thisWeekSessions.length):null;
@@ -653,16 +653,16 @@ async function renderDashboard(){
 
   <div class="stats-grid">
     <div class="stat-card"><div class="stat-label">Total Sessions</div><div class="stat-val">${periodSessions.length}</div><div class="stat-sub">${periodLabel(dashboardPeriod)}</div></div>
-    <div class="stat-card"><div class="stat-label">Average Score</div><div class="stat-val">${periodAvg}</div><div class="stat-sub">${periodDiff!==null?`<span style="color:${periodDiff>=0?'var(--green)':'var(--red)'}">${periodDiff>=0?'▲ +':'▼ '}${periodDiff} vs tempoh lepas</span>`:'/ 100'}</div></div>
-    <div class="stat-card"><div class="stat-label">Session Hari Ini</div><div class="stat-val">${todaySessions}</div><div class="stat-sub">Latihan hari ini</div></div>
-    <div class="stat-card"><div class="stat-label">Score Minggu Ini</div><div class="stat-val">${thisWeekAvg!==null?thisWeekAvg:'—'}</div><div class="stat-sub">${weekDiff!==null?`<span style="color:${weekDiff>=0?'var(--green)':'var(--red)'}">${weekDiff>=0?'▲ +':'▼ '}${weekDiff} vs minggu lepas</span>`:`${thisWeekSessions.length} sesi minggu ini`}</div></div>
+    <div class="stat-card"><div class="stat-label">Average Score</div><div class="stat-val">${periodAvg}</div><div class="stat-sub">${periodDiff!==null?`<span style="color:${periodDiff>=0?'var(--green)':'var(--red)'}">${periodDiff>=0?'▲ +':'▼ '}${periodDiff} vs previous period</span>`:'/ 100'}</div></div>
+    <div class="stat-card"><div class="stat-label">Sessions Today</div><div class="stat-val">${todaySessions}</div><div class="stat-sub">Training today</div></div>
+    <div class="stat-card"><div class="stat-label">Score This Week</div><div class="stat-val">${thisWeekAvg!==null?thisWeekAvg:'—'}</div><div class="stat-sub">${weekDiff!==null?`<span style="color:${weekDiff>=0?'var(--green)':'var(--red)'}">${weekDiff>=0?'▲ +':'▼ '}${weekDiff} vs last week</span>`:`${thisWeekSessions.length} sessions this week`}</div></div>
     <div class="stat-card"><div class="stat-label">Compliance Issues</div><div class="stat-val" style="color:${periodFlagged.length?'var(--red)':'inherit'}">${periodFlagged.length}</div><div class="stat-sub">Session berisiko · ${periodLabel(dashboardPeriod)}</div></div>
   </div>
 
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <div class="card-title" style="margin-bottom:0">📅 Trend Mingguan Per Collector (4 Minggu)</div>
-      <div style="font-size:11px;color:var(--text3)">Purata markah · Isnin–Ahad</div>
+      <div class="card-title" style="margin-bottom:0">📅 Weekly Trend Per Collector (4 Weeks)</div>
+      <div style="font-size:11px;color:var(--text3)">Average score · Mon–Sun</div>
     </div>
     <div style="display:grid;grid-template-columns:160px 1fr;gap:12px;align-items:center;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border)">
       <div style="font-size:11px;color:var(--text3)">Name · Trend</div>
@@ -670,7 +670,7 @@ async function renderDashboard(){
         ${WEEKS.map((w,i)=>`<div style="flex:1;text-align:center;font-size:11px;font-weight:600;color:${i===3?'var(--purple)':'var(--text3)'}">${w.label}${i===3?' ★':''}</div>`).join('')}
       </div>
     </div>
-    ${collectors.length===0?`<div class="empty-state"><div class="es-icon">👥</div><p>Belum ada collector berdaftar.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Daftar akaun collector dari menu <strong>Manage Users</strong>.</p></div>`:''}
+    ${collectors.length===0?`<div class="empty-state"><div class="es-icon">👥</div><p>No collectors registered yet.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Register a collector account from the <strong>Manage Users</strong> menu.</p></div>`:''}
     ${collectors.map(c=>{
       const wData=weeklyData(c.id);
       const arrow=trendArrow(wData);
@@ -685,7 +685,7 @@ async function renderDashboard(){
             <span style="font-size:14px;color:${arrow.color};font-weight:700">${arrow.icon}</span>
             ${arrow.label?`<span style="font-size:11px;color:${arrow.color};font-weight:600">${arrow.label}</span>`:''}
           </div>
-          <div style="font-size:10px;color:var(--text3);margin-top:3px">${cs.length} sesi jumlah</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:3px">${cs.length} total sessions</div>
         </div>
         <div style="display:flex;align-items:flex-end;gap:6px;height:80px">
           ${weeklyBars(wData)}
@@ -699,8 +699,8 @@ async function renderDashboard(){
 
   <div class="two-col">
     <div class="card">
-      <div class="card-title">Prestasi Per Collector — ${periodLabel(dashboardPeriod)}</div>
-      ${collectors.length===0?`<div class="empty-state"><div class="es-icon">👥</div><p>Tiada collector lagi</p></div>`:''}
+      <div class="card-title">Performance Per Collector — ${periodLabel(dashboardPeriod)}</div>
+      ${collectors.length===0?`<div class="empty-state"><div class="es-icon">👥</div><p>No collectors yet</p></div>`:''}
       ${collectors.map(c=>{
         const cs=periodSessions.filter(s=>s.collectorId===c.id);
         const avg=cs.length?Math.round(cs.reduce((a,s)=>a+s.totalScore,0)/cs.length):0;
@@ -718,13 +718,13 @@ async function renderDashboard(){
           <div style="background:var(--bg);border-radius:3px;height:6px;overflow:hidden">
             <div style="height:100%;width:${avg}%;background:${avg>=70?'#5CB85C':avg>=50?'#F0AD4E':'#E24B4A'};border-radius:3px;transition:width 0.5s"></div>
           </div>
-          <div style="font-size:11px;color:var(--text3);margin-top:2px">${cs.length} sesi · ${periodLabel(dashboardPeriod)}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px">${cs.length} sessions · ${periodLabel(dashboardPeriod)}</div>
         </div>`;
       }).join('')}
     </div>
     <div class="card">
-      <div class="card-title">Session Terbaru</div>
-      ${recentSessions.length===0?`<div class="empty-state"><div class="es-icon">📋</div><p>Tiada sesi latihan lagi.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Collector boleh mulakan latihan dari menu <strong>Voice Training</strong>.</p></div>`:''}
+      <div class="card-title">Recent Sessions</div>
+      ${recentSessions.length===0?`<div class="empty-state"><div class="es-icon">📋</div><p>No training sessions yet.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Collectors can start training from the <strong>Voice Training</strong> menu.</p></div>`:''}
       ${recentSessions.map(s=>{
         const u=findUserById(users,s.collectorId);
         return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
@@ -737,8 +737,8 @@ async function renderDashboard(){
 
   <div class="two-col">
     <div class="card">
-      <div class="card-title">🎯 Aspek Paling Kerap Tersilap (Seluruh Pasukan)</div>
-      ${weakness.length===0?`<div class="empty-state"><div class="es-icon">📊</div><p>Belum cukup data untuk analisis.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Perlukan sekurang-kurangnya 3 sesi latihan.</p></div>`:
+      <div class="card-title">🎯 Most Frequently Missed Aspects (Whole Team)</div>
+      ${weakness.length===0?`<div class="empty-state"><div class="es-icon">📊</div><p>Not enough data for analysis yet.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Requires at least 3 training sessions.</p></div>`:
       weakness.slice(0,5).map(([cat,count])=>{
         const pct=weaknessTotal?Math.round(count/weaknessTotal*100):0;
         return`<div style="margin-bottom:12px">
@@ -753,15 +753,15 @@ async function renderDashboard(){
       }).join('')}
     </div>
     <div class="card">
-      <div class="card-title">⚠ Isu Pematuhan / Harassment Terkini</div>
-      ${recentFlagged.length===0?`<div class="empty-state"><div class="es-icon">✅</div><p>Tiada isu pematuhan dikesan setakat ini.</p></div>`:
+      <div class="card-title">⚠ Recent Compliance / Harassment Issues</div>
+      ${recentFlagged.length===0?`<div class="empty-state"><div class="es-icon">✅</div><p>No compliance issues detected so far.</p></div>`:
       recentFlagged.map(s=>{
         const u=findUserById(users,s.collectorId);
         return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-size:13px;font-weight:500">${u?u.name:'—'}</div><div style="font-size:11px;color:var(--text3)">${s.scenarioName}</div></div>
           <div style="display:flex;align-items:center;gap:6px">
             <span class="chip ${s.harassmentRisk==='high'?'chip-red':'chip-amber'}">⚠ ${s.harassmentRisk}</span>
-            <button class="btn btn-secondary" style="padding:3px 8px;font-size:11px" onclick="viewSession('${s.id}')">Lihat</button>
+            <button class="btn btn-secondary" style="padding:3px 8px;font-size:11px" onclick="viewSession('${s.id}')">View</button>
           </div>
         </div>`;
       }).join('')}
@@ -769,11 +769,11 @@ async function renderDashboard(){
   </div>
 
   <div class="card">
-    <div class="card-title">🎯 Prestasi Ikut Jenis Penghutang (Objection Type)</div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Cross-tab: purata score & skill paling kerap missed, ikut corak tingkah laku penghutang — bukan sekadar skill lemah global. Trend banding tempoh dipilih di atas (${periodLabel(dashboardPeriod)}) vs tempoh sebelumnya.</div>
-    ${weaknessByObjectionType(sessions).length===0?`<div class="empty-state"><div class="es-icon">📊</div><p>Belum cukup data — pastikan senario ada Objection Type ditag.</p></div>`:
+    <div class="card-title">🎯 Performance By Debtor Type (Objection Type)</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Cross-tab: average score & most frequently missed skill, by debtor behavior pattern — not just a global weak skill. Trend compares the period selected above (${periodLabel(dashboardPeriod)}) vs the previous period.</div>
+    ${weaknessByObjectionType(sessions).length===0?`<div class="empty-state"><div class="es-icon">📊</div><p>Not enough data yet — make sure scenarios have Objection Type tagged.</p></div>`:
     `<div class="table-wrap"><table>
-      <tr><th>Jenis Penghutang</th><th>Sesi</th><th>Avg Score</th><th>Skill Paling Kerap Missed</th><th>Trend</th></tr>
+      <tr><th>Debtor Type</th><th>Sessions</th><th>Avg Score</th><th>Most Frequently Missed Skill</th><th>Trend</th></tr>
       ${weaknessByObjectionType(sessions).map(g=>{
         const t=trendForObjectionType(periodSessions,prevPeriodSessions,g.objectionType);
         return`<tr>
@@ -787,9 +787,9 @@ async function renderDashboard(){
   </div>
 
   <div class="card">
-    <div class="card-title">🔍 Analisis Corak Kegagalan Berulang (AI)</div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Guna AI untuk cari TEMA kegagalan berulang (bukan sekadar tally kategori) daripada semua sesi sedia ada, ikut jenis penghutang. Dijalankan on-demand bila ditekan — bukan auto-run setiap kali dashboard dibuka, untuk jimat kos API.</div>
-    <button id="btnAnalyzePatterns" class="btn btn-primary" style="font-size:12px" onclick="analyzeWeaknessPatterns()">🔍 Analisis Corak Kegagalan (AI)</button>
+    <div class="card-title">🔍 Recurring Failure Pattern Analysis (AI)</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Uses AI to find recurring failure THEMES (not just a category tally) across all existing sessions, by debtor type. Runs on-demand when clicked — not auto-run every time the dashboard opens, to save API cost.</div>
+    <button id="btnAnalyzePatterns" class="btn btn-primary" style="font-size:12px" onclick="analyzeWeaknessPatterns()">🔍 Analyze Failure Patterns (AI)</button>
     <div id="patternAnalysisOut" style="margin-top:12px"></div>
   </div>`);
 }
@@ -803,7 +803,7 @@ async function analyzeWeaknessPatterns(){
   const out=document.getElementById('patternAnalysisOut');
   if(!btn||!out)return;
   btn.disabled=true;btn.textContent='Menganalisis...';
-  out.innerHTML='<div style="font-size:13px;color:var(--text3)">⏳ Sedang analisis corak kegagalan...</div>';
+  out.innerHTML='<div style="font-size:13px;color:var(--text3)">⏳ Analyzing failure patterns...</div>';
   try{
     const sessions=await loadSessions();
     // Hadkan kepada 15 missed items terkini setiap jenis penghutang —
@@ -817,7 +817,7 @@ async function analyzeWeaknessPatterns(){
     const summary=Object.entries(byType).filter(([,arr])=>arr.length>=3)
       .map(([ot,arr])=>`### ${objectionTypeLabel(ot)}\n${arr.map(x=>'- '+x).join('\n')}`).join('\n\n');
     if(!summary){
-      out.innerHTML='<div style="font-size:13px;color:var(--text3)">Belum cukup data "missed" untuk analisis pattern (perlukan sekurang-kurangnya 3 isu per jenis penghutang).</div>';
+      out.innerHTML='<div style="font-size:13px;color:var(--text3)">Not enough "missed" data for pattern analysis yet (requires at least 3 issues per debtor type).</div>';
       return;
     }
     const prompt=`Anda QA Manager pakar debt collection di Malaysia. Di bawah disenaraikan isu "missed" (perkara yang collector gagal/lemah lakukan) dari sesi latihan, dikumpul ikut jenis penghutang (objection type):
@@ -899,7 +899,7 @@ async function renderTraining(){
       ?`<div class="preview-section-title">📢 Required Disclosures</div>${(s.disclosures||[]).map(d=>`<div class="preview-disclosure">• ${d}</div>`).join('')}`
       :'';
     const checklistHTML=(s.checklist||[]).length
-      ?`<div class="preview-section-title" style="margin-top:14px">✅ Evaluation Checklist</div>${(s.checklist||[]).map(c=>`<div class="preview-checklist-item"><span class="preview-cl-cat">${c.cat}</span><span class="preview-cl-text">${c.text}</span></div>`).join('')}`
+      ?`<div class="preview-section-title" style="margin-top:14px">✅ Evaluation Checklist</div>${(s.checklist||[]).map(c=>`<div class="preview-checklist-item"><span class="preview-cl-cat">${c.cat}</span><span class="preview-cl-text">${c.text}${c.critical?' <span style="color:#C0392B;font-weight:600;font-size:11px">⚠️ Critical</span>':''}</span></div>`).join('')}`
       :'';
     return`
       <div class="sc-preview-header">
@@ -938,8 +938,8 @@ async function renderTraining(){
   <div class="page-header"><div class="page-title">Voice Training</div><div class="page-sub">Select a scenario, review the details, then start the call</div></div>
   ${recommendedScenario?`
   <div class="card" style="border-left:4px solid var(--amber);margin-bottom:14px">
-    <div class="card-title">🎯 Disyorkan Untuk Anda</div>
-    <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:10px">Berdasarkan rekod latihan anda, anda paling lemah bila lawan penghutang jenis <b>${objectionTypeLabel(myWeakest.objectionType)}</b> (avg score ${myWeakest.avgScore}/100 daripada ${myWeakest.count} sesi)${myWeakest.topWeakCat?`, terutamanya pada skill <b>${catLabel(myWeakest.topWeakCat)}</b>`:''}. Cuba senario ni seterusnya:</p>
+    <div class="card-title">🎯 Recommended For You</div>
+    <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:10px">Based on your training record, you're weakest against <b>${objectionTypeLabel(myWeakest.objectionType)}</b> type debtors (avg score ${myWeakest.avgScore}/100 from ${myWeakest.count} sessions)${myWeakest.topWeakCat?`, especially on the <b>${catLabel(myWeakest.topWeakCat)}</b> skill`:''}. Try this scenario next:</p>
     <div class="sc-card selected" style="margin:0;cursor:pointer" onclick="selectScenario('${recommendedScenario.id}')">
       <div class="sc-emoji">${recommendedScenario.emoji}</div>
       <div class="sc-body">
@@ -962,7 +962,7 @@ async function renderTraining(){
           <div class="sc-card ${scenario&&scenario.id===s.id?'selected':''}" onclick="selectScenario('${s.id}')">
             <div class="sc-emoji">${s.emoji}</div>
             <div class="sc-body">
-              <div class="sc-name">${s.title}${recommendedScenario&&recommendedScenario.id===s.id?' <span style="font-size:10px;color:var(--amber);font-weight:600">⭐ Disyorkan</span>':''}</div>
+              <div class="sc-name">${s.title}${recommendedScenario&&recommendedScenario.id===s.id?' <span style="font-size:10px;color:var(--amber);font-weight:600">⭐ Recommended</span>':''}</div>
               <div class="sc-desc">${s.description||s.desc||''}</div>
               <div class="sc-meta">
                 <span class="level-badge level-${s.level}">${s.level==='easy'?'Easy':s.level==='med'?'Medium':'Hard'}</span>
@@ -1018,7 +1018,7 @@ function selectScenario(id){
       ?`<div class="preview-section-title">📢 Required Disclosures</div>${(scenario.disclosures||[]).map(d=>`<div class="preview-disclosure">• ${d}</div>`).join('')}`
       :'';
     const checklistHTML=(scenario.checklist||[]).length
-      ?`<div class="preview-section-title" style="margin-top:14px">✅ Evaluation Checklist</div>${(scenario.checklist||[]).map(c=>`<div class="preview-checklist-item"><span class="preview-cl-cat">${c.cat}</span><span class="preview-cl-text">${c.text}</span></div>`).join('')}`
+      ?`<div class="preview-section-title" style="margin-top:14px">✅ Evaluation Checklist</div>${(scenario.checklist||[]).map(c=>`<div class="preview-checklist-item"><span class="preview-cl-cat">${c.cat}</span><span class="preview-cl-text">${c.text}${c.critical?' <span style="color:#C0392B;font-weight:600;font-size:11px">⚠️ Critical</span>':''}</span></div>`).join('')}`
       :'';
     preview.innerHTML=`
       <div class="sc-preview-header">
@@ -1069,7 +1069,7 @@ function renderCallScreen(){
           </div>
           <div class="call-timer" id="callTimer">00:00</div>
         </div>
-        <div class="status-bar"><div class="status-dot green" id="statusDot"></div><span id="statusText">Session aktif</span>${!TTS_ENABLED?'<span style="margin-left:auto;font-size:11px;font-weight:600;color:#e65100;background:#fff3e0;border:1px solid #ffb74d;border-radius:20px;padding:2px 8px">🔇 Mod Senyap</span>':''}</div>
+        <div class="status-bar"><div class="status-dot green" id="statusDot"></div><span id="statusText">Session active</span>${!TTS_ENABLED?'<span style="margin-left:auto;font-size:11px;font-weight:600;color:#e65100;background:#fff3e0;border:1px solid #ffb74d;border-radius:20px;padding:2px 8px">🔇 Silent Mode</span>':''}</div>
         <div class="transcript" id="transcriptBox"></div>
         <div class="mic-area">
           <div class="live-text" id="liveText"></div>
@@ -1078,10 +1078,10 @@ function renderCallScreen(){
           <div class="mic-label" id="micLabel">Press to speak</div>
         </div>
       </div>
-      <button class="btn btn-danger btn-full" onclick="endCall()">📵 Tamatkan Panggilan</button>
+      <button class="btn btn-danger btn-full" onclick="endCall()">📵 End Call</button>
     </div>
     <div class="acc-ref-card">
-      <div class="acc-ref-title">📒 Maklumat Akaun (rujukan nego)</div>
+      <div class="acc-ref-title">📒 Account Info (negotiation reference)</div>
       ${acc('Client',scenario.client)}
       ${acc('Name',scenario.name)}
       ${acc('IC No.',scenario.icNumber)}
@@ -1146,7 +1146,7 @@ function renderScoreScreen(){
     </div>`:''}
     ${s.priorityFocus?`
     <div class="card" style="border-left:4px solid var(--purple)">
-      <div class="card-title">🎯 Fokus Latihan Akan Datang</div>
+      <div class="card-title">🎯 Focus For Next Training</div>
       <span class="chip chip-purple">${catIcon(s.priorityFocus.category)} ${catLabel(s.priorityFocus.category)}</span>
       <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-top:8px">${s.priorityFocus.tip||''}</p>
     </div>`:''}
@@ -1158,8 +1158,8 @@ function renderScoreScreen(){
       </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-primary" style="flex:1;min-width:120px" onclick="navigate('training')">🔁 Latihan Semula</button>
-      <button class="btn btn-secondary" style="flex:1;min-width:120px" onclick="navigate('my-history')">📊 Lihat Rekod</button>
+      <button class="btn btn-primary" style="flex:1;min-width:120px" onclick="navigate('training')">🔁 Retrain</button>
+      <button class="btn btn-secondary" style="flex:1;min-width:120px" onclick="navigate('my-history')">📊 View History</button>
       <button class="btn btn-secondary" style="flex:1;min-width:120px" onclick="copyScoreSummary()">📋 Salin Ringkasan</button>
     </div>
   </div>`);
@@ -1169,7 +1169,7 @@ function copyScoreSummary(){
   const s=window._lastScore;
   if(!s)return;
   const catLabels={tone:'Tone',delivery:'Delivery',counter:'Counter Argument',action:'Action & Compliance',balance:'Balance Strategy'};
-  const scoreLines=Object.entries(s.scores||{}).map(([k,v])=>`  ${catLabels[k]||k}: ${v}/20`).join('\n');
+  const scoreLines=Object.entries(s.scores||{}).map(([k,v])=>`  ${catLabels[k]||k}: ${v}/${(s.scoreMax&&s.scoreMax[k])||20}`).join('\n');
   const strengthLines=(s.strengths||[]).map(t=>`  ✅ ${t}`).join('\n');
   const missedLines=(s.missed||[]).map(m=>`  ⚠ ${m.issue||''} → ${m.suggestion||''}`).join('\n');
   const harassment=s.harassmentRisk&&s.harassmentRisk!=='none'?`\n⚠ Isu Pematuhan (${s.harassmentRisk}): ${s.harassmentNote||''}\n`:'';
@@ -1236,17 +1236,17 @@ async function renderMyHistory(){
     <div class="stat-card"><div class="stat-label">Total Sessions</div><div class="stat-val">${sessions.length}</div></div>
     <div class="stat-card"><div class="stat-label">Average Score</div><div class="stat-val">${Math.round(sessions.reduce((a,s)=>a+s.totalScore,0)/sessions.length)}</div><div class="stat-sub">/ 100</div></div>
     <div class="stat-card"><div class="stat-label">Score Tertinggi</div><div class="stat-val">${Math.max(...sessions.map(s=>s.totalScore))}</div></div>
-    <div class="stat-card"><div class="stat-label">Session Terbaru</div><div class="stat-val">${sessions[0].totalScore}</div><div class="stat-sub">mata</div></div>
+    <div class="stat-card"><div class="stat-label">Most Recent Session</div><div class="stat-val">${sessions[0].totalScore}</div><div class="stat-sub">points</div></div>
   </div>
   ${latestFocus?`
   <div class="card" style="border-left:4px solid var(--purple)">
-    <div class="card-title">🎯 Fokus Latihan Akan Datang</div>
+    <div class="card-title">🎯 Focus For Next Training</div>
     <span class="chip chip-purple">${catIcon(latestFocus.category)} ${catLabel(latestFocus.category)}</span>
     <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-top:8px">${latestFocus.tip||''}</p>
   </div>`:''}
   <div class="card">
-    <div class="card-title">🛠 Aspek Paling Kerap Perlu Diperbaiki</div>
-    ${weakness.length===0?`<div style="font-size:13px;color:var(--text3)">Belum cukup data — teruskan latihan untuk lihat corak kesilapan anda.</div>`:
+    <div class="card-title">🛠 Most Frequently Needed Improvement Aspects</div>
+    ${weakness.length===0?`<div style="font-size:13px;color:var(--text3)">Not enough data yet — keep training to see your mistake patterns.</div>`:
     weakness.slice(0,5).map(([cat,count])=>`
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
         <span style="font-size:13px">${catIcon(cat)} ${catLabel(cat)}</span>
@@ -1254,17 +1254,17 @@ async function renderMyHistory(){
       </div>`).join('')}
   </div>
   <div class="card">
-    <div class="card-title">🎯 Prestasi Anda Ikut Jenis Penghutang</div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Jenis penghutang mana anda paling kuat / paling perlu latihan tambahan.</div>
-    ${weaknessByObjectionType(sessions).length===0?`<div style="font-size:13px;color:var(--text3)">Belum cukup data.</div>`:
+    <div class="card-title">🎯 Your Performance By Debtor Type</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Which debtor type you're strongest at / need the most extra training for.</div>
+    ${weaknessByObjectionType(sessions).length===0?`<div style="font-size:13px;color:var(--text3)">Not enough data yet.</div>`:
     weaknessByObjectionType(sessions).map(g=>`
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
-        <span style="font-size:13px">${objectionTypeIcon(g.objectionType)} ${objectionTypeLabel(g.objectionType)} <span style="color:var(--text3);font-size:11px">(${g.count} sesi)</span></span>
+        <span style="font-size:13px">${objectionTypeIcon(g.objectionType)} ${objectionTypeLabel(g.objectionType)} <span style="color:var(--text3);font-size:11px">(${g.count} sessions)</span></span>
         <span class="score-pill ${g.avgScore>=70?'score-high':g.avgScore>=50?'score-mid':'score-low'}">${g.avgScore}</span>
       </div>`).join('')}
   </div>
   <div class="card">
-    <div class="card-title">Trend Markah</div>
+    <div class="card-title">Score Trend</div>
     <div class="chart-bar-wrap">
       ${sessions.slice(0,10).reverse().map((s,i)=>`
       <div class="chart-bar-col">
@@ -1275,7 +1275,7 @@ async function renderMyHistory(){
     </div>
   </div>
   <div class="card">
-    <div class="card-title">Semua Sesi</div>
+    <div class="card-title">All Sessions</div>
     <div class="table-wrap"><table>
       <tr><th>#</th><th>Scenario</th><th>Duration</th><th>Score</th><th>Date</th><th></th></tr>
       ${pageSessions.map((s,i)=>`<tr>
@@ -1284,7 +1284,7 @@ async function renderMyHistory(){
         <td>${s.duration}</td>
         <td><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span></td>
         <td style="font-size:12px">${fmtDateTime(s.date)}</td>
-        <td><button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="viewSession('${s.id}')">Lihat</button></td>
+        <td><button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="viewSession('${s.id}')">View</button></td>
       </tr>`).join('')}
     </table></div>
     ${paginationBar(myHistoryPage,sessions.length,SESSIONS_PAGE_SIZE,'goMyHistoryPage')}
@@ -1301,7 +1301,7 @@ async function renderCollectors(){
   <div class="page-header"><div class="page-title">All Collectors</div><div class="page-sub">${collectors.length} collectors registered</div></div>
   <div class="card">
     <div class="table-wrap"><table>
-      <tr><th>Name</th><th>ID</th><th>Sessions</th><th>Average</th><th>Highest</th><th>Weak Aspect</th><th>Weakest Debtor Type</th><th>Cadangan Senario</th><th>Harassment</th><th>Last Session</th></tr>
+      <tr><th>Name</th><th>ID</th><th>Sessions</th><th>Average</th><th>Highest</th><th>Weak Aspect</th><th>Weakest Debtor Type</th><th>Recommended Scenario</th><th>Harassment</th><th>Last Session</th></tr>
       ${collectors.map(c=>{
         const cs=sessions.filter(s=>s.collectorId===c.id);
         const avg=cs.length?Math.round(cs.reduce((a,s)=>a+s.totalScore,0)/cs.length):'-';
@@ -1379,7 +1379,7 @@ async function renderSessions(){
     <input type="date" id="filtSessionsTo" value="${sessionsFilter.dateTo}" onchange="sessionsFilter.dateTo=this.value;sessionsPage=1;renderSessions();" title="To date"/>
     <button class="btn btn-secondary" onclick="sessionsFilter={collectorId:'',scenario:'',objectionType:'',skor:'',dateFrom:'',dateTo:''};sessionsPage=1;renderSessions();">Reset</button>
   </div>
-  ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📋</div><p>Tiada sesi latihan sepadan dengan filter.</p></div></div>`:''}
+  ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📋</div><p>No training sessions match the filter.</p></div></div>`:''}
   ${sessions.length>0?`<div class="card">
     <div class="table-wrap"><table>
       <tr><th>Collector</th><th>Scenario</th><th>Objection</th><th>Duration</th><th>Score</th><th>Harassment Risk</th><th>Date</th><th></th></tr>
@@ -1393,7 +1393,7 @@ async function renderSessions(){
           <td><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span></td>
           <td>${s.harassmentRisk&&s.harassmentRisk!=='none'?`<span class="chip chip-red">⚠ ${s.harassmentRisk}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
           <td style="font-size:12px;color:var(--text3)">${fmtDateTime(s.date)}</td>
-          <td><button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="viewSession('${s.id}')">Lihat</button></td>
+          <td><button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="viewSession('${s.id}')">View</button></td>
         </tr>`;
       }).join('')}
     </table></div>
@@ -1414,7 +1414,7 @@ async function viewSession(id){
   <div style="display:flex;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:8px">
     <div><div style="font-size:12px;color:var(--text3)">Collector</div><div style="font-weight:500">${u?u.name:'—'}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Scenario</div><div style="font-weight:500">${s.scenarioName}</div></div>
-    <div><div style="font-size:12px;color:var(--text3)">Jenis Penghutang</div><div style="font-weight:500">${s.objectionType?`${objectionTypeIcon(s.objectionType)} ${objectionTypeLabel(s.objectionType)}`:'-'}</div></div>
+    <div><div style="font-size:12px;color:var(--text3)">Debtor Type</div><div style="font-weight:500">${s.objectionType?`${objectionTypeIcon(s.objectionType)} ${objectionTypeLabel(s.objectionType)}`:'-'}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Masa</div><div style="font-weight:500">${s.duration}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Date & Waktu</div><div style="font-weight:500">${fmtDateTime(s.date)}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Score</div><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}/100</span></div>
@@ -1440,7 +1440,7 @@ async function viewSession(id){
   <div style="font-size:13px;font-weight:500;margin-bottom:8px">💬 Maklum Balas AI</div>
   <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:1rem">${s.feedback||''}</p>
   ${(s.strengths&&s.strengths.length)?`
-  <div style="font-size:13px;font-weight:500;margin-bottom:8px">✅ Kekuatan</div>
+  <div style="font-size:13px;font-weight:500;margin-bottom:8px">✅ Strengths</div>
   ${s.strengths.map(t=>`<div style="font-size:12px;color:var(--text2);margin-bottom:4px">• ${t}</div>`).join('')}
   <hr class="divider"/>`:''}
   ${(s.missed&&s.missed.length)?`
@@ -1454,7 +1454,7 @@ async function viewSession(id){
   </div>`).join('')}
   <hr class="divider"/>`:''}
   ${s.priorityFocus?`
-  <div style="font-size:13px;font-weight:500;margin-bottom:8px">🎯 Fokus Latihan Akan Datang</div>
+  <div style="font-size:13px;font-weight:500;margin-bottom:8px">🎯 Focus For Next Training</div>
   <div style="margin-bottom:1rem">
     <span class="chip chip-purple" style="font-size:11px">${catIcon(s.priorityFocus.category)} ${catLabel(s.priorityFocus.category)}</span>
     <div style="font-size:12px;color:var(--text2);margin-top:4px">${s.priorityFocus.tip||''}</div>
@@ -1473,13 +1473,13 @@ async function viewSession(id){
 
 async function renderScenarios(){
   if(currentUser.role==='collector')return;
-  setContent('<div class="page-header"><div class="page-title">Manage Scenarios</div></div><div class="card">Memuatkan senario...</div>');
+  setContent('<div class="page-header"><div class="page-title">Manage Scenarios</div></div><div class="card">Loading scenarios...</div>');
   let scenarios, sessions;
   try{
     scenarios=await loadScenarios(true); // force=true: manager perlu data terkini, bukan cache lama
     sessions=await loadSessions();
   }catch(e){
-    setContent(`<div class="page-header"><div class="page-title">Manage Scenarios</div></div><div class="card">⚠ Gagal memuatkan senario: ${e.message}</div>`);
+    setContent(`<div class="page-header"><div class="page-title">Manage Scenarios</div></div><div class="card">⚠ Failed to load scenarios: ${e.message}</div>`);
     return;
   }
   // Weakness-to-scenario link: cadang jenis senario apa nak fokus seterusnya,
@@ -1489,16 +1489,16 @@ async function renderScenarios(){
   const recommendation=weakGroups.length?weakGroups[0]:null; // dah sorted, avgScore terendah dahulu
   const recommendationBanner=recommendation?`
   <div class="card" style="border-left:4px solid var(--amber)">
-    <div class="card-title">🎯 Recommended Focus <span style="font-weight:400;color:var(--text3);font-size:11px">(auto-generated dari data sesi sebenar)</span></div>
-    <p style="font-size:13px;color:var(--text2);line-height:1.6">Team paling lemah bila lawan penghutang jenis <b>${objectionTypeLabel(recommendation.objectionType)}</b> — avg score <b>${recommendation.avgScore}/100</b> daripada ${recommendation.count} sesi${recommendation.topWeakCat?`, terutamanya pada skill <b>${catLabel(recommendation.topWeakCat)}</b> (${recommendation.topWeakCount}x missed)`:''}.</p>
-    <button class="btn btn-primary" style="margin-top:6px;font-size:12px" onclick="openAddScenario(null,'${recommendation.objectionType}')">+ Cipta Senario ${objectionTypeLabel(recommendation.objectionType)} Baru</button>
+    <div class="card-title">🎯 Recommended Focus <span style="font-weight:400;color:var(--text3);font-size:11px">(auto-generated from real session data)</span></div>
+    <p style="font-size:13px;color:var(--text2);line-height:1.6">Team is weakest against <b>${objectionTypeLabel(recommendation.objectionType)}</b> type debtors — avg score <b>${recommendation.avgScore}/100</b> from ${recommendation.count} sessions${recommendation.topWeakCat?`, especially on the <b>${catLabel(recommendation.topWeakCat)}</b> skill (${recommendation.topWeakCount}x missed)`:''}.</p>
+    <button class="btn btn-primary" style="margin-top:6px;font-size:12px" onclick="openAddScenario(null,'${recommendation.objectionType}')">+ Create New ${objectionTypeLabel(recommendation.objectionType)} Scenario</button>
   </div>`:'';
   setContent(`
   <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start">
     <div><div class="page-title">Manage Scenarios</div><div class="page-sub">${scenarios.length} scenarios available</div></div>
     <div style="display:flex;gap:8px">
       <button class="btn btn-secondary" onclick="openAiScenarioBuilder()">🤖 AI Scenario Builder</button>
-      <button class="btn btn-primary" onclick="openAddScenario()">+ Tambah Senario</button>
+      <button class="btn btn-primary" onclick="openAddScenario()">+ Add Scenario</button>
     </div>
   </div>
   ${recommendationBanner}
@@ -1515,10 +1515,10 @@ async function renderScenarios(){
         <td>${s.amount}</td>
         <td><span class="chip ${s.balanceTier==='high'?'chip-red':'chip-green'}">${s.balanceTier==='high'?'High':'Low'}</span></td>
         <td><span class="level-badge level-${s.level}">${s.level==='easy'?'Easy':s.level==='med'?'Medium':'Hard'}</span></td>
-        <td style="font-size:12px;color:var(--text3)">${(s.checklist||[]).length} item${(s.disclosures||[]).length?` · 📢${(s.disclosures||[]).length}`:''}</td>
+        <td style="font-size:12px;color:var(--text3)">${(s.checklist||[]).length} item${(s.checklist||[]).filter(c=>c.critical).length?` · ⚠️${(s.checklist||[]).filter(c=>c.critical).length}`:''}${(s.disclosures||[]).length?` · 📢${(s.disclosures||[]).length}`:''}</td>
         <td><div class="action-row">
           <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="editScenario('${s.id}')">Edit</button>
-          <button class="btn btn-danger" style="padding:4px 10px;font-size:12px" onclick="deleteScenario('${s.id}')">Padam</button>
+          <button class="btn btn-danger" style="padding:4px 10px;font-size:12px" onclick="deleteScenario('${s.id}')">Delete</button>
         </div></td>
       </tr>`).join('')}
     </table></div>
@@ -1557,7 +1557,8 @@ function readScenarioFormDraft(){
     regDate:(document.getElementById('scRegDate')||{}).value||'',
     termDate:(document.getElementById('scTermDate')||{}).value||'',
     checklist:Array.from(document.querySelectorAll('#checklistRows .checklist-row'))
-      .map(r=>({cat:r.querySelector('.cl-cat').value,text:r.querySelector('.cl-text').value})),
+      .map(r=>({cat:r.querySelector('.cl-cat').value,text:r.querySelector('.cl-text').value,critical:r.querySelector('.cl-critical').checked})),
+    scoreWeights:Object.fromEntries(SCORE_CATS.map(c=>{const el=document.getElementById('scWeight_'+c);return [c,el?el.value:'1'];})),
     disclosures:Array.from(document.querySelectorAll('#disclosureRows .disclosure-row .dc-text'))
       .map(i=>i.value),
     _existingId:(document.getElementById('modalBox')||{}).dataset&&document.getElementById('modalBox').dataset.scenarioEditId||'',
@@ -1615,6 +1616,7 @@ function applyScenarioDraft(draft){
   set('scAccType',draft.accType);
   set('scRegDate',draft.regDate);
   set('scTermDate',draft.termDate);
+  if(draft.scoreWeights){SCORE_CATS.forEach(c=>{const el=document.getElementById('scWeight_'+c);if(el&&draft.scoreWeights[c])el.value=draft.scoreWeights[c];});}
   // Client dropdown
   const clientSel=document.getElementById('scClient');
   if(clientSel&&draft.clientSel){clientSel.value=draft.clientSel;toggleClientOther();}
@@ -1659,14 +1661,14 @@ function redactPII(text){
 function openAiScenarioBuilder(){
   openModal(`
   <div class="modal-title">🤖 AI Scenario Builder — Cipta Dari Transkrip Sebenar</div>
-  <p style="font-size:12px;color:var(--text3);line-height:1.6;margin-bottom:10px">Paste transkrip/nota call sebenar dari CRM/Volare di bawah. Sistem akan <b>redact PII secara automatik</b> (IC, no. telefon, no. akaun) di browser anda sebelum apa-apa dihantar ke AI, lepas tu AI akan cadangkan draf senario (jenis penghutang, checklist, situasi) untuk anda review &amp; edit — bukan auto-publish terus.</p>
+  <p style="font-size:12px;color:var(--text3);line-height:1.6;margin-bottom:10px">Paste an actual call transcript/notes from CRM/Volare below. The system will <b>auto-redact PII</b> (IC, phone no., account no.) in your browser before anything is sent to the AI, then the AI will suggest a draft scenario (debtor type, checklist, situation) for you to review &amp; edit — not auto-published directly.</p>
   <div class="form-row"><label>Transkrip / Nota Call</label>
     <textarea id="aiTranscriptInput" rows="8" placeholder="Contoh:&#10;Collector: Selamat pagi Encik Ahmad, saya dari NewVest Recoveries...&#10;Debtor: Saya tak ada duit lah sekarang, kerja pun kena cut...&#10;..."></textarea>
   </div>
   <div id="aiRedactPreview"></div>
   <div style="display:flex;gap:8px;margin-top:10px">
     <button class="btn btn-secondary" onclick="previewRedaction()">🔒 Redact &amp; Preview</button>
-    <button class="btn btn-primary" id="btnGenAiDraft" onclick="generateScenarioDraftFromTranscript()" disabled>🤖 Generate Draf Senario (AI)</button>
+    <button class="btn btn-primary" id="btnGenAiDraft" onclick="generateScenarioDraftFromTranscript()" disabled>🤖 Generate Scenario Draft (AI)</button>
   </div>
   <div id="aiDraftOut" style="margin-top:14px"></div>
   `);
@@ -1691,7 +1693,7 @@ async function generateScenarioDraftFromTranscript(){
   const btn=document.getElementById('btnGenAiDraft');
   const out=document.getElementById('aiDraftOut');
   const redacted=document.getElementById('aiTranscriptInput').dataset.redacted||'';
-  if(!redacted.trim()){out.innerHTML='<div class="alert alert-err" style="display:block">Sila tekan "Redact & Preview" dahulu sebelum generate.</div>';return;}
+  if(!redacted.trim()){out.innerHTML='<div class="alert alert-err" style="display:block">Please click "Redact &amp; Preview" first before generating.</div>';return;}
   btn.disabled=true;btn.textContent='Menjana draf...';
   out.innerHTML='<div style="font-size:13px;color:var(--text3)">⏳ AI sedang analisis transkrip...</div>';
   try{
@@ -1726,21 +1728,21 @@ Checklist kena ada 3-5 item, betul-betul berdasarkan corak SEBENAR dalam transkr
     try{draft=JSON.parse(text);}catch{throw new Error('AI bagi format tidak sah, sila cuba lagi.');}
     window.__aiScenarioDraft=draft; // simpan sementara, dipakai bila "Guna Draf Ni" ditekan
     out.innerHTML=`
-      <div class="alert alert-ok" style="display:block">✓ Draf dah siap — sila REVIEW dahulu, tiada apa disimpan secara automatik.</div>
+      <div class="alert alert-ok" style="display:block">✓ Draft is ready — please REVIEW first, nothing is saved automatically.</div>
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:8px">
-        <div style="font-weight:600;margin-bottom:4px">${draft.emoji||''} ${draft.title||'(tiada tajuk)'}</div>
+        <div style="font-weight:600;margin-bottom:4px">${draft.emoji||''} ${draft.title||'(no title)'}</div>
         <div style="font-size:12px;color:var(--text2);margin-bottom:6px">${draft.description||''}</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
           <span class="chip chip-amber" style="font-size:11px">${objectionTypeIcon(draft.objectionType)} ${objectionTypeLabel(draft.objectionType)}</span>
           <span style="font-size:11px;color:var(--text3)">${customerTypeLabel(draft.customerType)}</span>
         </div>
-        <div style="font-size:12px;color:var(--text3)">${(draft.checklist||[]).length} checklist item dicadangkan</div>
+        <div style="font-size:12px;color:var(--text3)">${(draft.checklist||[]).length} checklist items suggested</div>
       </div>
       <button class="btn btn-primary" style="margin-top:10px" onclick="useAiScenarioDraft()">✅ Guna Draf Ni → Buka Form Untuk Edit</button>`;
   }catch(e){
     out.innerHTML=`<div class="alert alert-err" style="display:block">⚠ ${e.message}</div>`;
   }finally{
-    btn.disabled=false;btn.textContent='🤖 Generate Draf Senario (AI)';
+    btn.disabled=false;btn.textContent='🤖 Generate Scenario Draft (AI)';
   }
 }
 
@@ -1761,8 +1763,8 @@ async function openAddScenario(existingId,presetObjectionType){
   const KNOWN_CLIENTS=['RedOne','Celcom','Digi'];
   const isCustomClient=!!(s&&s.client&&!KNOWN_CLIENTS.includes(s.client));
   openModal(`
-  <div class="modal-title">${s?'Edit':'Add'} Senario</div>
-  <div class="form-row"><label>Emoji Senario</label>
+  <div class="modal-title">${s?'Edit':'Add'} Scenario</div>
+  <div class="form-row"><label>Scenario Emoji</label>
     <div style="display:flex;gap:8px;align-items:center">
       <input id="scEmoji" type="text" value="${s?s.emoji:'😐'}" placeholder="😐" style="max-width:70px;font-size:24px;text-align:center" maxlength="4" />
       <div style="display:flex;flex-wrap:wrap;gap:4px">
@@ -1785,7 +1787,7 @@ async function openAddScenario(existingId,presetObjectionType){
   </div>
   <div class="form-row"><label>Scenario Title</label><input id="scTitle" value="${s?s.title:''}" placeholder="Debtor Bekerjasama" /></div>
   <div class="two-col">
-    <div class="form-row"><label>Outstanding Amount</label><input id="scAmount" value="${s?s.amount:'RM5,000'}" placeholder="e.g. RM1,234.50" pattern="^RM[\d,]+(\.[\d]{1,2})?$" title="Format: RM diikuti nombor sahaja, cth RM1,234.50" /></div>
+    <div class="form-row"><label>Outstanding Amount</label><input id="scAmount" value="${s?s.amount:'RM5,000'}" placeholder="e.g. RM1,234.50" pattern="^RM[\d,]+(\.[\d]{1,2})?$" title="Format: RM followed by numbers only, e.g. RM1,234.50" /></div>
     <div class="form-row"><label>Days Overdue</label><input id="scDays" value="${s?s.days:30}" type="number" /></div>
   </div>
   <div class="two-col">
@@ -1797,33 +1799,36 @@ async function openAddScenario(existingId,presetObjectionType){
     </div>
   </div>
   <div class="two-col">
-    <div class="form-row"><label>Objection Type <span style="font-weight:400;color:var(--text3)">(corak tingkah laku penghutang semasa call — untuk analytics weakness ikut jenis)</span></label>
+    <div class="form-row"><label>Objection Type <span style="font-weight:400;color:var(--text3)">(debtor behavior pattern during the call — used for weakness analytics by type)</span></label>
       <select id="scObjectionType">
         ${OBJECTION_TYPES.map(t=>`<option value="${t}" ${s&&s.objectionType===t?'selected':(!s&&t===(presetObjectionType||'cooperative')?'selected':'')}>${objectionTypeIcon(t)} ${objectionTypeLabel(t)}</option>`).join('')}
       </select>
     </div>
-    <div class="form-row"><label>Customer Type <span style="font-weight:400;color:var(--text3)">(segmen akaun — rujuk bucket assignment SOP-COL-002)</span></label>
+    <div class="form-row"><label>Customer Type <span style="font-weight:400;color:var(--text3)">(account segment — refer to bucket assignment SOP-COL-002)</span></label>
       <select id="scCustomerType">
         ${CUSTOMER_TYPES.map(t=>`<option value="${t}" ${s&&s.customerType===t?'selected':(!s&&t==='other'?'selected':'')}>${customerTypeLabel(t)}</option>`).join('')}
       </select>
     </div>
   </div>
   <hr class="divider"/>
-  <div style="font-size:13px;font-weight:600;margin-bottom:10px">📒 Customer Account Information <span style="font-weight:400;color:var(--text3)">(required — shown as collector reference during call)</span></div>
+  <div style="font-size:13px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+    <span>📒 Customer Account Information <span style="font-weight:400;color:var(--text3)">(required — shown as collector reference during call)</span></span>
+    <button type="button" class="btn btn-secondary" style="font-size:11px;padding:5px 10px;font-weight:500" onclick="autofillDummyData()">🎲 Auto-fill Dummy Data</button>
+  </div>
   <div class="two-col">
     <div class="form-row"><label>Client</label>
       <select id="scClient" onchange="toggleClientOther()">
-        <option value="" ${!s||!s.client?'selected':''} disabled>— Pilih Client —</option>
+        <option value="" ${!s||!s.client?'selected':''} disabled>— Select Client —</option>
         <option value="RedOne" ${s&&s.client==='RedOne'?'selected':''}>RedOne</option>
         <option value="Celcom" ${s&&s.client==='Celcom'?'selected':''}>Celcom</option>
         <option value="Digi" ${s&&s.client==='Digi'?'selected':''}>Digi</option>
         <option value="Lain-lain" ${isCustomClient?'selected':''}>Other</option>
       </select>
-      <input id="scClientOther" value="${isCustomClient?s.client.replace(/"/g,'&quot;'):''}" placeholder="Taip nama client lain..." style="margin-top:6px;display:${isCustomClient?'block':'none'}" />
+      <input id="scClientOther" value="${isCustomClient?s.client.replace(/"/g,'&quot;'):''}" placeholder="Type other client name..." style="margin-top:6px;display:${isCustomClient?'block':'none'}" />
     </div>
     <div class="form-row"><label>No. IC</label><input id="scIc" value="${s?s.icNumber:''}" placeholder="901231-10-1234" /></div>
   <div style="background:#FAEEDA;border:1px solid #EF9F27;border-radius:8px;padding:8px 12px;font-size:12px;color:#854F0B;margin-bottom:4px">
-    ⚠️ <b>Privasi:</b> Gunakan nombor IC, akaun, dan nombor telefon <b>fiktif/dummy</b> sahaja. Jangan masukkan data pelanggan sebenar dalam sistem latihan ini.
+    ⚠️ <b>Privacy:</b> Use <b>fictional/dummy</b> IC, account, and phone numbers only. Do not enter real customer data into this training system.
   </div>
   </div>
   <div class="two-col">
@@ -1833,7 +1838,7 @@ async function openAddScenario(existingId,presetObjectionType){
   <div class="two-col">
     <div class="form-row"><label>Acc Type</label>
       <select id="scAccType">
-        <option value="" ${!s||!s.accType?'selected':''} disabled>— Pilih Jenis —</option>
+        <option value="" ${!s||!s.accType?'selected':''} disabled>— Select Type —</option>
         <option value="Active" ${s&&s.accType==='Active'?'selected':''}>Active</option>
         <option value="Pre-NPL" ${s&&s.accType==='Pre-NPL'?'selected':''}>Pre-NPL</option>
         <option value="NPL" ${s&&s.accType==='NPL'?'selected':''}>NPL</option>
@@ -1843,7 +1848,7 @@ async function openAddScenario(existingId,presetObjectionType){
     <div></div>
   </div>
   <div class="two-col">
-    <div class="form-row"><label>Date Daftar</label><input id="scRegDate" type="date" value="${s&&s.registrationDate?s.registrationDate:''}" /></div>
+    <div class="form-row"><label>Registration Date</label><input id="scRegDate" type="date" value="${s&&s.registrationDate?s.registrationDate:''}" /></div>
     <div class="form-row"><label>Date Termination</label><input id="scTermDate" type="date" value="${s&&s.terminationDate?s.terminationDate:''}" /></div>
   </div>
   <hr class="divider"/>
@@ -1856,7 +1861,7 @@ async function openAddScenario(existingId,presetObjectionType){
     </div>
   </div>
   <div class="form-row">
-    <label>Evaluation Checklist <span style="font-weight:400;color:var(--text3)">(AI akan nilai & beri markah berdasarkan 5 kategori ini secara automatik)</span></label>
+    <label>Evaluation Checklist <span style="font-weight:400;color:var(--text3)">(AI will evaluate & score automatically based on these 5 categories)</span></label>
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
       <span style="padding:4px 10px;border-radius:20px;background:var(--bg);border:1px solid var(--border2);font-size:12px;font-weight:600;color:var(--text2)">🗣 Tone / Nada</span>
       <span style="padding:4px 10px;border-radius:20px;background:var(--bg);border:1px solid var(--border2);font-size:12px;font-weight:600;color:var(--text2)">📢 Cara Penyampaian</span>
@@ -1864,22 +1869,31 @@ async function openAddScenario(existingId,presetObjectionType){
       <span style="padding:4px 10px;border-radius:20px;background:var(--bg);border:1px solid var(--border2);font-size:12px;font-weight:600;color:var(--text2)">✅ Tindakan & Pematuhan</span>
       <span style="padding:4px 10px;border-radius:20px;background:var(--bg);border:1px solid var(--border2);font-size:12px;font-weight:600;color:var(--text2)">💰 Strategi Baki Hutang</span>
     </div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Tambah item spesifik untuk senario ini (pilihan):</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:6px">Score Weight per category <span style="font-weight:400">(optional — adjust which category matters more for this scenario; max points are auto-normalised to total 100)</span>:</div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+      ${SCORE_CATS.map(c=>`<div style="display:flex;flex-direction:column;gap:2px">
+        <label style="font-size:10px;color:var(--text3)">${catIcon(c)} ${catLabel(c)}</label>
+        <select id="scWeight_${c}" style="font-size:12px;padding:4px 6px">
+          ${[0.5,1,1.5,2].map(w=>`<option value="${w}" ${(((s&&s.scoreWeights&&s.scoreWeights[c])||1)==w)?'selected':''}>${w}×</option>`).join('')}
+        </select>
+      </div>`).join('')}
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Add specific items for this scenario (optional):</div>
     <div id="checklistRows"></div>
-    <button type="button" class="btn btn-secondary" style="font-size:12px;padding:6px 10px" onclick="addChecklistRow('action','')">+ Tambah Item</button>
+    <button type="button" class="btn btn-secondary" style="font-size:12px;padding:6px 10px" onclick="addChecklistRow('action','')">+ Add Item</button>
   </div>
   <div class="form-row">
-    <label>📢 Pengumuman / Polisi Wajib Dimaklumkan kepada Penghutang <span style="font-weight:400;color:var(--text3)">(new information/policy that the collector MUST mention during this call — cth: "Maklumkan penghutang yang ewallet/paylater akan disekat kerana akaun dimasukkan ke CTOS". Optional — leave empty if no special announcement for this scenario.)</span></label>
+    <label>📢 Mandatory Announcement / Policy To Inform Debtor <span style="font-weight:400;color:var(--text3)">(new information/policy that the collector MUST mention during this call — cth: "Inform the debtor that ewallet/paylater will be blocked because the account was listed with CTOS". Optional — leave empty if no special announcement for this scenario.)</span></label>
     <div id="disclosureRows"></div>
-    <button type="button" class="btn btn-secondary" style="margin-top:6px;font-size:12px;padding:6px 10px" onclick="addDisclosureRow('')">+ Tambah Pengumuman</button>
+    <button type="button" class="btn btn-secondary" style="margin-top:6px;font-size:12px;padding:6px 10px" onclick="addDisclosureRow('')">+ Add Announcement</button>
   </div>
   <div class="modal-footer">
-    <button class="btn btn-secondary" onclick="cancelScenarioForm()">Batal</button>
-    <button class="btn btn-primary" onclick="saveScenario('${existingId||''}')">Simpan</button>
+    <button class="btn btn-secondary" onclick="cancelScenarioForm()">Cancel</button>
+    <button class="btn btn-primary" onclick="saveScenario('${existingId||''}')">Save</button>
   </div>`);
   // Hanya load extra checklist items — 5 kategori utama auto-score oleh AI
   const clData=(s&&s.checklist&&s.checklist.length)?s.checklist:[];
-  clData.forEach(c=>addChecklistRow(c.cat,c.text));
+  clData.forEach(c=>addChecklistRow(c.cat,c.text,c.critical));
   const existingDisclosures=(s&&s.disclosures&&s.disclosures.length)?s.disclosures:[];
   existingDisclosures.forEach(d=>addDisclosureRow(d));
 
@@ -1914,7 +1928,7 @@ function cancelScenarioForm(){
   const name=(document.getElementById("scName")||{}).value||"";
   const prompt=(document.getElementById("scPrompt")||{}).value||"";
   const hasContent=name.trim()||prompt.trim();
-  if(hasContent&&!confirm("Borang belum disimpan. Batalkan dan buang perubahan?")){
+  if(hasContent&&!confirm("Form not saved yet. Cancel and discard changes?")){
     return;
   }
   clearScenarioDraft();
@@ -1932,7 +1946,42 @@ function toggleClientOther(){
   if(sel.value!=='Lain-lain')other.value='';
 }
 
-function addChecklistRow(cat,text){
+// Auto-fill Dummy Data — generate IC/Acc Number/Service No format yang betul
+// secara rawak, supaya manager senang buat scenario baru tanpa kena fikir
+// nombor manual setiap kali. Manager boleh override lepas auto-fill kalau
+// nak nilai specifik. Client/Acc Type/Dates TIDAK disentuh — biar manager pilih sendiri.
+function genDummyIC(){
+  // Format: YYMMDD-PB-XXXX. PB = kod negeri pendaftaran (gunakan set umum yang sah).
+  const stateCodes=['01','02','03','04','05','06','07','08','09','10','11','12','13','14','15','16'];
+  const yy=String(Math.floor(Math.random()*50)+50).padStart(2,'0'); // 50-99 → lahir 1950-1999
+  const mm=String(Math.floor(Math.random()*12)+1).padStart(2,'0');
+  const dd=String(Math.floor(Math.random()*28)+1).padStart(2,'0');
+  const pb=stateCodes[Math.floor(Math.random()*stateCodes.length)];
+  const last=String(Math.floor(Math.random()*9999)).padStart(4,'0');
+  return `${yy}${mm}${dd}-${pb}-${last}`;
+}
+function genDummyAccNumber(){
+  let n='';
+  for(let i=0;i<10;i++)n+=Math.floor(Math.random()*10);
+  return n;
+}
+function genDummyServiceNo(){
+  const prefixes=['010','011','012','013','016','017','018','019'];
+  const p=prefixes[Math.floor(Math.random()*prefixes.length)];
+  let n='';
+  for(let i=0;i<7;i++)n+=Math.floor(Math.random()*10);
+  return `${p}-${n}`;
+}
+function autofillDummyData(){
+  const ic=document.getElementById('scIc');
+  const acc=document.getElementById('scAccNumber');
+  const svc=document.getElementById('scServiceNo');
+  if(ic)ic.value=genDummyIC();
+  if(acc)acc.value=genDummyAccNumber();
+  if(svc)svc.value=genDummyServiceNo();
+}
+
+function addChecklistRow(cat,text,critical){
   const wrap=document.getElementById('checklistRows');
   if(!wrap)return;
   const row=document.createElement('div');
@@ -1941,6 +1990,9 @@ function addChecklistRow(cat,text){
   row.innerHTML=`
     <input class="cl-cat" type="hidden" value="${cat||'action'}" />
     <input class="cl-text" value="${(text||'').replace(/"/g,'&quot;')}" placeholder="E.g. Ensure collector verifies identity sebelum bagi maklumat akaun..." style="flex:1" />
+    <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text3);flex-shrink:0;white-space:nowrap;padding-top:8px" title="Critical — kalau miss, markah aspek action MESTI rendah">
+      <input class="cl-critical" type="checkbox" ${critical?'checked':''} style="margin:0" />⚠️ Critical
+    </label>
     <button type="button" class="btn btn-danger" style="padding:6px 10px;flex-shrink:0" onclick="this.parentElement.remove()">✕</button>`;
   wrap.appendChild(row);
 }
@@ -1964,11 +2016,17 @@ function addDisclosureRow(text){
 function editScenario(id){openAddScenario(id);}
 async function saveScenario(existingId){
   const checklist=Array.from(document.querySelectorAll('#checklistRows .checklist-row'))
-    .map(r=>({cat:r.querySelector('.cl-cat').value,text:r.querySelector('.cl-text').value.trim()}))
+    .map(r=>({cat:r.querySelector('.cl-cat').value,text:r.querySelector('.cl-text').value.trim(),critical:r.querySelector('.cl-critical').checked}))
     .filter(c=>c.text);
   const disclosures=Array.from(document.querySelectorAll('#disclosureRows .disclosure-row .dc-text'))
     .map(i=>i.value.trim())
     .filter(Boolean);
+  // Score weight per kategori — fallback 1 (neutral) kalau select tak jumpa.
+  const scoreWeights={};
+  SCORE_CATS.forEach(c=>{
+    const el=document.getElementById('scWeight_'+c);
+    scoreWeights[c]=el?parseFloat(el.value)||1:1;
+  });
   const gender=document.getElementById('scGender').value;
   const accent=document.getElementById('scAccent').value;
   // Client: kalau dropdown set ke "Lain-lain", guna nama yang ditaip dalam
@@ -1992,6 +2050,7 @@ async function saveScenario(existingId){
     prompt:document.getElementById('scPrompt').value.trim(),
     checklist,
     disclosures,
+    scoreWeights,
     client:clientValue,
     icNumber:document.getElementById('scIc').value.trim(),
     accNumber:document.getElementById('scAccNumber').value.trim(),
@@ -2400,7 +2459,7 @@ async function endCall(){
     <div style="text-align:center;padding:3rem 1rem">
       <div style="font-size:48px;margin-bottom:16px;animation:spin 1.5s linear infinite;display:inline-block">⏳</div>
       <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:8px" id="scoreLoadingMsg">Menganalisis nada & cara penyampaian...</div>
-      <div style="font-size:13px;color:var(--text3)">AI sedang menilai prestasi anda. Boleh sehingga seminit untuk panggilan yang panjang.</div>
+      <div style="font-size:13px;color:var(--text3)">AI is evaluating your performance. May take up to a minute for longer calls.</div>
     </div>
     <style>@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style>
   `;
@@ -2992,6 +3051,20 @@ async function processSpeech(rawText){
 async function evalCall(duration){
   const transcript=callFullTranscript.map(m=>`${m.role==='user'?'Collector':'Debtor'}: ${m.content}`).join('\n');
   const checklist=(scenario&&scenario.checklist)||[];
+  // Score weight per kategori (default semua 1.0 = neutral, sama macam tak ada weight) —
+  // dinormalise supaya jumlah scoreMax 5 kategori tetap 100, walau apa pun weight dipilih.
+  const rawWeights=Object.assign({tone:1,delivery:1,counter:1,action:1,balance:1},(scenario&&scenario.scoreWeights)||{});
+  const weightSum=SCORE_CATS.reduce((a,c)=>a+(Number(rawWeights[c])||1),0)||5;
+  const scoreMax={};let _maxAcc=0;
+  SCORE_CATS.forEach((c,i)=>{
+    if(i<SCORE_CATS.length-1){const m=Math.round((Number(rawWeights[c])||1)/weightSum*100);scoreMax[c]=m;_maxAcc+=m;}
+    else{scoreMax[c]=100-_maxAcc;} // kategori terakhir ambil baki, supaya total TEPAT 100
+  });
+  const weightedCats=SCORE_CATS.filter(c=>Number(rawWeights[c])!==1);
+  const weightNote=weightedCats.length
+    ?'\n\nNOTA PEMBERAT SENARIO INI (pertimbangkan dalam analisis & feedback anda, terutama bahagian "feedback" dan "priorityFocus" — kategori berpemberat tinggi PATUT mendapat perhatian lebih kritikal):\n'
+      +weightedCats.map(c=>`- Aspek ${catLabel(c)} ${Number(rawWeights[c])>1?'lebih kritikal':'kurang kritikal'} untuk senario ini (weight ${rawWeights[c]}×, max ${scoreMax[c]}/100 berbanding baseline 20/100).`).join('\n')
+    :'';
   // 5 kategori scoring sentiasa dinilai — ini standard untuk SEMUA senario
   const fixedCriteria=[
     '- [Tone / Nada] Nada collector sepanjang panggilan — sopan, tenang, profesional, tidak agresif atau defensif',
@@ -3000,11 +3073,14 @@ async function evalCall(duration){
     '- [Tindakan & Pematuhan] Ikut SOP — sahkan identiti, nyatakan tujuan panggilan, dapatkan PTP jelas & spesifik, dokumentasi betul, tidak mengugut',
     '- [Strategi Baki Hutang] Pendekatan strategi mengikut tahap baki hutang ('+( scenario&&scenario.balanceTier==='low'?'RENDAH — dorong bayaran penuh':'TINGGI — tawar ansuran berstruktur')+')'
   ].join('\n');
-  // Extra items spesifik untuk senario ini (kalau ada)
+  // Extra items spesifik untuk senario ini (kalau ada) — item "critical" diberi
+  // amaran eksplisit dalam prompt supaya AI cap markah action kalau item tu miss.
   const extraItems=checklist.length
-    ?'\n\nITEM TAMBAHAN SPESIFIK SENARIO INI:\n'+checklist.map(c=>`- ${c.text}`).join('\n')
+    ?'\n\nITEM TAMBAHAN SPESIFIK SENARIO INI:\n'+checklist.map(c=>c.critical
+        ?`- ⚠️ CRITICAL — ${c.text} (item ini WAJIB dibuat; jika collector GAGAL/TERLEPAS perkara ini, markah aspek action MESTI ≤12/20 walaupun aspek lain baik)`
+        :`- ${c.text}`).join('\n')
     :'';
-  const checklistText=fixedCriteria+extraItems;
+  const checklistText=fixedCriteria+extraItems+weightNote;
   const disclosures=(scenario&&scenario.disclosures)||[];
   const disclosuresText=disclosures.length
     ?disclosures.map(d=>`- ${d}`).join('\n')
@@ -3085,8 +3161,13 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
       if(start===-1||end<=start)throw parseErr;
       r=JSON.parse(raw.slice(start,end+1));
     }
-    const scores=Object.assign({tone:0,delivery:0,counter:0,action:0,balance:0},r.scores||{});
-    const totalScore=typeof r.totalScore==='number'?r.totalScore:Object.values(scores).reduce((a,b)=>a+b,0);
+    const rawScores=Object.assign({tone:0,delivery:0,counter:0,action:0,balance:0},r.scores||{});
+    // Skala markah mentah AI (0-20 setiap kategori) ke max yang sudah dinormalise
+    // ikut scoreWeights senario (scoreMax dikira di atas) — kalau semua weight 1.0,
+    // hasil ni sama persis macam sebelum ni (max 20 tiap kategori, total 100).
+    const scores={};
+    SCORE_CATS.forEach(c=>{scores[c]=Math.round((rawScores[c]/20)*scoreMax[c]);});
+    const totalScore=SCORE_CATS.reduce((a,c)=>a+scores[c],0);
     const missed=Array.isArray(r.missed)?r.missed.slice(0,5):[];
     const priorityFocus=(r.priorityFocus&&r.priorityFocus.category)?{category:r.priorityFocus.category,tip:r.priorityFocus.tip||''}:fallbackPriority(scores,missed);
     // PUNCA BUG "session tak tersimpan": jadual `sessions` ada CHECK constraint
@@ -3101,7 +3182,7 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
       scenarioName:scenario?scenario.title:'',duration,date:new Date().toISOString(),
       customerType:scenario?scenario.customerType||'':'',
       objectionType:scenario?scenario.objectionType||'':'',
-      totalScore,scores,
+      totalScore,scores,scoreMax,
       strengths:Array.isArray(r.strengths)?r.strengths:[],
       scoreReasons:r.scoreReasons||{},
       missed,priorityFocus,

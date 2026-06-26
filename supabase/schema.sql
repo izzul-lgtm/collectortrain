@@ -260,3 +260,19 @@ update scenarios set objection_type='aggressive'  where id='s4';
 alter table sessions add column if not exists customer_type  text not null default '';
 alter table sessions add column if not exists objection_type text not null default '';
 create index if not exists idx_sessions_objection_type on sessions(objection_type);
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Fasa 4 fix: Per-scenario score weight multiplier
+-- ═══════════════════════════════════════════════════════════════════
+-- Manager boleh set weight 0.5×/1×/1.5×/2× per kategori (tone/delivery/
+-- counter/action/balance) untuk scenario tertentu — cth NPL scenario,
+-- "action" patut lebih berat dari "tone". Default semua 1.0 (neutral,
+-- sama macam tak ada weight — backward compatible dengan scenario sedia ada).
+alter table scenarios add column if not exists score_weights jsonb not null
+  default '{"tone":1,"delivery":1,"counter":1,"action":1,"balance":1}'::jsonb;
+
+-- Simpan max point per kategori (selepas weight dinormalise ke jumlah 100)
+-- BERSAMA setiap sesi pada masa ia dinilai — supaya breakdown score session
+-- lama kekal konsisten/tepat walaupun weight scenario diubah lepas tu.
+-- null = sesi lama sebelum fix ni; app.js fallback ke 20/kategori untuk null.
+alter table sessions add column if not exists score_max jsonb;
