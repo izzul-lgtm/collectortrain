@@ -33,19 +33,19 @@ const scenarioApi = {
   async list(){
     const res=await fetch('/api/scenarios',{headers:authHeaders()});
     const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Gagal ambil senario.');
+    if(!res.ok)throw new Error(data.error||'Failed to load scenarios.');
     return data.scenarios||[];
   },
   async save(scenario){
     const res=await fetch('/api/scenarios',{method:'POST',headers:authHeaders(),body:JSON.stringify(scenario)});
     const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Gagal simpan senario.');
+    if(!res.ok)throw new Error(data.error||'Failed to save scenario.');
     return data.scenario;
   },
   async remove(id){
     const res=await fetch('/api/scenarios',{method:'DELETE',headers:authHeaders(),body:JSON.stringify({id})});
     const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Gagal padam senario.');
+    if(!res.ok)throw new Error(data.error||'Failed to delete scenario.');
     return true;
   }
 };
@@ -59,13 +59,13 @@ const sessionApi = {
   async list(){
     const res=await fetch('/api/sessions',{headers:authHeaders()});
     const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Gagal ambil sesi latihan.');
+    if(!res.ok)throw new Error(data.error||'Failed to load training sessions.');
     return data.sessions||[];
   },
   async create(sessionData){
     const res=await fetch('/api/sessions',{method:'POST',headers:authHeaders(),body:JSON.stringify(sessionData)});
     const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Gagal simpan sesi latihan.');
+    if(!res.ok)throw new Error(data.error||'Failed to save training session.');
     return data.session;
   }
 };
@@ -107,7 +107,7 @@ function showPendingBanner(){
     banner.style.cssText='position:fixed;bottom:16px;right:16px;background:#854F0B;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;z-index:9999;display:flex;align-items:center;gap:10px;box-shadow:0 4px 16px rgba(0,0,0,0.3);max-width:320px;';
     document.body.appendChild(banner);
   }
-  banner.innerHTML=`⏳ <span>${pending.length} sesi belum tersimpan — akan cuba semula...</span> <button onclick="retryPendingSessions()" style="background:#fff;color:#854F0B;border:none;border-radius:6px;padding:3px 8px;font-size:12px;cursor:pointer;font-weight:600">Cuba Sekarang</button>`;
+  banner.innerHTML=`⏳ <span>${pending.length} session(s) not yet saved — will retry...</span> <button onclick="retryPendingSessions()" style="background:#fff;color:#854F0B;border:none;border-radius:6px;padding:3px 8px;font-size:12px;cursor:pointer;font-weight:600">Try Now</button>`;
 }
 
 async function retryPendingSessions(){
@@ -130,7 +130,7 @@ async function retryPendingSessions(){
       const banner=document.getElementById('pendingSyncBanner');
       if(banner){
         banner.style.background='#166534';
-        banner.innerHTML='✅ Semua sesi berjaya disimpan!';
+        banner.innerHTML='✅ All sessions saved successfully!';
         setTimeout(()=>banner.remove(),3000);
       }
     }
@@ -150,31 +150,43 @@ const userApi = {
   async list(){
     const res=await fetch('/api/users',{headers:authHeaders()});
     const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Gagal ambil senarai pengguna.');
+    if(!res.ok)throw new Error(data.error||'Failed to load user list.');
     return data.users||[];
   },
   async remove(id){
     const res=await fetch('/api/users',{method:'DELETE',headers:authHeaders(),body:JSON.stringify({id})});
     const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Gagal padam pengguna.');
+    if(!res.ok)throw new Error(data.error||'Failed to delete user.');
     return true;
   },
   async login(id,pass){
     const res=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,pass})});
     const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Gagal log masuk.');
+    if(!res.ok)throw new Error(data.error||'Failed to sign in.');
     return data.user;
   },
   async register(id,name,pass,role){
     const res=await fetch('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,name,pass,role})});
     const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Gagal daftar pengguna.');
+    if(!res.ok)throw new Error(data.error||'Failed to register user.');
     return data.user;
   },
   async session(id){
     const res=await fetch('/api/auth/session?id='+encodeURIComponent(id));
     const data=await res.json();
-    if(!res.ok)return null; // sesi tak sah/ID dah dipadam — biar fallback ke login screen
+    if(!res.ok)return null;
+    return data.user;
+  },
+  async approve(id){
+    const res=await fetch('/api/users',{method:'PATCH',headers:authHeaders(),body:JSON.stringify({id,is_approved:true})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to approve user.');
+    return data.user;
+  },
+  async reject(id){
+    const res=await fetch('/api/users',{method:'PATCH',headers:authHeaders(),body:JSON.stringify({id,is_approved:false})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to reject user.');
     return data.user;
   }
 };
@@ -191,7 +203,7 @@ function findUserById(usersArr,id){return (usersArr||[]).find(u=>u.id===id);}
 function fmtDateTime(d){
   if(!d)return '-';
   const dt=new Date(d);
-  return dt.toLocaleDateString('ms-MY')+' '+dt.toLocaleTimeString('ms-MY',{hour:'2-digit',minute:'2-digit'});
+  return dt.toLocaleDateString('en-MY')+' '+dt.toLocaleTimeString('en-MY',{hour:'2-digit',minute:'2-digit'});
 }
 
 // FIX: kad preview senario (sebelum mula call) dulu tunjuk teks {name}/{amount}/{days}
@@ -210,7 +222,7 @@ function fillScenarioPlaceholders(text,s){
 // ═══════════ KATEGORI PENILAIAN ═══════════
 const SCORE_CATS = ['tone','delivery','counter','action','balance'];
 function catLabel(cat){
-  return {tone:'Tone / Nada',delivery:'Cara Penyampaian',counter:'Hujah Balas (Counter)',action:'Tindakan & Pematuhan',balance:'Strategi Baki Hutang'}[cat]||cat;
+  return {tone:'Tone',delivery:'Delivery',counter:'Counter Argument',action:'Action & Compliance',balance:'Balance Strategy'}[cat]||cat;
 }
 function catIcon(cat){
   return {tone:'🗣',delivery:'📣',counter:'🛡',action:'✅',balance:'⚖️'}[cat]||'•';
@@ -224,7 +236,7 @@ function scoreRows(s){
 }
 function harassmentBadge(risk){
   if(!risk||risk==='none')return '';
-  const map={low:{label:'Risiko Rendah',cls:'chip-amber'},medium:{label:'Risiko Sederhana',cls:'chip-amber'},high:{label:'Risiko Tinggi',cls:'chip-red'}};
+  const map={low:{label:'Low Risk',cls:'chip-amber'},medium:{label:'Medium Risk',cls:'chip-amber'},high:{label:'High Risk',cls:'chip-red'}};
   const m=map[risk]||{label:risk,cls:'chip-red'};
   return `<span class="chip ${m.cls}" style="margin-left:6px">⚠ Harassment: ${m.label}</span>`;
 }
@@ -245,13 +257,13 @@ function fallbackPriority(scores,missed){
   if(!entries.length)return null;
   const lowestCat=entries.sort((a,b)=>a[1]-b[1])[0][0];
   const match=(missed||[]).find(m=>m.category===lowestCat);
-  return {category:lowestCat,tip:match?match.suggestion:('Fokus perbaiki aspek '+catLabel(lowestCat)+' dalam latihan akan datang.')};
+  return {category:lowestCat,tip:match?match.suggestion:('Focus on improving the '+catLabel(lowestCat)+' aspect in future training.')};
 }
 
 // ═══════════ STATE ═══════════
 let currentUser=null, currentPage='';
 
-// Filter state untuk page "Sesi Latihan" (manager/admin) & "Rekod Saya" (collector).
+// Filter state untuk page "Training Sessions" (manager/admin) & "My Records" (collector).
 // Disimpan di sini (bukan dalam form je) supaya filter tak hilang bila page
 // di-render semula (contoh: lepas tutup modal "Lihat" sesi).
 let sessionsFilter={collectorId:'',scenario:'',skor:'',dateFrom:'',dateTo:''};
@@ -260,8 +272,8 @@ let myHistoryFilter={scenario:'',skor:'',dateFrom:'',dateTo:''};
 // PAGINATION — senarai sesi boleh sampai 100+ rekod, elak list semua sekali
 // (lambat & sukar nak scroll). Papar ikut "muka surat" dengan butang Sebelum/Next.
 const SESSIONS_PAGE_SIZE=20;
-let sessionsPage=1;     // muka surat semasa — "Sesi Latihan" (admin/manager)
-let myHistoryPage=1;    // muka surat semasa — "Rekod Saya" (collector)
+let sessionsPage=1;     // muka surat semasa — "Training Sessions" (admin/manager)
+let myHistoryPage=1;    // muka surat semasa — "My Records" (collector)
 
 // Render bar "Muka X dari Y" + butang Sebelum/Next. `onPageChange` ialah nama
 // fungsi JS (string) yang dipanggil bila tukar muka surat, cth "goSessionsPage".
@@ -325,7 +337,7 @@ function filterSessionsByRange(sessions,range){
   return sessions.filter(s=>{const d=new Date(s.date);return d>=range.start&&d<range.end;});
 }
 function periodLabel(period){
-  return{day:'Hari Ini',month:'Bulan Ini',year:'Tahun Ini'}[period]||'Keseluruhan';
+  return{day:'Today',month:'This Month',year:'This Year'}[period]||'All Time';
 }
 function setDashboardPeriod(p){dashboardPeriod=p;renderDashboard();}
 
@@ -371,9 +383,9 @@ function showAlert(id,msg,type){const el=document.getElementById(id);el.classNam
 async function doLogin(){
   const id=document.getElementById('loginId').value.trim().toUpperCase();
   const pass=document.getElementById('loginPass').value;
-  if(!id||!pass){showAlert('loginAlert','Sila isi semua maklumat.','err');return;}
+  if(!id||!pass){showAlert('loginAlert','Please fill in all fields.','err');return;}
   const btn=document.querySelector('#loginForm .btn-primary');
-  if(btn){btn.disabled=true;btn.textContent='Log masuk...';}
+  if(btn){btn.disabled=true;btn.textContent='Signing in...';}
   try{
     const user=await userApi.login(id,pass);
     currentUser=user;
@@ -386,7 +398,7 @@ async function doLogin(){
   }catch(e){
     showAlert('loginAlert',e.message,'err');
   }finally{
-    if(btn){btn.disabled=false;btn.textContent='Log Masuk';}
+    if(btn){btn.disabled=false;btn.textContent='Sign In';}
   }
 }
 
@@ -396,19 +408,19 @@ async function doRegister(){
   const pass=document.getElementById('regPass').value;
   const pass2=document.getElementById('regPass2').value;
   const role=document.getElementById('regRole').value;
-  if(!name||!id||!pass){showAlert('regAlert','Sila isi semua maklumat.','err');return;}
-  if(pass.length<6){showAlert('regAlert','Kata laluan min 6 aksara.','err');return;}
-  if(pass!==pass2){showAlert('regAlert','Kata laluan tidak sepadan.','err');return;}
+  if(!name||!id||!pass){showAlert('regAlert','Please fill in all required fields.','err');return;}
+  if(pass.length<6){showAlert('regAlert','Password must be at least 6 characters.','err');return;}
+  if(pass!==pass2){showAlert('regAlert','Passwords do not match.','err');return;}
   const btn=document.querySelector('#registerForm .btn-primary');
-  if(btn){btn.disabled=true;btn.textContent='Mendaftar...';}
+  if(btn){btn.disabled=true;btn.textContent='Registering...';}
   try{
     await userApi.register(id,name,pass,role);
-    showAlert('regAlert','Berjaya didaftar! Sila log masuk.','ok');
+    showAlert('regAlert','Registration successful! Your account is pending approval. Contact your manager or admin to get access.','ok');
     setTimeout(()=>{switchAuthTab('login');document.getElementById('loginId').value=id;},1500);
   }catch(e){
     showAlert('regAlert',e.message,'err');
   }finally{
-    if(btn){btn.disabled=false;btn.textContent='Daftar Akaun';}
+    if(btn){btn.disabled=false;btn.textContent='Register Account';}
   }
 }
 
@@ -443,15 +455,15 @@ function buildNav(){
   // Peranan diorang: pantau prestasi, urus senario, review sesi collector.
   const adminItems=[
     {page:'dashboard',icon:'📈',label:'Dashboard'},
-    {page:'collectors',icon:'👥',label:'Semua Collector'},
-    {page:'sessions',icon:'📋',label:'Sesi Latihan'},
-    {page:'scenarios',icon:'🎭',label:'Urus Senario'},
-    {page:'users',icon:'👤',label:'Urus Pengguna'},
+    {page:'collectors',icon:'👥',label:'All Collectors'},
+    {page:'sessions',icon:'📋',label:'Training Sessions'},
+    {page:'scenarios',icon:'🎭',label:'Manage Scenarios'},
+    {page:'users',icon:'👤',label:'Manage Users'},
   ];
   const items={
     collector:[
-      {page:'training',icon:'🎯',label:'Latihan Suara'},
-      {page:'my-history',icon:'📊',label:'Rekod Saya'},
+      {page:'training',icon:'🎯',label:'Voice Training'},
+      {page:'my-history',icon:'📊',label:'My Records'},
     ],
     // Manager: akses penuh sama macam admin ("manager support can access all")
     manager:adminItems,
@@ -573,10 +585,10 @@ async function renderDashboard(){
   const weekDiff=(thisWeekAvg!==null&&lastWeekAvg!==null)?thisWeekAvg-lastWeekAvg:null;
 
   setContent(`
-  <div class="page-header"><div class="page-title">Dashboard</div><div class="page-sub">Overview prestasi collector</div></div>
+  <div class="page-header"><div class="page-title">Dashboard</div><div class="page-sub">Collector performance overview</div></div>
 
   <div class="card" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px">
-    <span style="font-size:12px;color:var(--text3);margin-right:4px">Tempoh Prestasi:</span>
+    <span style="font-size:12px;color:var(--text3);margin-right:4px">Performance Period:</span>
     ${periodBtn('day','Hari Ini')}
     ${periodBtn('month','Bulan Ini')}
     ${periodBtn('year','Tahun Ini')}
@@ -584,11 +596,11 @@ async function renderDashboard(){
   </div>
 
   <div class="stats-grid">
-    <div class="stat-card"><div class="stat-label">Jumlah Sesi</div><div class="stat-val">${periodSessions.length}</div><div class="stat-sub">${periodLabel(dashboardPeriod)}</div></div>
-    <div class="stat-card"><div class="stat-label">Purata Markah</div><div class="stat-val">${periodAvg}</div><div class="stat-sub">${periodDiff!==null?`<span style="color:${periodDiff>=0?'var(--green)':'var(--red)'}">${periodDiff>=0?'▲ +':'▼ '}${periodDiff} vs tempoh lepas</span>`:'/ 100'}</div></div>
-    <div class="stat-card"><div class="stat-label">Sesi Hari Ini</div><div class="stat-val">${todaySessions}</div><div class="stat-sub">Latihan hari ini</div></div>
-    <div class="stat-card"><div class="stat-label">Markah Minggu Ini</div><div class="stat-val">${thisWeekAvg!==null?thisWeekAvg:'—'}</div><div class="stat-sub">${weekDiff!==null?`<span style="color:${weekDiff>=0?'var(--green)':'var(--red)'}">${weekDiff>=0?'▲ +':'▼ '}${weekDiff} vs minggu lepas</span>`:`${thisWeekSessions.length} sesi minggu ini`}</div></div>
-    <div class="stat-card"><div class="stat-label">Isu Pematuhan</div><div class="stat-val" style="color:${periodFlagged.length?'var(--red)':'inherit'}">${periodFlagged.length}</div><div class="stat-sub">Sesi berisiko · ${periodLabel(dashboardPeriod)}</div></div>
+    <div class="stat-card"><div class="stat-label">Total Sessions</div><div class="stat-val">${periodSessions.length}</div><div class="stat-sub">${periodLabel(dashboardPeriod)}</div></div>
+    <div class="stat-card"><div class="stat-label">Average Score</div><div class="stat-val">${periodAvg}</div><div class="stat-sub">${periodDiff!==null?`<span style="color:${periodDiff>=0?'var(--green)':'var(--red)'}">${periodDiff>=0?'▲ +':'▼ '}${periodDiff} vs tempoh lepas</span>`:'/ 100'}</div></div>
+    <div class="stat-card"><div class="stat-label">Session Hari Ini</div><div class="stat-val">${todaySessions}</div><div class="stat-sub">Latihan hari ini</div></div>
+    <div class="stat-card"><div class="stat-label">Score Minggu Ini</div><div class="stat-val">${thisWeekAvg!==null?thisWeekAvg:'—'}</div><div class="stat-sub">${weekDiff!==null?`<span style="color:${weekDiff>=0?'var(--green)':'var(--red)'}">${weekDiff>=0?'▲ +':'▼ '}${weekDiff} vs minggu lepas</span>`:`${thisWeekSessions.length} sesi minggu ini`}</div></div>
+    <div class="stat-card"><div class="stat-label">Compliance Issues</div><div class="stat-val" style="color:${periodFlagged.length?'var(--red)':'inherit'}">${periodFlagged.length}</div><div class="stat-sub">Session berisiko · ${periodLabel(dashboardPeriod)}</div></div>
   </div>
 
   <div class="card">
@@ -597,12 +609,12 @@ async function renderDashboard(){
       <div style="font-size:11px;color:var(--text3)">Purata markah · Isnin–Ahad</div>
     </div>
     <div style="display:grid;grid-template-columns:160px 1fr;gap:12px;align-items:center;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-      <div style="font-size:11px;color:var(--text3)">Nama · Trend</div>
+      <div style="font-size:11px;color:var(--text3)">Name · Trend</div>
       <div style="display:flex;gap:6px">
         ${WEEKS.map((w,i)=>`<div style="flex:1;text-align:center;font-size:11px;font-weight:600;color:${i===3?'var(--purple)':'var(--text3)'}">${w.label}${i===3?' ★':''}</div>`).join('')}
       </div>
     </div>
-    ${collectors.length===0?`<div class="empty-state"><div class="es-icon">👥</div><p>Belum ada collector berdaftar.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Daftar akaun collector dari menu <strong>Urus Pengguna</strong>.</p></div>`:''}
+    ${collectors.length===0?`<div class="empty-state"><div class="es-icon">👥</div><p>Belum ada collector berdaftar.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Daftar akaun collector dari menu <strong>Manage Users</strong>.</p></div>`:''}
     ${collectors.map(c=>{
       const wData=weeklyData(c.id);
       const arrow=trendArrow(wData);
@@ -655,8 +667,8 @@ async function renderDashboard(){
       }).join('')}
     </div>
     <div class="card">
-      <div class="card-title">Sesi Terbaru</div>
-      ${recentSessions.length===0?`<div class="empty-state"><div class="es-icon">📋</div><p>Tiada sesi latihan lagi.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Collector boleh mulakan latihan dari menu <strong>Latihan Suara</strong>.</p></div>`:''}
+      <div class="card-title">Session Terbaru</div>
+      ${recentSessions.length===0?`<div class="empty-state"><div class="es-icon">📋</div><p>Tiada sesi latihan lagi.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Collector boleh mulakan latihan dari menu <strong>Voice Training</strong>.</p></div>`:''}
       ${recentSessions.map(s=>{
         const u=findUserById(users,s.collectorId);
         return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
@@ -676,7 +688,7 @@ async function renderDashboard(){
         return`<div style="margin-bottom:12px">
           <div style="display:flex;justify-content:space-between;margin-bottom:4px">
             <span style="font-size:13px">${catIcon(cat)} ${catLabel(cat)}</span>
-            <span style="font-size:12px;color:var(--text3)">${count}x dikesan</span>
+            <span style="font-size:12px;color:var(--text3)">${count}x detected</span>
           </div>
           <div style="background:var(--bg);border-radius:3px;height:6px;overflow:hidden">
             <div style="height:100%;width:${pct}%;background:var(--amber);border-radius:3px"></div>
@@ -885,13 +897,13 @@ function renderCallScreen(){
           </div>
           <div class="call-timer" id="callTimer">00:00</div>
         </div>
-        <div class="status-bar"><div class="status-dot green" id="statusDot"></div><span id="statusText">Sesi aktif</span>${!TTS_ENABLED?'<span style="margin-left:auto;font-size:11px;font-weight:600;color:#e65100;background:#fff3e0;border:1px solid #ffb74d;border-radius:20px;padding:2px 8px">🔇 Mod Senyap</span>':''}</div>
+        <div class="status-bar"><div class="status-dot green" id="statusDot"></div><span id="statusText">Session aktif</span>${!TTS_ENABLED?'<span style="margin-left:auto;font-size:11px;font-weight:600;color:#e65100;background:#fff3e0;border:1px solid #ffb74d;border-radius:20px;padding:2px 8px">🔇 Mod Senyap</span>':''}</div>
         <div class="transcript" id="transcriptBox"></div>
         <div class="mic-area">
           <div class="live-text" id="liveText"></div>
           <button class="mic-btn" id="micBtn" onclick="toggleMic()"><span id="micIcon">🎙</span></button>
           <div class="mic-level-track"><div class="mic-level-fill" id="micLevelFill"></div></div>
-          <div class="mic-label" id="micLabel">Tekan untuk bercakap</div>
+          <div class="mic-label" id="micLabel">Press to speak</div>
         </div>
       </div>
       <button class="btn btn-danger btn-full" onclick="endCall()">📵 Tamatkan Panggilan</button>
@@ -899,14 +911,14 @@ function renderCallScreen(){
     <div class="acc-ref-card">
       <div class="acc-ref-title">📒 Maklumat Akaun (rujukan nego)</div>
       ${acc('Client',scenario.client)}
-      ${acc('Nama',scenario.name)}
-      ${acc('No. IC',scenario.icNumber)}
+      ${acc('Name',scenario.name)}
+      ${acc('IC No.',scenario.icNumber)}
       ${acc('Acc Number',scenario.accNumber)}
       ${acc('Service No.',scenario.serviceNo)}
       ${acc('Amount Outstanding',scenario.amount)}
       ${acc('Acc Type',scenario.accType)}
-      ${acc('Tarikh Daftar',scenario.registrationDate?new Date(scenario.registrationDate).toLocaleDateString('ms-MY'):'')}
-      ${acc('Tarikh Termination',scenario.terminationDate?new Date(scenario.terminationDate).toLocaleDateString('ms-MY'):'')}
+      ${acc('Registration Date',scenario.registrationDate?new Date(scenario.registrationDate).toLocaleDateString('en-MY'):'')}
+      ${acc('Termination Date',scenario.terminationDate?new Date(scenario.terminationDate).toLocaleDateString('en-MY'):'')}
     </div>
   </div>`);
 }
@@ -916,12 +928,12 @@ function renderScoreScreen(){
   const s=window._lastScore;
   setContent(`
   <div style="max-width:640px;margin:0 auto">
-    <div class="page-header"><div class="page-title">Keputusan Latihan</div><div class="page-sub">${s.scenarioName} · ${s.duration}</div></div>
+    <div class="page-header"><div class="page-title">Training Results</div><div class="page-sub">${s.scenarioName} · ${s.duration}</div></div>
     <div class="card">
       <div class="score-hero">
         <div class="score-circle"><div class="score-big">${s.totalScore}</div><div class="score-of">/ 100</div></div>
         <div style="font-size:16px;font-weight:600;color:${s.totalScore>=70?'var(--green)':s.totalScore>=50?'var(--amber)':'var(--red)'}">
-          ${s.totalScore>=70?'Cemerlang! 🏆':s.totalScore>=50?'Baik! Teruskan 💪':'Perlu Latihan Lagi 📚'}
+          ${s.totalScore>=70?'Excellent! 🏆':s.totalScore>=50?'Good! Keep it up 💪':'Needs More Practice 📚'}
         </div>
         ${harassmentBadge(s.harassmentRisk)}
       </div>
@@ -969,7 +981,7 @@ function renderScoreScreen(){
     <div class="card">
       <div class="card-title">📝 Transcript Perbualan</div>
       <div style="max-height:300px;overflow-y:auto">
-        ${(s.transcript||[]).map(m=>`<div style="margin-bottom:10px"><div style="font-size:11px;color:var(--text3);margin-bottom:2px">${m.role==='user'?currentUser.name:scenario?scenario.name:'Penghutang'}</div>
+        ${(s.transcript||[]).map(m=>`<div style="margin-bottom:10px"><div style="font-size:11px;color:var(--text3);margin-bottom:2px">${m.role==='user'?currentUser.name:scenario?scenario.name:'Debtor'}</div>
         <div style="padding:8px 12px;border-radius:8px;font-size:13px;background:${m.role==='user'?'var(--purple-light)':'var(--bg)'};color:${m.role==='user'?'var(--purple)':'var(--text)'}">${m.content}</div></div>`).join('')}
       </div>
     </div>
@@ -984,15 +996,15 @@ function renderScoreScreen(){
 function copyScoreSummary(){
   const s=window._lastScore;
   if(!s)return;
-  const catLabels={tone:'Tone / Nada',delivery:'Cara Penyampaian',counter:'Hujah Balas',action:'Tindakan & Pematuhan',balance:'Strategi Baki Hutang'};
+  const catLabels={tone:'Tone',delivery:'Delivery',counter:'Counter Argument',action:'Action & Compliance',balance:'Balance Strategy'};
   const scoreLines=Object.entries(s.scores||{}).map(([k,v])=>`  ${catLabels[k]||k}: ${v}/20`).join('\n');
   const strengthLines=(s.strengths||[]).map(t=>`  ✅ ${t}`).join('\n');
   const missedLines=(s.missed||[]).map(m=>`  ⚠ ${m.issue||''} → ${m.suggestion||''}`).join('\n');
   const harassment=s.harassmentRisk&&s.harassmentRisk!=='none'?`\n⚠ Isu Pematuhan (${s.harassmentRisk}): ${s.harassmentNote||''}\n`:'';
   const text=[
     `📊 Keputusan Latihan CollectorTrain`,
-    `Senario: ${s.scenarioName||'-'} · Masa: ${s.duration||'-'}`,
-    `Markah Keseluruhan: ${s.totalScore}/100`,
+    `Scenario: ${s.scenarioName||'-'} · Masa: ${s.duration||'-'}`,
+    `Score Keseluruhan: ${s.totalScore}/100`,
     ``,
     `Pecahan Markah:`,
     scoreLines,
@@ -1006,8 +1018,8 @@ function copyScoreSummary(){
   ].filter(Boolean).join('\n');
   navigator.clipboard.writeText(text).then(()=>{
     const btn=Array.from(document.querySelectorAll('button')).find(b=>b.textContent.includes('Salin Ringkasan'));
-    if(btn){const orig=btn.textContent;btn.textContent='✅ Disalin!';setTimeout(()=>{btn.textContent=orig;},2000);}
-  }).catch(()=>alert('Gagal salin — sila highlight teks dan salin manual.'));
+    if(btn){const orig=btn.textContent;btn.textContent='✅ Copied!';setTimeout(()=>{btn.textContent=orig;},2000);}
+  }).catch(()=>alert('Copy failed — please highlight text and copy manually.'));
 }
 
 async function renderMyHistory(){
@@ -1026,29 +1038,29 @@ async function renderMyHistory(){
   const filterBar=`
   <div class="card filter-bar">
     <select id="filtMyScenario" onchange="myHistoryFilter.scenario=this.value;myHistoryPage=1;renderMyHistory();">
-      <option value="">Semua Senario</option>
+      <option value="">All Scenarios</option>
       ${scenarioNames.map(n=>`<option value="${n}" ${myHistoryFilter.scenario===n?'selected':''}>${n}</option>`).join('')}
     </select>
     <select id="filtMySkor" onchange="myHistoryFilter.skor=this.value;myHistoryPage=1;renderMyHistory();">
-      <option value="">Semua Markah</option>
-      <option value="high" ${myHistoryFilter.skor==='high'?'selected':''}>Tinggi (≥70)</option>
-      <option value="mid" ${myHistoryFilter.skor==='mid'?'selected':''}>Sederhana (50-69)</option>
-      <option value="low" ${myHistoryFilter.skor==='low'?'selected':''}>Rendah (&lt;50)</option>
+      <option value="">All Scores</option>
+      <option value="high" ${myHistoryFilter.skor==='high'?'selected':''}>High (≥70)</option>
+      <option value="mid" ${myHistoryFilter.skor==='mid'?'selected':''}>Medium (50-69)</option>
+      <option value="low" ${myHistoryFilter.skor==='low'?'selected':''}>Low (&lt;50)</option>
     </select>
-    <input type="date" id="filtMyFrom" value="${myHistoryFilter.dateFrom}" onchange="myHistoryFilter.dateFrom=this.value;myHistoryPage=1;renderMyHistory();" title="Dari tarikh"/>
-    <input type="date" id="filtMyTo" value="${myHistoryFilter.dateTo}" onchange="myHistoryFilter.dateTo=this.value;myHistoryPage=1;renderMyHistory();" title="Hingga tarikh"/>
+    <input type="date" id="filtMyFrom" value="${myHistoryFilter.dateFrom}" onchange="myHistoryFilter.dateFrom=this.value;myHistoryPage=1;renderMyHistory();" title="From date"/>
+    <input type="date" id="filtMyTo" value="${myHistoryFilter.dateTo}" onchange="myHistoryFilter.dateTo=this.value;myHistoryPage=1;renderMyHistory();" title="To date"/>
     <button class="btn btn-secondary" onclick="myHistoryFilter={scenario:'',skor:'',dateFrom:'',dateTo:''};myHistoryPage=1;renderMyHistory();">Reset</button>
   </div>`;
   setContent(`
-  <div class="page-header"><div class="page-title">Rekod Latihan Saya</div><div class="page-sub">${sessions.length} dari ${mine.length} sesi latihan</div></div>
+  <div class="page-header"><div class="page-title">My Training Records</div><div class="page-sub">${sessions.length} of ${mine.length} training sessions</div></div>
   ${mine.length>0?filterBar:''}
-  ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📊</div><p>${mine.length===0?'Belum ada sesi latihan. Mulakan latihan pertama anda!':'Tiada sesi sepadan dengan filter.'}</p></div></div>`:''}
+  ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📊</div><p>${mine.length===0?'No training sessions yet. Start your first session!':'No sessions match the filter.'}</p></div></div>`:''}
   ${sessions.length>0?`
   <div class="stats-grid">
-    <div class="stat-card"><div class="stat-label">Jumlah Sesi</div><div class="stat-val">${sessions.length}</div></div>
-    <div class="stat-card"><div class="stat-label">Purata Markah</div><div class="stat-val">${Math.round(sessions.reduce((a,s)=>a+s.totalScore,0)/sessions.length)}</div><div class="stat-sub">/ 100</div></div>
-    <div class="stat-card"><div class="stat-label">Markah Tertinggi</div><div class="stat-val">${Math.max(...sessions.map(s=>s.totalScore))}</div></div>
-    <div class="stat-card"><div class="stat-label">Sesi Terbaru</div><div class="stat-val">${sessions[0].totalScore}</div><div class="stat-sub">mata</div></div>
+    <div class="stat-card"><div class="stat-label">Total Sessions</div><div class="stat-val">${sessions.length}</div></div>
+    <div class="stat-card"><div class="stat-label">Average Score</div><div class="stat-val">${Math.round(sessions.reduce((a,s)=>a+s.totalScore,0)/sessions.length)}</div><div class="stat-sub">/ 100</div></div>
+    <div class="stat-card"><div class="stat-label">Score Tertinggi</div><div class="stat-val">${Math.max(...sessions.map(s=>s.totalScore))}</div></div>
+    <div class="stat-card"><div class="stat-label">Session Terbaru</div><div class="stat-val">${sessions[0].totalScore}</div><div class="stat-sub">mata</div></div>
   </div>
   ${latestFocus?`
   <div class="card" style="border-left:4px solid var(--purple)">
@@ -1062,7 +1074,7 @@ async function renderMyHistory(){
     weakness.slice(0,5).map(([cat,count])=>`
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
         <span style="font-size:13px">${catIcon(cat)} ${catLabel(cat)}</span>
-        <span class="chip chip-red">${count}x dikesan</span>
+        <span class="chip chip-red">${count}x detected</span>
       </div>`).join('')}
   </div>
   <div class="card">
@@ -1079,7 +1091,7 @@ async function renderMyHistory(){
   <div class="card">
     <div class="card-title">Semua Sesi</div>
     <div class="table-wrap"><table>
-      <tr><th>#</th><th>Senario</th><th>Masa</th><th>Markah</th><th>Tarikh</th><th></th></tr>
+      <tr><th>#</th><th>Scenario</th><th>Duration</th><th>Score</th><th>Date</th><th></th></tr>
       ${pageSessions.map((s,i)=>`<tr>
         <td>${sessions.length-pageStart-i}</td>
         <td>${s.scenarioName}</td>
@@ -1099,10 +1111,10 @@ async function renderCollectors(){
   const sessions=await loadSessions();
   const collectors=users.filter(u=>u.role==='collector');
   setContent(`
-  <div class="page-header"><div class="page-title">Semua Collector</div><div class="page-sub">${collectors.length} collector berdaftar</div></div>
+  <div class="page-header"><div class="page-title">All Collectors</div><div class="page-sub">${collectors.length} collectors registered</div></div>
   <div class="card">
     <div class="table-wrap"><table>
-      <tr><th>Nama</th><th>ID</th><th>Sesi</th><th>Purata</th><th>Tertinggi</th><th>Aspek Lemah</th><th>Harassment</th><th>Terakhir</th></tr>
+      <tr><th>Name</th><th>ID</th><th>Sessions</th><th>Average</th><th>Highest</th><th>Weak Aspect</th><th>Harassment</th><th>Last Session</th></tr>
       ${collectors.map(c=>{
         const cs=sessions.filter(s=>s.collectorId===c.id);
         const avg=cs.length?Math.round(cs.reduce((a,s)=>a+s.totalScore,0)/cs.length):'-';
@@ -1138,30 +1150,30 @@ async function renderSessions(){
   const pageStart=(sessionsPage-1)*SESSIONS_PAGE_SIZE;
   const pageSessions=sessions.slice(pageStart,pageStart+SESSIONS_PAGE_SIZE);
   setContent(`
-  <div class="page-header"><div class="page-title">Sesi Latihan</div><div class="page-sub">${sessions.length} dari ${allSessions.length} sesi</div></div>
+  <div class="page-header"><div class="page-title">Training Sessions</div><div class="page-sub">${sessions.length} of ${allSessions.length} sessions</div></div>
   <div class="card filter-bar">
     <select id="filtSessionsCollector" onchange="sessionsFilter.collectorId=this.value;sessionsPage=1;renderSessions();">
-      <option value="">Semua Collector</option>
+      <option value="">All Collectors</option>
       ${collectors.map(c=>`<option value="${c.id}" ${sessionsFilter.collectorId===c.id?'selected':''}>${c.name}</option>`).join('')}
     </select>
     <select id="filtSessionsScenario" onchange="sessionsFilter.scenario=this.value;sessionsPage=1;renderSessions();">
-      <option value="">Semua Senario</option>
+      <option value="">All Scenarios</option>
       ${scenarioNames.map(n=>`<option value="${n}" ${sessionsFilter.scenario===n?'selected':''}>${n}</option>`).join('')}
     </select>
     <select id="filtSessionsSkor" onchange="sessionsFilter.skor=this.value;sessionsPage=1;renderSessions();">
-      <option value="">Semua Markah</option>
-      <option value="high" ${sessionsFilter.skor==='high'?'selected':''}>Tinggi (≥70)</option>
-      <option value="mid" ${sessionsFilter.skor==='mid'?'selected':''}>Sederhana (50-69)</option>
-      <option value="low" ${sessionsFilter.skor==='low'?'selected':''}>Rendah (&lt;50)</option>
+      <option value="">All Scores</option>
+      <option value="high" ${sessionsFilter.skor==='high'?'selected':''}>High (≥70)</option>
+      <option value="mid" ${sessionsFilter.skor==='mid'?'selected':''}>Medium (50-69)</option>
+      <option value="low" ${sessionsFilter.skor==='low'?'selected':''}>Low (&lt;50)</option>
     </select>
-    <input type="date" id="filtSessionsFrom" value="${sessionsFilter.dateFrom}" onchange="sessionsFilter.dateFrom=this.value;sessionsPage=1;renderSessions();" title="Dari tarikh"/>
-    <input type="date" id="filtSessionsTo" value="${sessionsFilter.dateTo}" onchange="sessionsFilter.dateTo=this.value;sessionsPage=1;renderSessions();" title="Hingga tarikh"/>
+    <input type="date" id="filtSessionsFrom" value="${sessionsFilter.dateFrom}" onchange="sessionsFilter.dateFrom=this.value;sessionsPage=1;renderSessions();" title="From date"/>
+    <input type="date" id="filtSessionsTo" value="${sessionsFilter.dateTo}" onchange="sessionsFilter.dateTo=this.value;sessionsPage=1;renderSessions();" title="To date"/>
     <button class="btn btn-secondary" onclick="sessionsFilter={collectorId:'',scenario:'',skor:'',dateFrom:'',dateTo:''};sessionsPage=1;renderSessions();">Reset</button>
   </div>
   ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📋</div><p>Tiada sesi latihan sepadan dengan filter.</p></div></div>`:''}
   ${sessions.length>0?`<div class="card">
     <div class="table-wrap"><table>
-      <tr><th>Collector</th><th>Senario</th><th>Masa</th><th>Markah</th><th>Risiko Harassment</th><th>Tarikh</th><th></th></tr>
+      <tr><th>Collector</th><th>Scenario</th><th>Duration</th><th>Score</th><th>Harassment Risk</th><th>Date</th><th></th></tr>
       ${pageSessions.map(s=>{
         const u=findUserById(users,s.collectorId);
         return`<tr>
@@ -1188,13 +1200,13 @@ async function viewSession(id){
   // admin/manager-only, collector akan dapat 403). currentUser dah cukup.
   const u=currentUser.role==='collector'?currentUser:findUserById(await loadUsers(),s.collectorId);
   openModal(`
-  <div class="modal-title">📋 Detail Sesi Latihan</div>
+  <div class="modal-title">📋 Training Session Detail</div>
   <div style="display:flex;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:8px">
     <div><div style="font-size:12px;color:var(--text3)">Collector</div><div style="font-weight:500">${u?u.name:'—'}</div></div>
-    <div><div style="font-size:12px;color:var(--text3)">Senario</div><div style="font-weight:500">${s.scenarioName}</div></div>
+    <div><div style="font-size:12px;color:var(--text3)">Scenario</div><div style="font-weight:500">${s.scenarioName}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Masa</div><div style="font-weight:500">${s.duration}</div></div>
-    <div><div style="font-size:12px;color:var(--text3)">Tarikh & Waktu</div><div style="font-weight:500">${fmtDateTime(s.date)}</div></div>
-    <div><div style="font-size:12px;color:var(--text3)">Markah</div><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}/100</span></div>
+    <div><div style="font-size:12px;color:var(--text3)">Date & Waktu</div><div style="font-weight:500">${fmtDateTime(s.date)}</div></div>
+    <div><div style="font-size:12px;color:var(--text3)">Score</div><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}/100</span></div>
   </div>
   ${s.harassmentRisk&&s.harassmentRisk!=='none'?`<div class="alert alert-err" style="display:block">⚠ <strong>Isu Pematuhan/Harassment (${s.harassmentRisk}):</strong> ${s.harassmentNote||''}</div>`:''}
   <hr class="divider"/>
@@ -1240,7 +1252,7 @@ async function viewSession(id){
   <div style="font-size:13px;font-weight:500;margin-bottom:8px">📝 Transcript Penuh</div>
   <div style="background:var(--bg);border-radius:6px;padding:10px">
     ${(s.transcript||[]).map(m=>`<div style="margin-bottom:10px">
-      <div style="font-size:10px;color:var(--text3);margin-bottom:2px">${m.role==='user'?(u?u.name:'Collector'):'Penghutang'}</div>
+      <div style="font-size:10px;color:var(--text3);margin-bottom:2px">${m.role==='user'?(u?u.name:'Collector'):'Debtor'}</div>
       <div style="padding:6px 10px;border-radius:6px;font-size:12px;line-height:1.6;background:${m.role==='user'?'var(--purple-light)':'var(--surface)'};color:${m.role==='user'?'var(--purple)':'var(--text)'}">
         ${m.content}
       </div></div>`).join('')}
@@ -1250,30 +1262,30 @@ async function viewSession(id){
 
 async function renderScenarios(){
   if(currentUser.role==='collector')return;
-  setContent('<div class="page-header"><div class="page-title">Urus Senario</div></div><div class="card">Memuatkan senario...</div>');
+  setContent('<div class="page-header"><div class="page-title">Manage Scenarios</div></div><div class="card">Memuatkan senario...</div>');
   let scenarios;
   try{
     scenarios=await loadScenarios(true); // force=true: manager perlu data terkini, bukan cache lama
   }catch(e){
-    setContent(`<div class="page-header"><div class="page-title">Urus Senario</div></div><div class="card">⚠ Gagal memuatkan senario: ${e.message}</div>`);
+    setContent(`<div class="page-header"><div class="page-title">Manage Scenarios</div></div><div class="card">⚠ Gagal memuatkan senario: ${e.message}</div>`);
     return;
   }
   setContent(`
   <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start">
-    <div><div class="page-title">Urus Senario</div><div class="page-sub">${scenarios.length} senario tersedia</div></div>
+    <div><div class="page-title">Manage Scenarios</div><div class="page-sub">${scenarios.length} scenarios available</div></div>
     <button class="btn btn-primary" onclick="openAddScenario()">+ Tambah Senario</button>
   </div>
   <div class="card">
     <div class="table-wrap"><table>
-      <tr><th>Emoji</th><th>Nama</th><th>Client</th><th>Tajuk</th><th>Hutang</th><th>Baki</th><th>Aras</th><th>Checklist</th><th>Tindakan</th></tr>
+      <tr><th>Emoji</th><th>Name</th><th>Client</th><th>Title</th><th>Debt</th><th>Balance</th><th>Level</th><th>Checklist</th><th>Actions</th></tr>
       ${scenarios.map(s=>`<tr>
         <td style="font-size:20px">${s.emoji}</td>
         <td><div style="font-weight:500">${s.name}</div></td>
         <td>${s.client?`<span class="chip chip-purple">${s.client}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
         <td>${s.title}</td>
         <td>${s.amount}</td>
-        <td><span class="chip ${s.balanceTier==='high'?'chip-red':'chip-green'}">${s.balanceTier==='high'?'Tinggi':'Rendah'}</span></td>
-        <td><span class="level-badge level-${s.level}">${s.level==='easy'?'Mudah':s.level==='med'?'Sederhana':'Sukar'}</span></td>
+        <td><span class="chip ${s.balanceTier==='high'?'chip-red':'chip-green'}">${s.balanceTier==='high'?'High':'Low'}</span></td>
+        <td><span class="level-badge level-${s.level}">${s.level==='easy'?'Easy':s.level==='med'?'Medium':'Hard'}</span></td>
         <td style="font-size:12px;color:var(--text3)">${(s.checklist||[]).length} item${(s.disclosures||[]).length?` · 📢${(s.disclosures||[]).length}`:''}</td>
         <td><div class="action-row">
           <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="editScenario('${s.id}')">Edit</button>
@@ -1338,7 +1350,7 @@ function startScenarioDraftTimer(){
       const footer=document.querySelector('.modal-footer');
       if(footer)footer.insertBefore(ind,footer.firstChild);
     }
-    ind.textContent='Draft auto-saved '+new Date().toLocaleTimeString('ms-MY',{hour:'2-digit',minute:'2-digit'});
+    ind.textContent='Draft auto-saved '+new Date().toLocaleTimeString('en-MY',{hour:'2-digit',minute:'2-digit'});
   },30000);
 }
 
@@ -1397,7 +1409,7 @@ async function openAddScenario(existingId){
   const KNOWN_CLIENTS=['RedOne','Celcom','Digi'];
   const isCustomClient=!!(s&&s.client&&!KNOWN_CLIENTS.includes(s.client));
   openModal(`
-  <div class="modal-title">${s?'Edit':'Tambah'} Senario</div>
+  <div class="modal-title">${s?'Edit':'Add'} Senario</div>
   <div class="form-row"><label>Emoji Senario</label>
     <div style="display:flex;gap:8px;align-items:center">
       <input id="scEmoji" type="text" value="${s?s.emoji:'😐'}" placeholder="😐" style="max-width:70px;font-size:24px;text-align:center" maxlength="4" />
@@ -1406,34 +1418,34 @@ async function openAddScenario(existingId){
       </div>
     </div>
   </div>
-  <div class="form-row"><label>Nama Penghutang</label><input id="scName" value="${s?s.name:''}" placeholder="Encik Ahmad" /></div>
+  <div class="form-row"><label>Debtor Name</label><input id="scName" value="${s?s.name:''}" placeholder="Ahmad bin Hassan" /></div>
   <div class="two-col">
-    <div class="form-row"><label>Jantina (untuk pilih suara AI yang betul)</label>
-      <select id="scGender"><option value="male" ${!s||s.gender==='male'?'selected':''}>Lelaki</option><option value="female" ${s&&s.gender==='female'?'selected':''}>Perempuan</option></select>
+    <div class="form-row"><label>Gender (for correct AI voice)</label>
+      <select id="scGender"><option value="male" ${!s||s.gender==='male'?'selected':''}>Male</option><option value="female" ${s&&s.gender==='female'?'selected':''}>Female</option></select>
     </div>
-    <div class="form-row"><label>Loghat / Bangsa Suara</label>
+    <div class="form-row"><label>Voice Accent / Language</label>
       <select id="scAccent">
-        <option value="melayu" ${!s||!s.accent||s.accent==='melayu'?'selected':''}>Melayu</option>
-        <option value="cina" ${s&&s.accent==='cina'?'selected':''}>Cina</option>
-        <option value="india" ${s&&s.accent==='india'?'selected':''}>India</option>
+        <option value="melayu" ${!s||!s.accent||s.accent==='melayu'?'selected':''}>Malay</option>
+        <option value="cina" ${s&&s.accent==='cina'?'selected':''}>Chinese</option>
+        <option value="india" ${s&&s.accent==='india'?'selected':''}>Indian</option>
       </select>
     </div>
   </div>
-  <div class="form-row"><label>Tajuk Senario</label><input id="scTitle" value="${s?s.title:''}" placeholder="Penghutang Bekerjasama" /></div>
+  <div class="form-row"><label>Scenario Title</label><input id="scTitle" value="${s?s.title:''}" placeholder="Debtor Bekerjasama" /></div>
   <div class="two-col">
-    <div class="form-row"><label>Jumlah Hutang</label><input id="scAmount" value="${s?s.amount:'RM5,000'}" placeholder="cth: RM1,234.50" pattern="^RM[\d,]+(\.[\d]{1,2})?$" title="Format: RM diikuti nombor sahaja, cth RM1,234.50" /></div>
-    <div class="form-row"><label>Hari Tertunggak</label><input id="scDays" value="${s?s.days:30}" type="number" /></div>
+    <div class="form-row"><label>Outstanding Amount</label><input id="scAmount" value="${s?s.amount:'RM5,000'}" placeholder="e.g. RM1,234.50" pattern="^RM[\d,]+(\.[\d]{1,2})?$" title="Format: RM diikuti nombor sahaja, cth RM1,234.50" /></div>
+    <div class="form-row"><label>Days Overdue</label><input id="scDays" value="${s?s.days:30}" type="number" /></div>
   </div>
   <div class="two-col">
-    <div class="form-row"><label>Aras Kesukaran</label>
-      <select id="scLevel"><option value="easy" ${s&&s.level==='easy'?'selected':''}>Mudah</option><option value="med" ${s&&s.level==='med'?'selected':''}>Sederhana</option><option value="hard" ${s&&s.level==='hard'?'selected':''}>Sukar</option></select>
+    <div class="form-row"><label>Difficulty Level</label>
+      <select id="scLevel"><option value="easy" ${s&&s.level==='easy'?'selected':''}>Easy</option><option value="med" ${s&&s.level==='med'?'selected':''}>Medium</option><option value="hard" ${s&&s.level==='hard'?'selected':''}>Hard</option></select>
     </div>
-    <div class="form-row"><label>Tahap Baki Hutang</label>
+    <div class="form-row"><label>Balance Tier</label>
       <select id="scBalanceTier"><option value="low" ${s&&s.balanceTier==='low'?'selected':''}>Rendah (Low Balance)</option><option value="high" ${!s||s.balanceTier==='high'?'selected':''}>Tinggi (High Balance)</option></select>
     </div>
   </div>
   <hr class="divider"/>
-  <div style="font-size:13px;font-weight:600;margin-bottom:10px">📒 Maklumat Akaun Pelanggan <span style="font-weight:400;color:var(--text3)">(wajib diisi — keluar sebagai rujukan collector semasa panggilan)</span></div>
+  <div style="font-size:13px;font-weight:600;margin-bottom:10px">📒 Customer Account Information <span style="font-weight:400;color:var(--text3)">(required — shown as collector reference during call)</span></div>
   <div class="two-col">
     <div class="form-row"><label>Client</label>
       <select id="scClient" onchange="toggleClientOther()">
@@ -1441,7 +1453,7 @@ async function openAddScenario(existingId){
         <option value="RedOne" ${s&&s.client==='RedOne'?'selected':''}>RedOne</option>
         <option value="Celcom" ${s&&s.client==='Celcom'?'selected':''}>Celcom</option>
         <option value="Digi" ${s&&s.client==='Digi'?'selected':''}>Digi</option>
-        <option value="Lain-lain" ${isCustomClient?'selected':''}>Lain-lain</option>
+        <option value="Lain-lain" ${isCustomClient?'selected':''}>Other</option>
       </select>
       <input id="scClientOther" value="${isCustomClient?s.client.replace(/"/g,'&quot;'):''}" placeholder="Taip nama client lain..." style="margin-top:6px;display:${isCustomClient?'block':'none'}" />
     </div>
@@ -1467,20 +1479,20 @@ async function openAddScenario(existingId){
     <div></div>
   </div>
   <div class="two-col">
-    <div class="form-row"><label>Tarikh Daftar</label><input id="scRegDate" type="date" value="${s&&s.registrationDate?s.registrationDate:''}" /></div>
-    <div class="form-row"><label>Tarikh Termination</label><input id="scTermDate" type="date" value="${s&&s.terminationDate?s.terminationDate:''}" /></div>
+    <div class="form-row"><label>Date Daftar</label><input id="scRegDate" type="date" value="${s&&s.registrationDate?s.registrationDate:''}" /></div>
+    <div class="form-row"><label>Date Termination</label><input id="scTermDate" type="date" value="${s&&s.terminationDate?s.terminationDate:''}" /></div>
   </div>
   <hr class="divider"/>
   <hr class="divider"/>
   <div class="form-row">
-    <label>Perangai / Watak Penghutang <span style="font-weight:400;color:var(--text3)">(hanya describe sikap/perangai — nama, jumlah, IC, bahasa & fakta akaun auto-inject oleh sistem)</span></label>
-    <textarea id="scPrompt" rows="3" placeholder="Cth: Penghutang yang defensif dan selalu bagi alasan sibuk. Mudah marah bila ditekan tapi akan akur kalau didekati dengan sabar. Nada cepat tidak sabar.">${s?s.prompt:'Penghutang yang bekerjasama tetapi penuh alasan. Nada neutral, minta masa lebih untuk bayar.'}</textarea>
+    <label>Debtor Character / Personality <span style="font-weight:400;color:var(--text3)">(describe attitude/character only — name, amount, IC, language & account details are auto-injected)</span></label>
+    <textarea id="scPrompt" rows="3" placeholder="E.g. Defensive debtor who always gives excuses about being busy. Mudah marah bila ditekan tapi akan akur kalau didekati dengan sabar. Nada cepat tidak sabar.">${s?s.prompt:'Debtor yang bekerjasama tetapi penuh alasan. Nada neutral, minta masa lebih untuk bayar.'}</textarea>
     <div style="margin-top:6px;padding:8px 10px;background:var(--bg);border-radius:var(--radius-sm);font-size:11px;color:var(--text3);line-height:1.6">
       ℹ️ <b>Auto-inject oleh sistem (tidak perlu tulis dalam prompt):</b> Nama penghutang · Jumlah hutang · Hari tertunggak · Loghat/bangsa · No. IC · Acc Number · Service No. · Acc Type · Fakta akaun
     </div>
   </div>
   <div class="form-row">
-    <label>Checklist Penilaian <span style="font-weight:400;color:var(--text3)">(AI akan nilai & beri markah berdasarkan 5 kategori ini secara automatik)</span></label>
+    <label>Evaluation Checklist <span style="font-weight:400;color:var(--text3)">(AI akan nilai & beri markah berdasarkan 5 kategori ini secara automatik)</span></label>
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
       <span style="padding:4px 10px;border-radius:20px;background:var(--bg);border:1px solid var(--border2);font-size:12px;font-weight:600;color:var(--text2)">🗣 Tone / Nada</span>
       <span style="padding:4px 10px;border-radius:20px;background:var(--bg);border:1px solid var(--border2);font-size:12px;font-weight:600;color:var(--text2)">📢 Cara Penyampaian</span>
@@ -1493,7 +1505,7 @@ async function openAddScenario(existingId){
     <button type="button" class="btn btn-secondary" style="font-size:12px;padding:6px 10px" onclick="addChecklistRow('action','')">+ Tambah Item</button>
   </div>
   <div class="form-row">
-    <label>📢 Pengumuman / Polisi Wajib Dimaklumkan kepada Penghutang <span style="font-weight:400;color:var(--text3)">(maklumat/dasar BARU yang collector WAJIB sebut dalam panggilan ini — cth: "Maklumkan penghutang yang ewallet/paylater akan disekat kerana akaun dimasukkan ke CTOS". Pilihan sahaja — boleh kosongkan jika tiada pengumuman khas untuk senario ini.)</span></label>
+    <label>📢 Pengumuman / Polisi Wajib Dimaklumkan kepada Penghutang <span style="font-weight:400;color:var(--text3)">(new information/policy that the collector MUST mention during this call — cth: "Maklumkan penghutang yang ewallet/paylater akan disekat kerana akaun dimasukkan ke CTOS". Optional — leave empty if no special announcement for this scenario.)</span></label>
     <div id="disclosureRows"></div>
     <button type="button" class="btn btn-secondary" style="margin-top:6px;font-size:12px;padding:6px 10px" onclick="addDisclosureRow('')">+ Tambah Pengumuman</button>
   </div>
@@ -1518,7 +1530,7 @@ async function openAddScenario(existingId){
         // Draft valid kalau ada nama atau prompt yang dah ditaip
         if(draft.name||draft.prompt){
           const age=Math.round((Date.now()-draft._savedAt)/60000);
-          const restore=confirm('Ada draf yang belum disimpan (\u00b1'+age+' minit lepas).\n\nMahu restore draf tersebut?');
+          const restore=confirm('There is an unsaved draft (±'+age+' min ago).\n\nWould you like to restore it?');
           if(restore){
             applyScenarioDraft(draft);
           }else{
@@ -1552,7 +1564,7 @@ function toggleClientOther(){
   const sel=document.getElementById('scClient');
   const other=document.getElementById('scClientOther');
   if(!sel||!other)return;
-  other.style.display=sel.value==='Lain-lain'?'block':'none';
+  other.style.display=sel.value==='Other'?'block':'none';
   if(sel.value!=='Lain-lain')other.value='';
 }
 
@@ -1564,7 +1576,7 @@ function addChecklistRow(cat,text){
   row.style.cssText='display:flex;gap:6px;margin-bottom:6px;align-items:flex-start';
   row.innerHTML=`
     <input class="cl-cat" type="hidden" value="${cat||'action'}" />
-    <input class="cl-text" value="${(text||'').replace(/"/g,'&quot;')}" placeholder="Cth: Pastikan collector sahkan identiti sebelum bagi maklumat akaun..." style="flex:1" />
+    <input class="cl-text" value="${(text||'').replace(/"/g,'&quot;')}" placeholder="E.g. Ensure collector verifies identity sebelum bagi maklumat akaun..." style="flex:1" />
     <button type="button" class="btn btn-danger" style="padding:6px 10px;flex-shrink:0" onclick="this.parentElement.remove()">✕</button>`;
   wrap.appendChild(row);
 }
@@ -1580,7 +1592,7 @@ function addDisclosureRow(text){
   row.className='disclosure-row';
   row.style.cssText='display:flex;gap:6px;margin-bottom:6px;align-items:flex-start';
   row.innerHTML=`
-    <input class="dc-text" value="${(text||'').replace(/"/g,'&quot;')}" placeholder="Cth: Maklumkan penghutang yang ewallet/paylater akan disekat kerana akaun dimasukkan ke CTOS..." style="flex:1" />
+    <input class="dc-text" value="${(text||'').replace(/"/g,'&quot;')}" placeholder="E.g. Inform debtor that ewallet/paylater akan disekat kerana akaun dimasukkan ke CTOS..." style="flex:1" />
     <button type="button" class="btn btn-danger" style="padding:6px 10px;flex-shrink:0" onclick="this.parentElement.remove()">✕</button>`;
   wrap.appendChild(row);
 }
@@ -1622,15 +1634,15 @@ async function saveScenario(existingId){
     registrationDate:document.getElementById('scRegDate').value,
     terminationDate:document.getElementById('scTermDate').value
   };
-  if(!data.name||!data.title||!data.prompt){alert('Sila isi semua maklumat.');return;}
+  if(!data.name||!data.title||!data.prompt){alert('Please fill in all required fields.');return;}
   // WAJIB: Maklumat Akaun Pelanggan kena lengkap dulu sebelum boleh simpan —
   // kalau tak, panel rujukan kat skrin panggilan collector akan separuh kosong.
   if(!data.client||!data.icNumber||!data.accNumber||!data.serviceNo||!data.accType||!data.registrationDate||!data.terminationDate){
-    alert('Sila lengkapkan semua Maklumat Akaun Pelanggan (Client/IC/Acc Number/Service No./Acc Type/Tarikh Daftar/Tarikh Termination) sebelum simpan.');
+    alert('Please complete all Customer Account Information (Client/IC/Acc Number/Service No./Acc Type/Registration Date/Termination Date) before saving.');
     return;
   }
   const btn=document.querySelector('.modal-footer .btn-primary');
-  if(btn){btn.disabled=true;btn.textContent='Menyimpan...';}
+  if(btn){btn.disabled=true;btn.textContent='Saving...';}
   try{
     await scenarioApi.save(data);
     await loadScenarios(true); // refresh cache supaya semua page (training/manager) nampak data terkini
@@ -1638,54 +1650,100 @@ async function saveScenario(existingId){
     closeModal();
     renderScenarios();
   }catch(e){
-    alert('Gagal simpan senario: '+e.message);
-    if(btn){btn.disabled=false;btn.textContent='Simpan';}
+    alert('Failed to save scenario: '+e.message);
+    if(btn){btn.disabled=false;btn.textContent='Save';}
   }
 }
 async function deleteScenario(id){
-  if(!confirm('Padam senario ini?'))return;
+  if(!confirm('Delete this scenario?'))return;
   try{
     await scenarioApi.remove(id);
     await loadScenarios(true);
     renderScenarios();
   }catch(e){
-    alert('Gagal padam senario: '+e.message);
+    alert('Failed to delete scenario: '+e.message);
   }
 }
 
+async function approveUser(id,approve){
+  try{
+    if(approve){
+      await userApi.approve(id);
+    } else {
+      if(!confirm('Reject and revoke access for this user?'))return;
+      await userApi.reject(id);
+    }
+    await loadUsers(true);
+    renderUsers();
+  }catch(e){
+    alert('Failed: '+e.message);
+  }
+}
 async function renderUsers(){
   if(currentUser.role==='collector')return;
-  setContent('<div class="page-header"><div class="page-title">Urus Pengguna</div></div><div class="card">Memuatkan pengguna...</div>');
+  setContent('<div class="page-header"><div class="page-title">Manage Users</div></div><div class="card">Loading users...</div>');
   let all;
   try{
-    all=await loadUsers(true); // force=true: manager perlu data terkini
+    all=await loadUsers(true);
   }catch(e){
-    setContent(`<div class="page-header"><div class="page-title">Urus Pengguna</div></div><div class="card">⚠ Gagal memuatkan pengguna: ${e.message}</div>`);
+    setContent(`<div class="page-header"><div class="page-title">Manage Users</div></div><div class="card">⚠ Failed to load users: ${e.message}</div>`);
     return;
   }
+  const pending=all.filter(u=>!u.isApproved);
+  const approved=all.filter(u=>u.isApproved);
   setContent(`
-  <div class="page-header"><div class="page-title">Urus Pengguna</div><div class="page-sub">${all.length} pengguna berdaftar</div></div>
-  <div class="card">
+  <div class="page-header"><div class="page-title">Manage Users</div><div class="page-sub">${all.length} users · ${pending.length} pending approval</div></div>
+
+  ${pending.length>0?`
+  <div class="card" style="border-left:4px solid var(--amber)">
+    <div class="card-title" style="color:var(--amber)">⏳ Pending Approval (${pending.length})</div>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:12px">These accounts registered but cannot sign in until approved. Review each one below.</p>
     <div class="table-wrap"><table>
-      <tr><th>Nama</th><th>ID</th><th>Role</th><th>Didaftar</th><th>Tindakan</th></tr>
-      ${all.map(u=>`<tr>
+      <tr><th>Name</th><th>ID</th><th>Role</th><th>Registered At</th><th>Actions</th></tr>
+      ${pending.map(u=>`<tr style="background:#fffbea">
+        <td><div style="font-weight:500">${u.name}</div></td>
+        <td><span class="chip chip-amber">${u.id}</span></td>
+        <td><span class="user-role-badge badge-${u.role}">${u.role==='admin'?'Admin':u.role==='manager'?'Manager':'Collector'}</span></td>
+        <td style="font-size:12px;color:var(--text3)">${u.registeredAt?new Date(u.registeredAt).toLocaleDateString('en-MY'):'-'}</td>
+        <td>
+          <div class="action-row">
+            <button class="btn btn-primary" style="padding:4px 12px;font-size:12px;background:#16a34a;border-color:#16a34a" onclick="approveUser('${u.id}',true)">✓ Approve</button>
+            <button class="btn btn-danger" style="padding:4px 10px;font-size:12px" onclick="approveUser('${u.id}',false)">✕ Reject</button>
+          </div>
+        </td>
+      </tr>`).join('')}
+    </table></div>
+  </div>`:''}
+
+  <div class="card">
+    <div class="card-title">✅ Approved Users (${approved.length})</div>
+    <div class="table-wrap"><table>
+      <tr><th>Name</th><th>ID</th><th>Role</th><th>Registered At</th><th>Actions</th></tr>
+      ${approved.map(u=>`<tr>
         <td><div style="font-weight:500">${u.name}</div></td>
         <td><span class="chip chip-purple">${u.id}</span></td>
         <td><span class="user-role-badge badge-${u.role}">${u.role==='admin'?'Admin':u.role==='manager'?'Manager':'Collector'}</span></td>
-        <td style="font-size:12px;color:var(--text3)">${u.registeredAt?new Date(u.registeredAt).toLocaleDateString('ms-MY'):'-'}</td>
-        <td>${u.id!==currentUser.id?`<button class="btn btn-danger" style="padding:4px 10px;font-size:12px" onclick="deleteUser('${u.id}')">Padam</button>`:'-'}</td>
+        <td style="font-size:12px;color:var(--text3)">${u.registeredAt?new Date(u.registeredAt).toLocaleDateString('en-MY'):'-'}</td>
+        <td>
+          <div class="action-row">
+          ${u.id!==currentUser.id?`
+            <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="approveUser('${u.id}',false)">🚫 Revoke</button>
+            <button class="btn btn-danger" style="padding:4px 10px;font-size:12px" onclick="deleteUser('${u.id}')">Delete</button>
+          `:'-'}
+          </div>
+        </td>
       </tr>`).join('')}
     </table></div>
   </div>`);
 }
 async function deleteUser(id){
-  if(!confirm('Padam pengguna ini?'))return;
+  if(!confirm('Delete this user?'))return;
   try{
     await userApi.remove(id);
     await loadUsers(true);
     renderUsers();
   }catch(e){
-    alert('Gagal padam pengguna: '+e.message);
+    alert('Failed to delete user: '+e.message);
   }
 }
 
@@ -1812,7 +1870,7 @@ function getSysPrompt(){
   // Accent-specific language instruction — OVERRIDE apa dalam scenario.prompt
   // supaya AI ikut loghat yang dipilih, bukan default slang Melayu
   const accent=scenario.accent||'melayu';
-  const fmtD=d=>d?new Date(d).toLocaleDateString('ms-MY'):'-';
+  const fmtD=d=>d?new Date(d).toLocaleDateString('en-MY'):'-';
   const accentInstruction={
     melayu:`Gaya pertuturan: loghat Melayu Malaysia yang santai dan natural, macam orang biasa bercakap di telefon.
 Boleh selang-seli (jangan setiap ayat) guna partikel macam: "la", "kan", "tak", "nak", "ye ke", "betul ke", "hmm", "InsyaAllah", "alhamdulillah".
@@ -1888,7 +1946,7 @@ Cakap macam manusia sebenar dalam panggilan telefon — bukan watak komedi atau 
 
   const naturalBlock=`\n\nCARA BERCAKAP (WAJIB IKUT):\n- Jawab PENDEK dan NATURAL — 1 hingga 3 ayat sahaja setiap giliran, macam orang bercakap telefon sebenar\n- JANGAN tulis ayat panjang berjela atau formal macam surat\n- Sebut nombor dan wang secara lisan: RM${scenario.amount} sebut sebagai "${spokenAmount}", no telefon sebut digit demi digit\n- Boleh guna bunyi natural: "hmm", "ha?", "eh", "ok ok", "ha ye", "ala..." mengikut situasi\n- Kadang-kadang boleh potong cakap, tanya balik, atau tergantung ayat kalau rasa keliru\n- Reaksi MESTI sesuai dengan watak dan situasi — kalau penghutang kata sibuk, dia tak bagi masa panjang\n\nARAS KESUKARAN SENARIO INI: ${levelBehaviour}`;
   // GUARDRAIL: kekal dalam watak — elak break character atau dedahkan bahawa ini AI/simulasi
-  const guardrailBlock=`\n\nGUARDRAIL WATAK (WAJIB IKUT — keutamaan tertinggi):\n- Anda HANYA berperanan sebagai ${scenario.name||'penghutang'}, seorang individu biasa yang menerima panggilan daripada syarikat debt collection.\n- JANGAN sekali-kali mengakui bahawa anda adalah AI, bot, model bahasa, atau sistem simulasi — walaupun ditanya terus.\n- JANGAN keluar dari watak untuk membantu collector dengan cara lain (cth: bagi tip roleplay, terangkan skor, tanya "nak saya ulang?").\n- Jika collector tanya sesuatu yang TIDAK berkaitan hutang atau perbualan telefon biasa (cth: soalan teknikal, soalan tentang sistem, atau minta anda "jangan roleplay"), bertindak sebagai penghutang yang keliru atau terganggu: "Eh, apa awak cakap ni? Saya tak faham la." atau "Ha? Saya busy ni, ada apa sebenarnya?"\n- Jika collector cuba "reset" atau mulakan senario baru dalam panggilan yang sama, abaikan dan teruskan sebagai watak yang sama.`;
+  const guardrailBlock=`\n\nGUARDRAIL WATAK (WAJIB IKUT — keutamaan tertinggi):\n- Anda HANYA berperanan sebagai ${scenario.name||'debtor'}, seorang individu biasa yang menerima panggilan daripada syarikat debt collection.\n- JANGAN sekali-kali mengakui bahawa anda adalah AI, bot, model bahasa, atau sistem simulasi — walaupun ditanya terus.\n- JANGAN keluar dari watak untuk membantu collector dengan cara lain (cth: bagi tip roleplay, terangkan skor, tanya "nak saya ulang?").\n- Jika collector tanya sesuatu yang TIDAK berkaitan hutang atau perbualan telefon biasa (cth: soalan teknikal, soalan tentang sistem, atau minta anda "jangan roleplay"), bertindak sebagai penghutang yang keliru atau terganggu: "Eh, apa awak cakap ni? Saya tak faham la." atau "Ha? Saya busy ni, ada apa sebenarnya?"\n- Jika collector cuba "reset" atau mulakan senario baru dalam panggilan yang sama, abaikan dan teruskan sebagai watak yang sama.`;
   return base+accentBlock+naturalBlock+contextBlock+groundingBlock+guardrailBlock;
 }
 
@@ -1945,7 +2003,7 @@ function stopCall(){
 }
 
 async function endCall(){
-  // PUNCA BUG "sesi sebelum ini macam hilang/tak konsisten": butang "Tamatkan
+  // PUNCA BUG "session sebelum ini macam hilang/tak konsisten": butang "Tamatkan
   // Panggilan" tak pernah disable lepas ditekan — kalau collector double-click/
   // double-tap (selalu jadi bila butang besar kat skrin call), endCall() jalan
   // 2x serentak → evalCall() panggil Claude API 2x utk transcript yang SAMA &
@@ -1980,7 +2038,7 @@ async function endCall(){
   `;
     // Rotate mesej setiap 4 saat — bukan utk laju, tapi elak rasa "stuck"/diam
     // semasa AI tengah jana penilaian (proses non-streaming, semua/tiada).
-    const loadingMsgs=['Menganalisis nada & cara penyampaian...','Menyemak hujah balas & rundingan...','Menyemak SOP & pematuhan...','Menilai strategi mengikut baki hutang...','Menyediakan maklum balas akhir...'];
+    const loadingMsgs=['Analysing tone & delivery...','Checking counter arguments & negotiation...','Checking SOP & compliance...','Evaluating balance strategy...','Preparing final feedback...'];
     let loadingMsgIdx=0;
     scoreLoadingInterval=setInterval(()=>{
       loadingMsgIdx=(loadingMsgIdx+1)%loadingMsgs.length;
@@ -1997,7 +2055,7 @@ async function endCall(){
 async function speakEl(text){
   if(!TTS_ENABLED){
     // TTS dimatikan — skip terus ke state sedia terima input
-    if(callActive){setStatus('green','Tekan mikrofon untuk bercakap.');resetMicBtn();}
+    if(callActive){setStatus('green','Press mic to speak.');resetMicBtn();}
     return;
   }
   audioQueue.push(text);if(!isPlayingAudio)playNext();
@@ -2006,8 +2064,8 @@ async function playNext(){
   if(!audioQueue.length){isPlayingAudio=false;if(callActive){setStatus('green','Tekan mikrofon untuk bercakap.');resetMicBtn();}return;}
   isPlayingAudio=true;
   const text=audioQueue.shift();
-  setStatus('purple',scenario.name+' sedang bercakap...');
-  setMicState('speaking','🔊','AI sedang bercakap...');
+  setStatus('purple',scenario.name+' is speaking...');
+  setMicState('speaking','🔊','AI is speaking...');
   try{
     const res=await fetch('/api/tts',{
       method:'POST',
@@ -2020,7 +2078,7 @@ async function playNext(){
     currentAudio.onended=()=>{URL.revokeObjectURL(url);playNext();};
     currentAudio.onerror=()=>playNext();
     await currentAudio.play();
-  }catch(e){addBubble('debtor','[Ralat suara — sila cuba lagi sebentar]');playNext();}
+  }catch(e){addBubble('debtor','[Audio error — please try again shortly]');playNext();}
 }
 
 function setStatus(dot,msg){
@@ -2031,14 +2089,14 @@ function setMicState(cls,icon,label){
   const b=document.getElementById('micBtn');const l=document.getElementById('micLabel');const i=document.getElementById('micIcon');
   if(b)b.className='mic-btn '+cls;if(i)i.textContent=icon;if(l)l.textContent=label;
 }
-function resetMicBtn(){setMicState('','🎙','Tekan untuk bercakap');}
+function resetMicBtn(){setMicState('','🎙','Press to speak');}
 
 function addBubble(role,text){
   const box=document.getElementById('transcriptBox');
   if(!box)return;
   const div=document.createElement('div');
   div.className='msg msg-'+role;
-  const lbl=role==='collector'?currentUser.name:(scenario?scenario.name:'Penghutang');
+  const lbl=role==='collector'?currentUser.name:(scenario?scenario.name:'Debtor');
   div.innerHTML=`<div class="msg-who">${lbl}</div><div class="bubble bubble-${role}">${text}</div>`;
   box.appendChild(div);box.scrollTop=box.scrollHeight;
 }
@@ -2337,7 +2395,7 @@ async function warmupMic() {
     tickMicLevel();
     startAmbientCalibration();
   } catch (e) {
-    console.warn('Mic warm-up gagal:', e.message);
+    console.warn('Mic warm-up failed:', e.message);
   }
 }
 
@@ -2422,7 +2480,7 @@ async function startRec() {
       tickMicLevel();
       startAmbientCalibration();
     } catch (e) {
-      setStatus('', '⚠ Mic tidak dibenarkan. Allow akses mikrofon dalam browser.');
+      setStatus('', '⚠ Mic not allowed. Please enable microphone access in your browser.');
       return;
     }
   }
@@ -2443,7 +2501,7 @@ async function startRec() {
     stopSilenceDetection();
     // Tunjuk "Memproses..." SEGERA sebaik mic stop — collector tau request dah dihantar
     // (jangan tunggu STT response dulu baru update UI — nampak laggy)
-    setMicState('thinking', '⏳', 'Memproses audio...');
+    setMicState('thinking', '⏳', 'Processing audio...');
     setStatus('', 'Memproses...');
 
     const recDurationMs = Date.now() - recordingStartTime;
@@ -2463,7 +2521,7 @@ async function startRec() {
     if (micPeakSinceStart < lastSilenceThreshold * 1.4) {
       console.warn('[STT debug] peak terlalu rendah berbanding ambient — skip hantar ke Deepgram');
       audioChunks = [];
-      setStatus('', '⚠ Tak nampak ada suara dikesan. Cuba cakap lebih dekat/lebih kuat dgn mic.');
+      setStatus('', '⚠ No voice detected. Try speaking closer to or louder into the mic.');
       resetMicBtn();
       return;
     }
@@ -2486,13 +2544,13 @@ async function startRec() {
     }
 
     try {
-      setMicState('thinking', '⏳', 'Mentranskrip...');
+      setMicState('thinking', '⏳', 'Transcribing...');
       let data;
       try {
         data = await callSTT();
       } catch (firstErr) {
         // Cuba sekali lagi — kemungkinan network blip sekejap, bukan ralat tetap
-        setMicState('thinking', '⏳', 'Cuba semula...');
+        setMicState('thinking', '⏳', 'Retrying...');
         data = await callSTT();
       }
 
@@ -2504,7 +2562,7 @@ async function startRec() {
         // Tiada teks — audio ada dihantar (peak check dah lepas), tapi Deepgram balas
         // kosong. Ini BUKAN "tiada suara" — kemungkinan isu format/encoding/upstream.
         // Console log di atas akan tunjuk blob size sebenar untuk debug lanjut.
-        setStatus('', '⚠ Tak dapat transkrip ayat tu — cuba cakap lagi sekali.');
+        setStatus('', '⚠ Could not transcribe — please try speaking again.');
         resetMicBtn();
         return;
       }
@@ -2516,7 +2574,7 @@ async function startRec() {
       await processSpeech(transcript);
     } catch (e) {
       console.error('STT error:', e);
-      setStatus('', '⚠ Gagal transkrip: ' + e.message);
+      setStatus('', '⚠ Transcription failed: ' + e.message);
       resetMicBtn();
     }
   };
@@ -2525,8 +2583,8 @@ async function startRec() {
   isRecording = true;
   micPeakSinceStart = 0;
   recordingStartTime = Date.now();
-  setMicState('recording', '🎙', 'Sedang rakam... (lepas untuk hantar)');
-  setStatus('red', 'Anda sedang bercakap...');
+  setMicState('recording', '🎙', 'Recording... (release to send)');
+  setStatus('red', 'You are speaking...');
   startSilenceDetection();
 }
 
@@ -2542,7 +2600,7 @@ async function processSpeech(rawText){
   const withNums=convertBMNumbers(rawText);
   const text=correctSTT(withNums); // betulkan STT errors selepas convert nombor
   const lt=document.getElementById('liveText');if(lt)lt.textContent='';
-  setMicState('thinking','⏳','AI sedang berfikir...');setStatus('','AI sedang berfikir...');
+  setMicState('thinking','⏳','AI is thinking...');setStatus('','AI is thinking...');
   // Push ke full transcript (untuk eval) DAN callHistory (untuk API)
   addBubble('collector',text);
   callFullTranscript.push({role:'user',content:text});
@@ -2560,11 +2618,11 @@ async function processSpeech(rawText){
     callFullTranscript.push({role:'assistant',content:reply});
     callHistory.push({role:'assistant',content:reply});addBubble('debtor',reply);
     speakEl(reply);
-  }catch(e){addBubble('debtor','[Ralat AI. Cuba lagi.]');resetMicBtn();setStatus('green','Tekan mikrofon untuk bercakap.');}
+  }catch(e){addBubble('debtor','[AI error. Please try again.]');resetMicBtn();setStatus('green','Tekan mikrofon untuk bercakap.');}
 }
 
 async function evalCall(duration){
-  const transcript=callFullTranscript.map(m=>`${m.role==='user'?'Collector':'Penghutang'}: ${m.content}`).join('\n');
+  const transcript=callFullTranscript.map(m=>`${m.role==='user'?'Collector':'Debtor'}: ${m.content}`).join('\n');
   const checklist=(scenario&&scenario.checklist)||[];
   // 5 kategori scoring sentiasa dinilai — ini standard untuk SEMUA senario
   const fixedCriteria=[
@@ -2587,7 +2645,7 @@ async function evalCall(duration){
   const tierHint=scenario&&scenario.balanceTier==='low'
     ?'Strategi sesuai: dorong bayaran PENUH sekaligus dahulu sebelum tawar ansuran.'
     :'Strategi sesuai: tawar pelan ansuran/penjadualan semula berstruktur, bukan desak bayaran sekaligus.';
-  const fmtD=d=>d?new Date(d).toLocaleDateString('ms-MY'):'-';
+  const fmtD=d=>d?new Date(d).toLocaleDateString('en-MY'):'-';
 
   // Hadkan transcript kepada 8000 aksara untuk elak context overflow pada panggilan sangat panjang
   // Potong dari depan (bahagian awal kurang kritikal untuk QA) — kekal bahagian akhir panggilan
@@ -2616,7 +2674,7 @@ Masa Panggilan: ${duration}
 
 PENTING: Jika transcript amat pendek (kurang 5 giliran perbualan), tetap beri markah ADIL berdasarkan apa yang ADA — jangan bagi 2/20 secara default. Walaupun singkat, analisis nada, cara sebut nama, cara bagi salam/perkenalan, dan sama ada collector terus ke tujuan panggilan dengan betul.
 
-PENTING — HARASSMENT ASSESSMENT: Nilai harassmentRisk berdasarkan TINDAKAN COLLECTOR SAHAJA (baris "Collector:" dalam transcript). ABAIKAN sepenuhnya apa yang "Penghutang:" cakap — dialog debtor adalah AI simulation dan tidak relevan untuk penilaian etika. harassmentNote mesti hurai tindakan/ayat COLLECTOR yang bermasalah dalam Bahasa Malaysia, bukan translate atau petik dialog debtor.
+PENTING — HARASSMENT ASSESSMENT: Nilai harassmentRisk berdasarkan TINDAKAN COLLECTOR SAHAJA (baris "Collector:" dalam transcript). ABAIKAN sepenuhnya apa yang "Debtor:" cakap — dialog debtor adalah AI simulation dan tidak relevan untuk penilaian etika. harassmentNote mesti hurai tindakan/ayat COLLECTOR yang bermasalah dalam Bahasa Malaysia, bukan translate atau petik dialog debtor.
 
 TUGAS ANDA — analisis transcript di atas baris demi baris, kemudian:
 
@@ -2663,7 +2721,7 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
     const totalScore=typeof r.totalScore==='number'?r.totalScore:Object.values(scores).reduce((a,b)=>a+b,0);
     const missed=Array.isArray(r.missed)?r.missed.slice(0,5):[];
     const priorityFocus=(r.priorityFocus&&r.priorityFocus.category)?{category:r.priorityFocus.category,tip:r.priorityFocus.tip||''}:fallbackPriority(scores,missed);
-    // PUNCA BUG "sesi tak tersimpan": jadual `sessions` ada CHECK constraint
+    // PUNCA BUG "session tak tersimpan": jadual `sessions` ada CHECK constraint
     // harassment_risk IN ('none','low','medium','high') — kalau Claude pulangkan
     // nilai luar dari 4 ni (cth casing lain/kosong), INSERT akan ditolak DB
     // (gagal senyap, cuma masuk console.error). Clamp dulu sebelum hantar.
@@ -2770,7 +2828,7 @@ function setContent(html){document.getElementById('mainContent').innerHTML=html;
           banner=document.createElement('div');
           banner.id='offlineModeBanner';
           banner.style.cssText='position:fixed;top:0;left:0;right:0;background:#854F0B;color:#fff;padding:8px 16px;font-size:13px;z-index:99999;text-align:center;';
-          banner.innerHTML='⚠️ <strong>Mod Terhad:</strong> Tidak dapat sambung ke pelayan. Data mungkin tidak terkini. <button onclick="window.location.reload()" style="margin-left:10px;background:#fff;color:#854F0B;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer;font-weight:600">Cuba Semula</button>';
+          banner.innerHTML='⚠️ <strong>Limited Mode:</strong> Unable to connect to server. Data may be outdated. <button onclick="window.location.reload()" style="margin-left:10px;background:#fff;color:#854F0B;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer;font-weight:600">Retry</button>';
           document.body.prepend(banner);
         }
       },500);

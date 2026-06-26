@@ -15,20 +15,20 @@ const BODY_HTML = `<!-- ═══════════ AUTH SCREEN ═══�
         <div class="hero-brand-sub">Debt Collection Training System</div>
       </div>
     </div>
-    <div class="hero-headline">Latih kemahiran.<br>Tingkat <em>prestasi</em>.</div>
-    <div class="hero-tagline">Platform latihan suara berasaskan AI untuk pasukan collection Newvest Recoveries.</div>
+    <div class="hero-headline">Train your skills.<br>Elevate <em>performance</em>.</div>
+    <div class="hero-tagline">AI-powered voice training platform for the Newvest Recoveries collection team.</div>
     <div class="hero-stats">
       <div class="hero-stat">
         <div class="hero-stat-val">AI</div>
-        <div class="hero-stat-label">Penghutang Maya</div>
+        <div class="hero-stat-label">Virtual Debtor</div>
       </div>
       <div class="hero-stat">
         <div class="hero-stat-val">3</div>
-        <div class="hero-stat-label">Loghat Disokong</div>
+        <div class="hero-stat-label">Accents Supported</div>
       </div>
       <div class="hero-stat">
         <div class="hero-stat-val">∞</div>
-        <div class="hero-stat-label">Senario Latihan</div>
+        <div class="hero-stat-label">Training Scenarios</div>
       </div>
     </div>
     <div class="hero-dots">
@@ -39,28 +39,28 @@ const BODY_HTML = `<!-- ═══════════ AUTH SCREEN ═══�
   <!-- Right: Form Panel -->
   <div class="auth-form-panel">
     <div class="auth-box">
-      <div class="auth-form-title">Selamat datang 👋</div>
-      <div class="auth-form-sub">Log masuk untuk memulakan sesi latihan</div>
+      <div class="auth-form-title">Welcome 👋</div>
+      <div class="auth-form-sub">Sign in to start your training session</div>
 
       <div class="tabs">
-        <button class="tab-btn active" onclick="switchAuthTab('login')">Log Masuk</button>
-        <button class="tab-btn" onclick="switchAuthTab('register')">Daftar Akaun</button>
+        <button class="tab-btn active" onclick="switchAuthTab('login')">Sign In</button>
+        <button class="tab-btn" onclick="switchAuthTab('register')">Register Account</button>
       </div>
 
       <div id="loginForm">
         <div id="loginAlert" style="display:none"></div>
         <div class="field">
-          <label>ID Pekerja</label>
-          <input id="loginId" placeholder="cth: COL-001" />
+          <label>Employee ID</label>
+          <input id="loginId" placeholder="e.g. COL-001" />
         </div>
         <div class="field">
-          <label>Kata Laluan</label>
+          <label>Password</label>
           <div class="pw-wrap">
             <input id="loginPass" type="password" placeholder="••••••" />
             <button class="pw-eye" onclick="togglePw('loginPass',this)">👁</button>
           </div>
         </div>
-        <button class="btn btn-primary btn-full" onclick="doLogin()">Log Masuk</button>
+        <button class="btn btn-primary btn-full" onclick="doLogin()">Sign In</button>
         <div class="demo-hint">
           <strong>Demo:</strong> admin / admin123 &nbsp;·&nbsp; manager / mgr123 &nbsp;·&nbsp; collector / col123
         </div>
@@ -68,35 +68,38 @@ const BODY_HTML = `<!-- ═══════════ AUTH SCREEN ═══�
 
       <div id="registerForm" style="display:none">
         <div id="regAlert" style="display:none"></div>
-        <div class="field"><label>Nama Penuh</label><input id="regName" placeholder="Ahmad bin Hassan" /></div>
+        <div class="field"><label>Full Name</label><input id="regName" placeholder="Ahmad bin Hassan" /></div>
         <div class="field">
-          <label>ID Pekerja</label>
+          <label>Employee ID</label>
           <input id="regId" placeholder="COL-004" />
-          <p class="field-hint">Digunakan untuk log masuk</p>
+          <p class="field-hint">Used for sign in</p>
         </div>
         <div class="field">
-          <label>Kata Laluan</label>
+          <label>Password</label>
           <div class="pw-wrap">
-            <input id="regPass" type="password" placeholder="Min 6 aksara" />
+            <input id="regPass" type="password" placeholder="Min 6 characters" />
             <button class="pw-eye" onclick="togglePw('regPass',this)">👁</button>
           </div>
         </div>
         <div class="field">
-          <label>Sahkan Kata Laluan</label>
+          <label>Confirm Password</label>
           <div class="pw-wrap">
-            <input id="regPass2" type="password" placeholder="Ulang kata laluan" />
+            <input id="regPass2" type="password" placeholder="Re-enter password" />
             <button class="pw-eye" onclick="togglePw('regPass2',this)">👁</button>
           </div>
         </div>
         <div class="field">
-          <label>Daftar sebagai</label>
+          <label>Register as</label>
           <select id="regRole">
             <option value="collector">Collector</option>
             <option value="manager">Manager</option>
             <option value="admin">Admin</option>
           </select>
         </div>
-        <button class="btn btn-primary btn-full" onclick="doRegister()">Daftar Akaun</button>
+        <div style="background:#fff8e1;border:1px solid #f9a825;border-radius:8px;padding:10px 12px;font-size:12px;color:#e65100;margin-bottom:10px;line-height:1.6">
+          ⏳ <strong>Account requires approval.</strong> After registering, your account will be reviewed by a manager or admin before you can sign in.
+        </div>
+        <button class="btn btn-primary btn-full" onclick="doRegister()">Register Account</button>
       </div>
     </div>
   </div>
@@ -128,7 +131,7 @@ const BODY_HTML = `<!-- ═══════════ AUTH SCREEN ═══�
     </div>
     <nav class="nav" id="sidebarNav"></nav>
     <div class="sidebar-footer">
-      <button class="btn btn-secondary btn-full" onclick="doLogout()">🚪 Log Keluar</button>
+      <button class="btn btn-secondary btn-full" onclick="doLogout()">🚪 Sign Out</button>
     </div>
   </div>
 

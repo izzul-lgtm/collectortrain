@@ -205,3 +205,19 @@ alter table scenarios add column if not exists registration_date date;
 -- tandakan sebagai "missed" (kategori action) kalau collector langsung
 -- tak sebut sepanjang panggilan.
 alter table scenarios add column if not exists disclosures jsonb not null default '[]'::jsonb;
+
+-- ══════════════════════════════════════════════════════════
+-- APPROVAL SYSTEM — add to existing deployments
+-- ══════════════════════════════════════════════════════════
+-- Run in Supabase SQL Editor if users table already exists:
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved boolean NOT NULL DEFAULT false;
+
+-- Auto-approve existing admin and manager accounts
+UPDATE users SET is_approved = true WHERE role IN ('admin', 'manager');
+
+-- ══════════════════════════════════════════════════════════
+-- MIGRATION: if users table already exists, run these:
+-- ══════════════════════════════════════════════════════════
+-- ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved boolean NOT NULL DEFAULT false;
+-- UPDATE users SET is_approved = true WHERE role IN ('admin', 'manager');
