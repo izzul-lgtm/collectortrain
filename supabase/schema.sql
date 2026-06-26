@@ -221,3 +221,42 @@ UPDATE users SET is_approved = true WHERE role IN ('admin', 'manager');
 -- ══════════════════════════════════════════════════════════
 -- ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved boolean NOT NULL DEFAULT false;
 -- UPDATE users SET is_approved = true WHERE role IN ('admin', 'manager');
+
+-- ═══════════════════════════════════════════════════════════════════
+-- FASA 1 (quick win): Customer Type & Objection Type — tag berstruktur
+-- ═══════════════════════════════════════════════════════════════════
+-- PUNCA: sebelum ni "jenis penghutang" cuma wujud sebagai title/prompt
+-- bebas teks (cth "Penghutang Agresif") — sistem tak boleh query/tally
+-- ikut jenis tu. Manager pun tak boleh nampak "collector lemah skill X
+-- KHUSUS bila lawan jenis penghutang Y" — cuma "lemah skill X" global.
+--
+-- NOTA DEFINISI (penting, dua field ni sengaja diasingkan supaya tak
+-- bercampur 2 makna dalam 1 tag):
+--   customer_type  = SEGMEN AKAUN penghutang (rujuk bucket assignment
+--                     NewVest, SOP-COL-002): suspended / terminated /
+--                     restructured / other. Ni "SIAPA" penghutang dari
+--                     segi status akaun — BUKAN cara dia bercakap dalam call.
+--   objection_type = CORAK TINGKAH LAKU/bantahan penghutang SEMASA call:
+--                     cooperative / denial / hardship / aggressive /
+--                     avoidance. Ni "BAGAIMANA" dia respons bila dihubungi
+--                     — sepadan dengan 4 archetype senario sedia ada.
+alter table scenarios add column if not exists customer_type  text not null default 'other'
+  check (customer_type in ('suspended','terminated','restructured','other'));
+alter table scenarios add column if not exists objection_type text not null default 'cooperative'
+  check (objection_type in ('cooperative','denial','hardship','aggressive','avoidance'));
+
+-- Backfill 4 seed scenario sedia ada ikut archetype masing-masing supaya
+-- data lama pun terus berguna untuk analytics baru (bukan kosong/'other').
+update scenarios set objection_type='cooperative' where id='s1';
+update scenarios set objection_type='denial'      where id='s2';
+update scenarios set objection_type='hardship'    where id='s3';
+update scenarios set objection_type='aggressive'  where id='s4';
+
+-- `sessions` simpan SALINAN tag ni (denormalized, sama pattern macam
+-- scenario_name/scenario_id) — supaya analytics/tally TAK perlu join balik
+-- ke `scenarios`. Sebab tu penting: scenario boleh diedit/dipadam lepas
+-- sesi dah jalan — tag masa sesi tu BERLAKU mesti kekal sebagai rekod
+-- sejarah, bukan terikut value scenario yang mungkin dah berubah.
+alter table sessions add column if not exists customer_type  text not null default '';
+alter table sessions add column if not exists objection_type text not null default '';
+create index if not exists idx_sessions_objection_type on sessions(objection_type);

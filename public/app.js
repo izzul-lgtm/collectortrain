@@ -227,6 +227,46 @@ function catLabel(cat){
 function catIcon(cat){
   return {tone:'🗣',delivery:'📣',counter:'🛡',action:'✅',balance:'⚖️'}[cat]||'•';
 }
+
+// ═══════════ TAG SENARIO: Customer Type & Objection Type (Fasa 1 quick win) ═══════════
+// Dua dimensi diasingkan sengaja — lihat nota penuh dalam supabase/schema.sql:
+//   customerType  = segmen akaun (suspended/terminated/restructured/other)
+//   objectionType = corak tingkah laku semasa call (cooperative/denial/hardship/aggressive/avoidance)
+const CUSTOMER_TYPES=['suspended','terminated','restructured','other'];
+const OBJECTION_TYPES=['cooperative','denial','hardship','aggressive','avoidance'];
+function customerTypeLabel(t){
+  return {suspended:'Suspended',terminated:'Terminated',restructured:'Restructured',other:'Other/Tidak Pasti'}[t]||t||'-';
+}
+function objectionTypeLabel(t){
+  return {cooperative:'Cooperative',denial:'Denial / Dispute',hardship:'Financial Hardship',aggressive:'Aggressive',avoidance:'Avoidance / Ghosting'}[t]||t||'-';
+}
+function objectionTypeIcon(t){
+  return {cooperative:'😊',denial:'😤',hardship:'😔',aggressive:'😡',avoidance:'🙈'}[t]||'•';
+}
+// Cross-tab: untuk setiap objection_type, kira purata score + kategori
+// skill paling kerap missed — jawapan kepada "collector/team lemah skill
+// X bila lawan jenis penghutang Y", bukan sekadar skill lemah global
+// macam tallyWeakness() (yang buta kepada jenis penghutang).
+function weaknessByObjectionType(sessions){
+  const groups={};
+  sessions.forEach(s=>{
+    const ot=s.objectionType||'unknown';
+    if(!groups[ot])groups[ot]={count:0,scoreSum:0,catTally:{}};
+    groups[ot].count++;
+    groups[ot].scoreSum+=(s.totalScore||0);
+    (s.missed||[]).forEach(m=>{groups[ot].catTally[m.category]=(groups[ot].catTally[m.category]||0)+1;});
+  });
+  return Object.entries(groups).map(([ot,g])=>{
+    const topCat=Object.entries(g.catTally).sort((a,b)=>b[1]-a[1])[0];
+    return {
+      objectionType:ot,
+      count:g.count,
+      avgScore:g.count?Math.round(g.scoreSum/g.count):0,
+      topWeakCat:topCat?topCat[0]:null,
+      topWeakCount:topCat?topCat[1]:0
+    };
+  }).sort((a,b)=>a.avgScore-b.avgScore); // lemah (avg score rendah) dahulu
+}
 // Sokong sesi lama (format communication/empathy/compliance/effectiveness) & sesi baru (format scores{})
 function scoreRows(s){
   if(s.scores){
@@ -710,6 +750,21 @@ async function renderDashboard(){
         </div>`;
       }).join('')}
     </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🎯 Prestasi Ikut Jenis Penghutang (Objection Type)</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Cross-tab: purata score & skill paling kerap missed, ikut corak tingkah laku penghutang — bukan sekadar skill lemah global.</div>
+    ${weaknessByObjectionType(sessions).length===0?`<div class="empty-state"><div class="es-icon">📊</div><p>Belum cukup data — pastikan senario ada Objection Type ditag.</p></div>`:
+    `<div class="table-wrap"><table>
+      <tr><th>Jenis Penghutang</th><th>Sesi</th><th>Avg Score</th><th>Skill Paling Kerap Missed</th></tr>
+      ${weaknessByObjectionType(sessions).map(g=>`<tr>
+        <td>${objectionTypeIcon(g.objectionType)} ${objectionTypeLabel(g.objectionType)}</td>
+        <td>${g.count}</td>
+        <td><span class="score-pill ${g.avgScore>=70?'score-high':g.avgScore>=50?'score-mid':'score-low'}">${g.avgScore}</span></td>
+        <td>${g.topWeakCat?`<span class="chip chip-red">${catIcon(g.topWeakCat)} ${catLabel(g.topWeakCat)} (${g.topWeakCount}x)</span>`:'-'}</td>
+      </tr>`).join('')}
+    </table></div>`}
   </div>`);
 }
 
@@ -757,6 +812,7 @@ async function renderTraining(){
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
             <span class="level-badge level-${s.level}">${lvlLabel}</span>
             <span class="preview-badge-neutral">${accentLabel} · ${genderLabel}</span>
+            <span class="chip chip-amber" style="font-size:11px">${objectionTypeIcon(s.objectionType)} ${objectionTypeLabel(s.objectionType)}</span>
             ${s.client?`<span class="preview-badge-client">${s.client}</span>`:''}
           </div>
         </div>
@@ -858,6 +914,7 @@ function selectScenario(id){
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
             <span class="level-badge level-${scenario.level}">${lvlLabel}</span>
             <span class="preview-badge-neutral">${accentLabel} · ${genderLabel}</span>
+            <span class="chip chip-amber" style="font-size:11px">${objectionTypeIcon(scenario.objectionType)} ${objectionTypeLabel(scenario.objectionType)}</span>
             ${scenario.client?`<span class="preview-badge-client">${scenario.client}</span>`:''}
           </div>
         </div>
@@ -1078,6 +1135,16 @@ async function renderMyHistory(){
       </div>`).join('')}
   </div>
   <div class="card">
+    <div class="card-title">🎯 Prestasi Anda Ikut Jenis Penghutang</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Jenis penghutang mana anda paling kuat / paling perlu latihan tambahan.</div>
+    ${weaknessByObjectionType(sessions).length===0?`<div style="font-size:13px;color:var(--text3)">Belum cukup data.</div>`:
+    weaknessByObjectionType(sessions).map(g=>`
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+        <span style="font-size:13px">${objectionTypeIcon(g.objectionType)} ${objectionTypeLabel(g.objectionType)} <span style="color:var(--text3);font-size:11px">(${g.count} sesi)</span></span>
+        <span class="score-pill ${g.avgScore>=70?'score-high':g.avgScore>=50?'score-mid':'score-low'}">${g.avgScore}</span>
+      </div>`).join('')}
+  </div>
+  <div class="card">
     <div class="card-title">Trend Markah</div>
     <div class="chart-bar-wrap">
       ${sessions.slice(0,10).reverse().map((s,i)=>`
@@ -1277,12 +1344,14 @@ async function renderScenarios(){
   </div>
   <div class="card">
     <div class="table-wrap"><table>
-      <tr><th>Emoji</th><th>Name</th><th>Client</th><th>Title</th><th>Debt</th><th>Balance</th><th>Level</th><th>Checklist</th><th>Actions</th></tr>
+      <tr><th>Emoji</th><th>Name</th><th>Client</th><th>Title</th><th>Objection</th><th>Customer Type</th><th>Debt</th><th>Balance</th><th>Level</th><th>Checklist</th><th>Actions</th></tr>
       ${scenarios.map(s=>`<tr>
         <td style="font-size:20px">${s.emoji}</td>
         <td><div style="font-weight:500">${s.name}</div></td>
         <td>${s.client?`<span class="chip chip-purple">${s.client}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
         <td>${s.title}</td>
+        <td><span class="chip chip-amber" style="font-size:11px">${objectionTypeIcon(s.objectionType)} ${objectionTypeLabel(s.objectionType)}</span></td>
+        <td><span style="font-size:12px;color:var(--text2)">${customerTypeLabel(s.customerType)}</span></td>
         <td>${s.amount}</td>
         <td><span class="chip ${s.balanceTier==='high'?'chip-red':'chip-green'}">${s.balanceTier==='high'?'High':'Low'}</span></td>
         <td><span class="level-badge level-${s.level}">${s.level==='easy'?'Easy':s.level==='med'?'Medium':'Hard'}</span></td>
@@ -1316,6 +1385,8 @@ function readScenarioFormDraft(){
     days:(document.getElementById('scDays')||{}).value||'30',
     level:(document.getElementById('scLevel')||{}).value||'med',
     balanceTier:(document.getElementById('scBalanceTier')||{}).value||'high',
+    customerType:(document.getElementById('scCustomerType')||{}).value||'other',
+    objectionType:(document.getElementById('scObjectionType')||{}).value||'cooperative',
     prompt:(document.getElementById('scPrompt')||{}).value||'',
     clientSel:scClientSel,
     clientOther:(document.getElementById('scClientOther')||{}).value||'',
@@ -1375,6 +1446,8 @@ function applyScenarioDraft(draft){
   set('scDays',draft.days);
   set('scLevel',draft.level);
   set('scBalanceTier',draft.balanceTier);
+  set('scCustomerType',draft.customerType);
+  set('scObjectionType',draft.objectionType);
   set('scPrompt',draft.prompt);
   set('scIc',draft.icNumber);
   set('scAccNumber',draft.accNumber);
@@ -1442,6 +1515,18 @@ async function openAddScenario(existingId){
     </div>
     <div class="form-row"><label>Balance Tier</label>
       <select id="scBalanceTier"><option value="low" ${s&&s.balanceTier==='low'?'selected':''}>Rendah (Low Balance)</option><option value="high" ${!s||s.balanceTier==='high'?'selected':''}>Tinggi (High Balance)</option></select>
+    </div>
+  </div>
+  <div class="two-col">
+    <div class="form-row"><label>Objection Type <span style="font-weight:400;color:var(--text3)">(corak tingkah laku penghutang semasa call — untuk analytics weakness ikut jenis)</span></label>
+      <select id="scObjectionType">
+        ${OBJECTION_TYPES.map(t=>`<option value="${t}" ${s&&s.objectionType===t?'selected':(!s&&t==='cooperative'?'selected':'')}>${objectionTypeIcon(t)} ${objectionTypeLabel(t)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-row"><label>Customer Type <span style="font-weight:400;color:var(--text3)">(segmen akaun — rujuk bucket assignment SOP-COL-002)</span></label>
+      <select id="scCustomerType">
+        ${CUSTOMER_TYPES.map(t=>`<option value="${t}" ${s&&s.customerType===t?'selected':(!s&&t==='other'?'selected':'')}>${customerTypeLabel(t)}</option>`).join('')}
+      </select>
     </div>
   </div>
   <hr class="divider"/>
@@ -1623,6 +1708,8 @@ async function saveScenario(existingId){
     days:parseInt(document.getElementById('scDays').value)||30,
     level:document.getElementById('scLevel').value,
     balanceTier:document.getElementById('scBalanceTier').value,
+    objectionType:document.getElementById('scObjectionType').value,
+    customerType:document.getElementById('scCustomerType').value,
     prompt:document.getElementById('scPrompt').value.trim(),
     checklist,
     disclosures,
@@ -2733,6 +2820,8 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
       id:'sess_'+Date.now()+'_'+Math.random().toString(36).slice(2,8),
       collectorId:currentUser.id,scenarioId:scenario?scenario.id:'',
       scenarioName:scenario?scenario.title:'',duration,date:new Date().toISOString(),
+      customerType:scenario?scenario.customerType||'':'',
+      objectionType:scenario?scenario.objectionType||'':'',
       totalScore,scores,
       strengths:Array.isArray(r.strengths)?r.strengths:[],
       scoreReasons:r.scoreReasons||{},

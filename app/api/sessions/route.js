@@ -19,6 +19,8 @@ function toClientShape(row) {
     feedback: row.feedback,
     transcript: row.transcript || [],
     date: row.created_at,
+    customerType: row.customer_type || '',
+    objectionType: row.objection_type || '',
   };
 }
 
@@ -39,6 +41,8 @@ function toDbShape(data) {
     harassment_note: data.harassmentNote || '',
     feedback: data.feedback || '',
     transcript: data.transcript || [],
+    customer_type: data.customerType || '',
+    objection_type: data.objectionType || '',
   };
 }
 

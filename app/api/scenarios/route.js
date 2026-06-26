@@ -28,6 +28,8 @@ function toClientShape(row) {
     accType: row.acc_type || '',
     terminationDate: row.termination_date || '',
     registrationDate: row.registration_date || '',
+    customerType: row.customer_type || 'other',
+    objectionType: row.objection_type || 'cooperative',
   };
 }
 
@@ -55,6 +57,8 @@ function toDbShape(data) {
     acc_type: data.accType || '',
     termination_date: data.terminationDate || null,
     registration_date: data.registrationDate || null,
+    customer_type: data.customerType || 'other',
+    objection_type: data.objectionType || 'cooperative',
   };
 }
 
@@ -86,6 +90,14 @@ export async function POST(req) {
     }
     if (!body.client || !body.icNumber || !body.accNumber || !body.serviceNo || !body.accType || !body.terminationDate || !body.registrationDate) {
       return Response.json({ error: 'Sila isi semua Maklumat Akaun Pelanggan (Client/IC/No. Akaun/No. Servis/Jenis Akaun/Tarikh Termination/Tarikh Daftar) sebelum simpan.' }, { status: 400 });
+    }
+    // FASA 1 quick win: objectionType WAJIB dipilih (bukan auto-default
+    // senyap) — kalau tag ni boleh terlepas tanpa disedari, analytics
+    // cross-tab nanti jadi "garbage in, garbage out" sebab sebahagian
+    // scenario silently jatuh ke 'cooperative' walaupun bukan tu sebenarnya.
+    const VALID_OBJECTION = ['cooperative', 'denial', 'hardship', 'aggressive', 'avoidance'];
+    if (!VALID_OBJECTION.includes(body.objectionType)) {
+      return Response.json({ error: 'Sila pilih Objection Type (Cooperative/Denial/Hardship/Aggressive/Avoidance) sebelum simpan.' }, { status: 400 });
     }
     const sb = supabaseAdmin();
     const { data, error } = await sb
