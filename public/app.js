@@ -348,6 +348,10 @@ function goMyHistoryPage(p){myHistoryPage=p;renderMyHistory();}
 // Filter dashboard "Hari Ini / Bulan Ini / Tahun Ini / Semua" — supaya admin/manager
 // senang nak tengok prestasi ikut tempoh tertentu tanpa kira manual dari senarai penuh.
 let dashboardPeriod='all';
+// Custom range state — dipakai bila dashboardPeriod==='custom'. Disimpan sebagai
+// string 'YYYY-MM-DD' (terus dari <input type=date>) supaya senang nak bind balik ke input.
+let dashboardCustomFrom='';
+let dashboardCustomTo='';
 function getPeriodRange(period){
   const now=new Date();
   if(period==='day'){
@@ -363,6 +367,12 @@ function getPeriodRange(period){
   if(period==='year'){
     const start=new Date(now.getFullYear(),0,1);
     const end=new Date(now.getFullYear()+1,0,1);
+    return{start,end};
+  }
+  if(period==='custom'){
+    if(!dashboardCustomFrom||!dashboardCustomTo)return null; // belum lengkap pilih — anggap macam 'all'
+    const start=new Date(dashboardCustomFrom+'T00:00:00');
+    const end=new Date(dashboardCustomTo+'T00:00:00');end.setDate(end.getDate()+1); // inclusive sampai hujung hari 'to'
     return{start,end};
   }
   return null; // 'all' — tiada had tarikh
@@ -385,6 +395,14 @@ function getPrevPeriodRange(period){
     const end=new Date(now.getFullYear(),0,1);
     return{start,end};
   }
+  if(period==='custom'){
+    const r=getPeriodRange('custom');
+    if(!r)return null;
+    const days=Math.round((r.end-r.start)/86400000);
+    const start=new Date(r.start);start.setDate(start.getDate()-days);
+    const end=new Date(r.start);
+    return{start,end};
+  }
   return null;
 }
 function filterSessionsByRange(sessions,range){
@@ -392,9 +410,15 @@ function filterSessionsByRange(sessions,range){
   return sessions.filter(s=>{const d=new Date(s.date);return d>=range.start&&d<range.end;});
 }
 function periodLabel(period){
+  if(period==='custom'){
+    if(!dashboardCustomFrom||!dashboardCustomTo)return 'Custom Range';
+    return `${dashboardCustomFrom} → ${dashboardCustomTo}`;
+  }
   return{day:'Today',month:'This Month',year:'This Year'}[period]||'All Time';
 }
 function setDashboardPeriod(p){dashboardPeriod=p;renderDashboard();}
+function setDashboardCustomFrom(v){dashboardCustomFrom=v;if(dashboardPeriod==='custom')renderDashboard();}
+function setDashboardCustomTo(v){dashboardCustomTo=v;if(dashboardPeriod==='custom')renderDashboard();}
 
 // Tapis array sesi berdasarkan satu set filter (dipakai oleh renderSessions
 // & renderMyHistory — logik sama, beza saja sumber filter & ada/tiada collectorId).
@@ -645,10 +669,17 @@ async function renderDashboard(){
 
   <div class="card" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px">
     <span style="font-size:12px;color:var(--text3);margin-right:4px">Performance Period:</span>
-    ${periodBtn('day','Hari Ini')}
-    ${periodBtn('month','Bulan Ini')}
-    ${periodBtn('year','Tahun Ini')}
-    ${periodBtn('all','Keseluruhan')}
+    ${periodBtn('day','Today')}
+    ${periodBtn('month','This Month')}
+    ${periodBtn('year','This Year')}
+    ${periodBtn('all','All Time')}
+    ${periodBtn('custom','Custom Range')}
+    ${dashboardPeriod==='custom'?`
+      <span style="display:flex;align-items:center;gap:6px;margin-left:4px">
+        <input type="date" value="${dashboardCustomFrom}" onchange="setDashboardCustomFrom(this.value)" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text)">
+        <span style="font-size:12px;color:var(--text3)">to</span>
+        <input type="date" value="${dashboardCustomTo}" onchange="setDashboardCustomTo(this.value)" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text)">
+      </span>`:''}
   </div>
 
   <div class="stats-grid">
@@ -656,7 +687,7 @@ async function renderDashboard(){
     <div class="stat-card"><div class="stat-label">Average Score</div><div class="stat-val">${periodAvg}</div><div class="stat-sub">${periodDiff!==null?`<span style="color:${periodDiff>=0?'var(--green)':'var(--red)'}">${periodDiff>=0?'▲ +':'▼ '}${periodDiff} vs previous period</span>`:'/ 100'}</div></div>
     <div class="stat-card"><div class="stat-label">Sessions Today</div><div class="stat-val">${todaySessions}</div><div class="stat-sub">Training today</div></div>
     <div class="stat-card"><div class="stat-label">Score This Week</div><div class="stat-val">${thisWeekAvg!==null?thisWeekAvg:'—'}</div><div class="stat-sub">${weekDiff!==null?`<span style="color:${weekDiff>=0?'var(--green)':'var(--red)'}">${weekDiff>=0?'▲ +':'▼ '}${weekDiff} vs last week</span>`:`${thisWeekSessions.length} sessions this week`}</div></div>
-    <div class="stat-card"><div class="stat-label">Compliance Issues</div><div class="stat-val" style="color:${periodFlagged.length?'var(--red)':'inherit'}">${periodFlagged.length}</div><div class="stat-sub">Session berisiko · ${periodLabel(dashboardPeriod)}</div></div>
+    <div class="stat-card"><div class="stat-label">Compliance Issues</div><div class="stat-val" style="color:${periodFlagged.length?'var(--red)':'inherit'}">${periodFlagged.length}</div><div class="stat-sub">Risky sessions · ${periodLabel(dashboardPeriod)}</div></div>
   </div>
 
   <div class="card">
@@ -1109,7 +1140,7 @@ function renderScoreScreen(){
         </div>
         ${harassmentBadge(s.harassmentRisk)}
       </div>
-      ${s.harassmentRisk&&s.harassmentRisk!=='none'?`<div class="alert alert-err" style="display:block;margin-top:0">⚠ <strong>Isu Pematuhan/Harassment:</strong> ${s.harassmentNote||'Nada/ayat berisiko dikesan dalam panggilan ini.'}</div>`:''}
+      ${s.harassmentRisk&&s.harassmentRisk!=='none'?`<div class="alert alert-err" style="display:block;margin-top:0">⚠ <strong>Compliance/Harassment Issue:</strong> ${s.harassmentNote||'Risky tone or wording was detected in this call.'}</div>`:''}
       <div class="score-rows">
         ${scoreRows(s).map(([l,v,m,cat,reason])=>`
         <div class="score-row" style="flex-direction:column;align-items:stretch;gap:4px">
@@ -1172,20 +1203,20 @@ function copyScoreSummary(){
   const scoreLines=Object.entries(s.scores||{}).map(([k,v])=>`  ${catLabels[k]||k}: ${v}/${(s.scoreMax&&s.scoreMax[k])||20}`).join('\n');
   const strengthLines=(s.strengths||[]).map(t=>`  ✅ ${t}`).join('\n');
   const missedLines=(s.missed||[]).map(m=>`  ⚠ ${m.issue||''} → ${m.suggestion||''}`).join('\n');
-  const harassment=s.harassmentRisk&&s.harassmentRisk!=='none'?`\n⚠ Isu Pematuhan (${s.harassmentRisk}): ${s.harassmentNote||''}\n`:'';
+  const harassment=s.harassmentRisk&&s.harassmentRisk!=='none'?`\n⚠ Compliance Issue (${s.harassmentRisk}): ${s.harassmentNote||''}\n`:'';
   const text=[
-    `📊 Keputusan Latihan CollectorTrain`,
-    `Scenario: ${s.scenarioName||'-'} · Masa: ${s.duration||'-'}`,
-    `Score Keseluruhan: ${s.totalScore}/100`,
+    `📊 CollectorTrain Training Results`,
+    `Scenario: ${s.scenarioName||'-'} · Duration: ${s.duration||'-'}`,
+    `Overall Score: ${s.totalScore}/100`,
     ``,
-    `Pecahan Markah:`,
+    `Score Breakdown:`,
     scoreLines,
     harassment,
-    strengthLines?`Kekuatan:\n${strengthLines}`:'',
-    missedLines?`Perlu Diperbaiki:\n${missedLines}`:'',
-    s.priorityFocus?`\n🎯 Fokus Seterusnya (${catLabels[s.priorityFocus.category]||s.priorityFocus.category}):\n  ${s.priorityFocus.tip||''}`:'',
+    strengthLines?`Strengths:\n${strengthLines}`:'',
+    missedLines?`Needs Improvement:\n${missedLines}`:'',
+    s.priorityFocus?`\n🎯 Next Focus (${catLabels[s.priorityFocus.category]||s.priorityFocus.category}):\n  ${s.priorityFocus.tip||''}`:'',
     ``,
-    `💬 Maklum Balas AI:`,
+    `💬 AI Feedback:`,
     s.feedback||'',
   ].filter(Boolean).join('\n');
   navigator.clipboard.writeText(text).then(()=>{
