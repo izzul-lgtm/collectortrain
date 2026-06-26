@@ -321,8 +321,8 @@ let currentUser=null, currentPage='';
 // Filter state untuk page "Training Sessions" (manager/admin) & "My Records" (collector).
 // Disimpan di sini (bukan dalam form je) supaya filter tak hilang bila page
 // di-render semula (contoh: lepas tutup modal "Lihat" sesi).
-let sessionsFilter={collectorId:'',scenario:'',skor:'',dateFrom:'',dateTo:''};
-let myHistoryFilter={scenario:'',skor:'',dateFrom:'',dateTo:''};
+let sessionsFilter={collectorId:'',scenario:'',objectionType:'',skor:'',dateFrom:'',dateTo:''};
+let myHistoryFilter={scenario:'',objectionType:'',skor:'',dateFrom:'',dateTo:''};
 
 // PAGINATION — senarai sesi boleh sampai 100+ rekod, elak list semua sekali
 // (lambat & sukar nak scroll). Papar ikut "muka surat" dengan butang Sebelum/Next.
@@ -402,6 +402,7 @@ function applySessionFilters(sessions,f){
   return sessions.filter(s=>{
     if(f.collectorId&&s.collectorId!==f.collectorId)return false;
     if(f.scenario&&s.scenarioName!==f.scenario)return false;
+    if(f.objectionType&&s.objectionType!==f.objectionType)return false;
     if(f.skor==='high'&&!(s.totalScore>=70))return false;
     if(f.skor==='mid'&&!(s.totalScore>=50&&s.totalScore<70))return false;
     if(f.skor==='low'&&!(s.totalScore<50))return false;
@@ -857,14 +858,36 @@ async function loadScenarios(force){
 
 async function renderTraining(){
   setContent('<div class="page-header"><div class="page-title">Voice Training</div></div><div class="card">Loading scenarios...</div>');
-  let scenarios;
+  let scenarios, mySessions;
   try{
     scenarios=await loadScenarios();
+    // API server-side dah filter: collector cuma dapat sesi dia sendiri
+    // (lihat app/api/sessions/route.js GET — authUser.role==='collector'
+    // → query.eq('collector_id', authUser.id)), jadi takyah filter lagi kat sini.
+    mySessions=await loadSessions();
   }catch(e){
     setContent(`<div class="page-header"><div class="page-title">Voice Training</div></div><div class="card">⚠ Failed to load scenarios: ${e.message}</div>`);
     return;
   }
   if(!scenario&&scenarios.length)scenario=scenarios[0];
+
+  // ═══════ FASA 3: Collector Target Plan — auto-cadang scenario seterusnya ═══════
+  // Guna jenis penghutang yang PALING lemah untuk collector NI SENDIRI
+  // (min 2 sesi jenis tu, elak cadangan dari 1 sesi outlier semata-mata).
+  const myWeakTypes=weaknessByObjectionType(mySessions).filter(g=>g.count>=2);
+  const myWeakest=myWeakTypes.length?myWeakTypes[0]:null;
+  let recommendedScenario=null;
+  if(myWeakest){
+    const candidates=scenarios.filter(s=>s.objectionType===myWeakest.objectionType);
+    if(candidates.length){
+      // Antara candidate jenis sama, pilih yang PALING JARANG/belum dicuba —
+      // supaya cadangan pelbagai dari semasa ke semasa, bukan scenario sama
+      // berulang-ulang setiap kali buka page ni.
+      const triedCounts={};
+      mySessions.forEach(s=>{triedCounts[s.scenarioId]=(triedCounts[s.scenarioId]||0)+1;});
+      recommendedScenario=candidates.slice().sort((a,b)=>(triedCounts[a.id]||0)-(triedCounts[b.id]||0))[0];
+    }
+  }
 
   function scPreviewHTML(s){
     if(!s)return`<div class="sc-preview-empty"><div style="font-size:36px;margin-bottom:10px">👆</div><div style="font-size:13px;color:var(--text3)">Select a scenario to view details</div></div>`;
@@ -913,6 +936,23 @@ async function renderTraining(){
 
   setContent(`
   <div class="page-header"><div class="page-title">Voice Training</div><div class="page-sub">Select a scenario, review the details, then start the call</div></div>
+  ${recommendedScenario?`
+  <div class="card" style="border-left:4px solid var(--amber);margin-bottom:14px">
+    <div class="card-title">🎯 Disyorkan Untuk Anda</div>
+    <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:10px">Berdasarkan rekod latihan anda, anda paling lemah bila lawan penghutang jenis <b>${objectionTypeLabel(myWeakest.objectionType)}</b> (avg score ${myWeakest.avgScore}/100 daripada ${myWeakest.count} sesi)${myWeakest.topWeakCat?`, terutamanya pada skill <b>${catLabel(myWeakest.topWeakCat)}</b>`:''}. Cuba senario ni seterusnya:</p>
+    <div class="sc-card selected" style="margin:0;cursor:pointer" onclick="selectScenario('${recommendedScenario.id}')">
+      <div class="sc-emoji">${recommendedScenario.emoji}</div>
+      <div class="sc-body">
+        <div class="sc-name">${recommendedScenario.title}</div>
+        <div class="sc-desc">${recommendedScenario.description||recommendedScenario.desc||''}</div>
+        <div class="sc-meta">
+          <span class="level-badge level-${recommendedScenario.level}">${recommendedScenario.level==='easy'?'Easy':recommendedScenario.level==='med'?'Medium':'Hard'}</span>
+          <span class="chip chip-amber" style="font-size:10px">${objectionTypeIcon(recommendedScenario.objectionType)} ${objectionTypeLabel(recommendedScenario.objectionType)}</span>
+        </div>
+      </div>
+      <div class="sc-check">✓</div>
+    </div>
+  </div>`:''}
   <div class="training-layout">
     <div class="training-left">
       <div class="card" style="margin-bottom:0">
@@ -922,7 +962,7 @@ async function renderTraining(){
           <div class="sc-card ${scenario&&scenario.id===s.id?'selected':''}" onclick="selectScenario('${s.id}')">
             <div class="sc-emoji">${s.emoji}</div>
             <div class="sc-body">
-              <div class="sc-name">${s.title}</div>
+              <div class="sc-name">${s.title}${recommendedScenario&&recommendedScenario.id===s.id?' <span style="font-size:10px;color:var(--amber);font-weight:600">⭐ Disyorkan</span>':''}</div>
               <div class="sc-desc">${s.description||s.desc||''}</div>
               <div class="sc-meta">
                 <span class="level-badge level-${s.level}">${s.level==='easy'?'Easy':s.level==='med'?'Medium':'Hard'}</span>
@@ -1173,6 +1213,10 @@ async function renderMyHistory(){
       <option value="">All Scenarios</option>
       ${scenarioNames.map(n=>`<option value="${n}" ${myHistoryFilter.scenario===n?'selected':''}>${n}</option>`).join('')}
     </select>
+    <select id="filtMyObjection" onchange="myHistoryFilter.objectionType=this.value;myHistoryPage=1;renderMyHistory();">
+      <option value="">All Objection Types</option>
+      ${OBJECTION_TYPES.map(t=>`<option value="${t}" ${myHistoryFilter.objectionType===t?'selected':''}>${objectionTypeIcon(t)} ${objectionTypeLabel(t)}</option>`).join('')}
+    </select>
     <select id="filtMySkor" onchange="myHistoryFilter.skor=this.value;myHistoryPage=1;renderMyHistory();">
       <option value="">All Scores</option>
       <option value="high" ${myHistoryFilter.skor==='high'?'selected':''}>High (≥70)</option>
@@ -1181,7 +1225,7 @@ async function renderMyHistory(){
     </select>
     <input type="date" id="filtMyFrom" value="${myHistoryFilter.dateFrom}" onchange="myHistoryFilter.dateFrom=this.value;myHistoryPage=1;renderMyHistory();" title="From date"/>
     <input type="date" id="filtMyTo" value="${myHistoryFilter.dateTo}" onchange="myHistoryFilter.dateTo=this.value;myHistoryPage=1;renderMyHistory();" title="To date"/>
-    <button class="btn btn-secondary" onclick="myHistoryFilter={scenario:'',skor:'',dateFrom:'',dateTo:''};myHistoryPage=1;renderMyHistory();">Reset</button>
+    <button class="btn btn-secondary" onclick="myHistoryFilter={scenario:'',objectionType:'',skor:'',dateFrom:'',dateTo:''};myHistoryPage=1;renderMyHistory();">Reset</button>
   </div>`;
   setContent(`
   <div class="page-header"><div class="page-title">My Training Records</div><div class="page-sub">${sessions.length} of ${mine.length} training sessions</div></div>
@@ -1251,18 +1295,35 @@ async function renderMyHistory(){
 async function renderCollectors(){
   const users=await loadUsers();
   const sessions=await loadSessions();
+  const scenarios=await loadScenarios();
   const collectors=users.filter(u=>u.role==='collector');
   setContent(`
   <div class="page-header"><div class="page-title">All Collectors</div><div class="page-sub">${collectors.length} collectors registered</div></div>
   <div class="card">
     <div class="table-wrap"><table>
-      <tr><th>Name</th><th>ID</th><th>Sessions</th><th>Average</th><th>Highest</th><th>Weak Aspect</th><th>Harassment</th><th>Last Session</th></tr>
+      <tr><th>Name</th><th>ID</th><th>Sessions</th><th>Average</th><th>Highest</th><th>Weak Aspect</th><th>Weakest Debtor Type</th><th>Cadangan Senario</th><th>Harassment</th><th>Last Session</th></tr>
       ${collectors.map(c=>{
         const cs=sessions.filter(s=>s.collectorId===c.id);
         const avg=cs.length?Math.round(cs.reduce((a,s)=>a+s.totalScore,0)/cs.length):'-';
         const best=cs.length?Math.max(...cs.map(s=>s.totalScore)):'-';
         const last=cs.length?cs[cs.length-1]:null;
         const weakLabel=cs.length?topWeaknessLabel(cs):'-';
+        // Jenis penghutang yang collector ni paling lemah (avg score terendah,
+        // min 2 sesi jenis tu supaya bukan dari 1 sesi outlier).
+        const csWeakTypes=weaknessByObjectionType(cs).filter(g=>g.count>=2);
+        const weakType=csWeakTypes.length?csWeakTypes[0]:null;
+        // Fasa 3, versi manager: sama logic Collector Target Plan macam di
+        // Voice Training collector — tapi sini cuma untuk VISIBILITY manager,
+        // bukan paksa assign (sistem ni takde mekanisme "assignment wajib").
+        let recoScenario=null;
+        if(weakType){
+          const candidates=scenarios.filter(s=>s.objectionType===weakType.objectionType);
+          if(candidates.length){
+            const triedCounts={};
+            cs.forEach(s=>{triedCounts[s.scenarioId]=(triedCounts[s.scenarioId]||0)+1;});
+            recoScenario=candidates.slice().sort((a,b)=>(triedCounts[a.id]||0)-(triedCounts[b.id]||0))[0];
+          }
+        }
         const harassCount=cs.filter(s=>s.harassmentRisk&&s.harassmentRisk!=='none').length;
         return`<tr>
           <td><div style="font-weight:500">${c.name}</div></td>
@@ -1271,6 +1332,8 @@ async function renderCollectors(){
           <td>${typeof avg==='number'?`<span class="score-pill ${avg>=70?'score-high':avg>=50?'score-mid':'score-low'}">${avg}</span>`:'-'}</td>
           <td>${typeof best==='number'?`<span class="score-pill score-high">${best}</span>`:'-'}</td>
           <td>${weakLabel!=='-'?`<span class="chip chip-amber">${weakLabel}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
+          <td>${weakType?`<span class="chip chip-red" style="font-size:11px">${objectionTypeIcon(weakType.objectionType)} ${objectionTypeLabel(weakType.objectionType)} (${weakType.avgScore})</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
+          <td>${recoScenario?`<span style="font-size:12px">${recoScenario.emoji} ${recoScenario.title}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
           <td>${harassCount>0?`<span class="chip chip-red">⚠ ${harassCount}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
           <td style="font-size:12px;color:var(--text3)">${last?fmtDateTime(last.date):'-'}</td>
         </tr>`;
@@ -1302,6 +1365,10 @@ async function renderSessions(){
       <option value="">All Scenarios</option>
       ${scenarioNames.map(n=>`<option value="${n}" ${sessionsFilter.scenario===n?'selected':''}>${n}</option>`).join('')}
     </select>
+    <select id="filtSessionsObjection" onchange="sessionsFilter.objectionType=this.value;sessionsPage=1;renderSessions();">
+      <option value="">All Objection Types</option>
+      ${OBJECTION_TYPES.map(t=>`<option value="${t}" ${sessionsFilter.objectionType===t?'selected':''}>${objectionTypeIcon(t)} ${objectionTypeLabel(t)}</option>`).join('')}
+    </select>
     <select id="filtSessionsSkor" onchange="sessionsFilter.skor=this.value;sessionsPage=1;renderSessions();">
       <option value="">All Scores</option>
       <option value="high" ${sessionsFilter.skor==='high'?'selected':''}>High (≥70)</option>
@@ -1310,17 +1377,18 @@ async function renderSessions(){
     </select>
     <input type="date" id="filtSessionsFrom" value="${sessionsFilter.dateFrom}" onchange="sessionsFilter.dateFrom=this.value;sessionsPage=1;renderSessions();" title="From date"/>
     <input type="date" id="filtSessionsTo" value="${sessionsFilter.dateTo}" onchange="sessionsFilter.dateTo=this.value;sessionsPage=1;renderSessions();" title="To date"/>
-    <button class="btn btn-secondary" onclick="sessionsFilter={collectorId:'',scenario:'',skor:'',dateFrom:'',dateTo:''};sessionsPage=1;renderSessions();">Reset</button>
+    <button class="btn btn-secondary" onclick="sessionsFilter={collectorId:'',scenario:'',objectionType:'',skor:'',dateFrom:'',dateTo:''};sessionsPage=1;renderSessions();">Reset</button>
   </div>
   ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📋</div><p>Tiada sesi latihan sepadan dengan filter.</p></div></div>`:''}
   ${sessions.length>0?`<div class="card">
     <div class="table-wrap"><table>
-      <tr><th>Collector</th><th>Scenario</th><th>Duration</th><th>Score</th><th>Harassment Risk</th><th>Date</th><th></th></tr>
+      <tr><th>Collector</th><th>Scenario</th><th>Objection</th><th>Duration</th><th>Score</th><th>Harassment Risk</th><th>Date</th><th></th></tr>
       ${pageSessions.map(s=>{
         const u=findUserById(users,s.collectorId);
         return`<tr>
           <td><div style="font-weight:500">${u?u.name:'—'}</div><div style="font-size:11px;color:var(--text3)">${s.collectorId}</div></td>
           <td>${s.scenarioName}</td>
+          <td>${s.objectionType?`<span class="chip chip-amber" style="font-size:11px">${objectionTypeIcon(s.objectionType)} ${objectionTypeLabel(s.objectionType)}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
           <td>${s.duration}</td>
           <td><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span></td>
           <td>${s.harassmentRisk&&s.harassmentRisk!=='none'?`<span class="chip chip-red">⚠ ${s.harassmentRisk}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
@@ -1346,6 +1414,7 @@ async function viewSession(id){
   <div style="display:flex;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:8px">
     <div><div style="font-size:12px;color:var(--text3)">Collector</div><div style="font-weight:500">${u?u.name:'—'}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Scenario</div><div style="font-weight:500">${s.scenarioName}</div></div>
+    <div><div style="font-size:12px;color:var(--text3)">Jenis Penghutang</div><div style="font-weight:500">${s.objectionType?`${objectionTypeIcon(s.objectionType)} ${objectionTypeLabel(s.objectionType)}`:'-'}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Masa</div><div style="font-weight:500">${s.duration}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Date & Waktu</div><div style="font-weight:500">${fmtDateTime(s.date)}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Score</div><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}/100</span></div>
