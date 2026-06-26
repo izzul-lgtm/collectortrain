@@ -188,6 +188,12 @@ const userApi = {
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Failed to reject user.');
     return data.user;
+  },
+  async setLimit(id,maxSessionsPerDay){
+    const res=await fetch('/api/users',{method:'PATCH',headers:authHeaders(),body:JSON.stringify({id,max_sessions_per_day:maxSessionsPerDay})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to update session limit.');
+    return data.user;
   }
 };
 let usersCache=null;
@@ -197,6 +203,34 @@ async function loadUsers(force){
   return usersCache;
 }
 function findUserById(usersArr,id){return (usersArr||[]).find(u=>u.id===id);}
+
+// ── Manager-assigned mandatory scenarios ────────────────────────────────
+const assignmentApi = {
+  async list(){
+    const res=await fetch('/api/assignments',{headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load assignments.');
+    return data.assignments||[];
+  },
+  async create(collectorId,scenarioId,scenarioName,dueDate){
+    const res=await fetch('/api/assignments',{method:'POST',headers:authHeaders(),body:JSON.stringify({collectorId,scenarioId,scenarioName,dueDate})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to create assignment.');
+    return data.assignment;
+  },
+  async remove(id){
+    const res=await fetch('/api/assignments',{method:'DELETE',headers:authHeaders(),body:JSON.stringify({id})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to cancel assignment.');
+    return true;
+  }
+};
+let assignmentsCache=null;
+async function loadAssignments(force){
+  if(assignmentsCache&&!force)return assignmentsCache;
+  assignmentsCache=await assignmentApi.list();
+  return assignmentsCache;
+}
 // PERMINTAAN: tunjuk waktu (bukan tarikh sahaja) untuk setiap sesi latihan —
 // senang semak kalau ada beberapa sesi pada hari yang sama (cth nak confirm
 // sesi mana dah betul-betul masuk Supabase semasa testing/audit).
@@ -537,6 +571,7 @@ function buildNav(){
     {page:'dashboard',icon:'📈',label:'Dashboard'},
     {page:'collectors',icon:'👥',label:'All Collectors'},
     {page:'sessions',icon:'📋',label:'Training Sessions'},
+    {page:'assignments',icon:'📌',label:'Assignments'},
     {page:'scenarios',icon:'🎭',label:'Manage Scenarios'},
     {page:'users',icon:'👤',label:'Manage Users'},
   ];
@@ -566,6 +601,7 @@ function navigate(page){
     'sessions':renderSessions,
     'scenarios':renderScenarios,
     'users':renderUsers,
+    'assignments':renderAssignments,
     'call':renderCallScreen,
     'score':renderScoreScreen
   };
@@ -889,18 +925,32 @@ async function loadScenarios(force){
 
 async function renderTraining(){
   setContent('<div class="page-header"><div class="page-title">Voice Training</div></div><div class="card">Loading scenarios...</div>');
-  let scenarios, mySessions;
+  let scenarios, mySessions, myAssignments;
   try{
     scenarios=await loadScenarios();
     // API server-side dah filter: collector cuma dapat sesi dia sendiri
     // (lihat app/api/sessions/route.js GET — authUser.role==='collector'
     // → query.eq('collector_id', authUser.id)), jadi takyah filter lagi kat sini.
     mySessions=await loadSessions();
+    myAssignments=await loadAssignments(); // server pun dah filter: collector cuma dapat assignment sendiri
   }catch(e){
     setContent(`<div class="page-header"><div class="page-title">Voice Training</div></div><div class="card">⚠ Failed to load scenarios: ${e.message}</div>`);
     return;
   }
   if(!scenario&&scenarios.length)scenario=scenarios[0];
+
+  // ── Daily session cap (FASA 4) — kira sesi HARI NI je, enforce client-side
+  // (untuk UX — block awal sebelum buang masa pilih scenario) DAN server-side
+  // (app/api/sessions POST, sumber kebenaran sebenar — client ni cuma UX).
+  const todayStr=new Date().toISOString().slice(0,10);
+  const todaySessionCount=mySessions.filter(s=>s.date&&s.date.startsWith(todayStr)).length;
+  const dailyCap=currentUser.maxSessionsPerDay;
+  const dailyCapReached=dailyCap!=null&&todaySessionCount>=dailyCap;
+
+  // ── Assignment wajib (FASA 4) — scenario yang manager assign khusus untuk
+  // collector ni, status masih 'pending'. Map by scenarioId untuk badge cepat.
+  const pendingAssignments=(myAssignments||[]).filter(a=>a.status==='pending');
+  const assignedScenarioIds=new Set(pendingAssignments.map(a=>a.scenarioId));
 
   // ═══════ FASA 3: Collector Target Plan — auto-cadang scenario seterusnya ═══════
   // Guna jenis penghutang yang PALING lemah untuk collector NI SENDIRI
@@ -967,6 +1017,32 @@ async function renderTraining(){
 
   setContent(`
   <div class="page-header"><div class="page-title">Voice Training</div><div class="page-sub">Select a scenario, review the details, then start the call</div></div>
+  ${dailyCapReached?`
+  <div class="card" style="border-left:4px solid var(--red);margin-bottom:14px;background:#fff5f5">
+    <div class="card-title" style="color:var(--red)">🚫 Daily Session Limit Reached</div>
+    <p style="font-size:13px;color:var(--text2);line-height:1.6">You've completed <b>${todaySessionCount}/${dailyCap}</b> training sessions allowed today. The limit resets at midnight. Contact your manager if you need this adjusted.</p>
+  </div>`:dailyCap!=null?`
+  <div class="card" style="border-left:4px solid var(--amber);margin-bottom:14px;padding:10px 14px">
+    <span style="font-size:12px;color:var(--text2)">📊 Sessions today: <b>${todaySessionCount}/${dailyCap}</b></span>
+  </div>`:''}
+  ${pendingAssignments.length?`
+  <div class="card" style="border-left:4px solid var(--purple);margin-bottom:14px">
+    <div class="card-title">📌 Assigned to You (${pendingAssignments.length})</div>
+    <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:10px">Your manager assigned these scenarios as mandatory. Complete them by the due date.</p>
+    ${pendingAssignments.map(a=>{
+      const s=scenarios.find(x=>x.id===a.scenarioId);
+      const overdue=a.dueDate&&new Date(a.dueDate)<new Date(todayStr);
+      return`
+      <div class="sc-card ${scenario&&scenario.id===a.scenarioId?'selected':''}" style="margin-bottom:8px;cursor:${s?'pointer':'default'}" ${s?`onclick="selectScenario('${a.scenarioId}')"`:''}>
+        <div class="sc-emoji">${s?s.emoji:'❓'}</div>
+        <div class="sc-body">
+          <div class="sc-name">${a.scenarioName||(s?s.title:'(scenario deleted)')}</div>
+          <div class="sc-desc">${a.dueDate?`Due ${new Date(a.dueDate).toLocaleDateString('en-MY')}`:'No due date'}${overdue?' <span style="color:var(--red);font-weight:600">· Overdue</span>':''}</div>
+        </div>
+        <div class="sc-check">${scenario&&scenario.id===a.scenarioId?'✓':''}</div>
+      </div>`;
+    }).join('')}
+  </div>`:''}
   ${recommendedScenario?`
   <div class="card" style="border-left:4px solid var(--amber);margin-bottom:14px">
     <div class="card-title">🎯 Recommended For You</div>
@@ -993,7 +1069,7 @@ async function renderTraining(){
           <div class="sc-card ${scenario&&scenario.id===s.id?'selected':''}" onclick="selectScenario('${s.id}')">
             <div class="sc-emoji">${s.emoji}</div>
             <div class="sc-body">
-              <div class="sc-name">${s.title}${recommendedScenario&&recommendedScenario.id===s.id?' <span style="font-size:10px;color:var(--amber);font-weight:600">⭐ Recommended</span>':''}</div>
+              <div class="sc-name">${s.title}${assignedScenarioIds.has(s.id)?' <span style="font-size:10px;color:var(--purple);font-weight:600">📌 Assigned</span>':recommendedScenario&&recommendedScenario.id===s.id?' <span style="font-size:10px;color:var(--amber);font-weight:600">⭐ Recommended</span>':''}</div>
               <div class="sc-desc">${s.description||s.desc||''}</div>
               <div class="sc-meta">
                 <span class="level-badge level-${s.level}">${s.level==='easy'?'Easy':s.level==='med'?'Medium':'Hard'}</span>
@@ -1016,7 +1092,7 @@ async function renderTraining(){
           <div style="font-size:12px;color:#bf360c;margin-top:2px">Training can still run. Debtor text will appear in chat as usual.</div>
         </div>
       </div>`:''}
-      <button class="btn btn-primary" style="width:100%;padding:13px;font-size:15px;margin-top:0" onclick="startCall()">🎙 Start Training Call</button>
+      <button class="btn btn-primary" style="width:100%;padding:13px;font-size:15px;margin-top:0" ${dailyCapReached?'disabled':''} onclick="startCall()">${dailyCapReached?'🚫 Daily Limit Reached':'🎙 Start Training Call'}</button>
     </div>
   </div>`);
 }
@@ -2176,12 +2252,21 @@ async function renderUsers(){
   <div class="card">
     <div class="card-title">✅ Approved Users (${approved.length})</div>
     <div class="table-wrap"><table>
-      <tr><th>Name</th><th>ID</th><th>Role</th><th>Registered At</th><th>Actions</th></tr>
+      <tr><th>Name</th><th>ID</th><th>Role</th><th>Registered At</th><th>Daily Session Limit</th><th>Actions</th></tr>
       ${approved.map(u=>`<tr>
         <td><div style="font-weight:500">${u.name}</div></td>
         <td><span class="chip chip-purple">${u.id}</span></td>
         <td><span class="user-role-badge badge-${u.role}">${u.role==='admin'?'Admin':u.role==='manager'?'Manager':'Collector'}</span></td>
         <td style="font-size:12px;color:var(--text3)">${u.registeredAt?new Date(u.registeredAt).toLocaleDateString('en-MY'):'-'}</td>
+        <td>
+          ${u.role==='collector'?`
+          <div style="display:flex;align-items:center;gap:6px">
+            <input type="number" min="1" step="1" id="limit-${u.id}" value="${u.maxSessionsPerDay??''}" placeholder="Unlimited" style="width:80px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text)">
+            <button class="btn btn-secondary" style="padding:4px 10px;font-size:11px" onclick="saveSessionLimit('${u.id}')">Save</button>
+          </div>
+          <div style="font-size:10px;color:var(--text3);margin-top:3px">${u.maxSessionsPerDay?`Max ${u.maxSessionsPerDay} session${u.maxSessionsPerDay>1?'s':''}/day`:'No limit'}</div>
+          `:`<span style="font-size:12px;color:var(--text3)">—</span>`}
+        </td>
         <td>
           <div class="action-row">
           ${u.id!==currentUser.id?`
@@ -2194,6 +2279,22 @@ async function renderUsers(){
     </table></div>
   </div>`);
 }
+async function saveSessionLimit(id){
+  const input=document.getElementById('limit-'+id);
+  const raw=input.value.trim();
+  const val=raw===''?null:parseInt(raw,10);
+  if(val!==null&&(!Number.isInteger(val)||val<1)){
+    alert('Daily session limit must be a positive whole number, or leave empty for unlimited.');
+    return;
+  }
+  try{
+    await userApi.setLimit(id,val);
+    await loadUsers(true);
+    renderUsers();
+  }catch(e){
+    alert('Failed to update session limit: '+e.message);
+  }
+}
 async function deleteUser(id){
   if(!confirm('Delete this user?'))return;
   try{
@@ -2202,6 +2303,97 @@ async function deleteUser(id){
     renderUsers();
   }catch(e){
     alert('Failed to delete user: '+e.message);
+  }
+}
+
+// ═══════════ ASSIGNMENTS (manager-assigned mandatory scenarios) ═══════════
+async function renderAssignments(){
+  if(currentUser.role==='collector')return;
+  setContent('<div class="page-header"><div class="page-title">Assignments</div></div><div class="card">Loading...</div>');
+  let allAssignments,users,scenarios;
+  try{
+    [allAssignments,users,scenarios]=await Promise.all([loadAssignments(true),loadUsers(),loadScenarios()]);
+  }catch(e){
+    setContent(`<div class="page-header"><div class="page-title">Assignments</div></div><div class="card">⚠ Failed to load: ${e.message}</div>`);
+    return;
+  }
+  const collectors=users.filter(u=>u.role==='collector');
+  const todayStr=new Date().toISOString().slice(0,10);
+  const statusBadge=(a)=>{
+    if(a.status==='completed')return`<span class="chip" style="background:#e8f5e9;color:#2e7d32;font-size:11px">✓ Completed</span>`;
+    const overdue=a.dueDate&&a.dueDate<todayStr;
+    if(overdue)return`<span class="chip" style="background:#fdecea;color:var(--red);font-size:11px">⚠ Overdue</span>`;
+    return`<span class="chip chip-amber" style="font-size:11px">⏳ Pending</span>`;
+  };
+  setContent(`
+  <div class="page-header"><div class="page-title">Assignments</div><div class="page-sub">Assign mandatory scenarios to collectors with a due date, and track completion</div></div>
+
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-title">➕ New Assignment</div>
+    ${collectors.length===0?`<p style="font-size:13px;color:var(--text3)">No collectors registered yet.</p>`:`
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+      <div style="flex:1;min-width:160px">
+        <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">Collector</label>
+        <select id="asgCollector" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px">
+          ${collectors.map(c=>`<option value="${c.id}">${c.name} (${c.id})</option>`).join('')}
+        </select>
+      </div>
+      <div style="flex:1;min-width:200px">
+        <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">Scenario</label>
+        <select id="asgScenario" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px">
+          ${scenarios.map(s=>`<option value="${s.id}">${s.emoji} ${s.title}</option>`).join('')}
+        </select>
+      </div>
+      <div style="min-width:150px">
+        <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">Due Date (optional)</label>
+        <input type="date" id="asgDueDate" style="width:100%;padding:7px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px">
+      </div>
+      <button class="btn btn-primary" style="padding:9px 16px;font-size:13px" onclick="createAssignment()">Assign</button>
+    </div>`}
+  </div>
+
+  <div class="card">
+    <div class="card-title">All Assignments (${allAssignments.length})</div>
+    ${allAssignments.length===0?`<div class="empty-state"><div class="es-icon">📌</div><p>No assignments yet.</p></div>`:`
+    <div class="table-wrap"><table>
+      <tr><th>Collector</th><th>Scenario</th><th>Assigned By</th><th>Due Date</th><th>Status</th><th>Actions</th></tr>
+      ${allAssignments.map(a=>{
+        const c=findUserById(collectors,a.collectorId);
+        const assigner=findUserById(users,a.assignedBy);
+        return`<tr>
+          <td><div style="font-weight:500">${c?c.name:a.collectorId}</div><div style="font-size:11px;color:var(--text3)">${a.collectorId}</div></td>
+          <td>${a.scenarioName||a.scenarioId}</td>
+          <td style="font-size:12px;color:var(--text3)">${assigner?assigner.name:a.assignedBy}</td>
+          <td style="font-size:12px;color:var(--text3)">${a.dueDate?new Date(a.dueDate).toLocaleDateString('en-MY'):'—'}</td>
+          <td>${statusBadge(a)}</td>
+          <td>${a.status==='pending'?`<button class="btn btn-danger" style="padding:4px 10px;font-size:11px" onclick="cancelAssignment('${a.id}')">Cancel</button>`:'-'}</td>
+        </tr>`;
+      }).join('')}
+    </table></div>`}
+  </div>`);
+}
+async function createAssignment(){
+  const collectorId=document.getElementById('asgCollector').value;
+  const scenarioId=document.getElementById('asgScenario').value;
+  const dueDate=document.getElementById('asgDueDate').value||null;
+  const scenarios=scenariosCache||[];
+  const sc=scenarios.find(s=>s.id===scenarioId);
+  try{
+    await assignmentApi.create(collectorId,scenarioId,sc?sc.title:'',dueDate);
+    await loadAssignments(true);
+    renderAssignments();
+  }catch(e){
+    alert('Failed to create assignment: '+e.message);
+  }
+}
+async function cancelAssignment(id){
+  if(!confirm('Cancel this assignment?'))return;
+  try{
+    await assignmentApi.remove(id);
+    await loadAssignments(true);
+    renderAssignments();
+  }catch(e){
+    alert('Failed to cancel assignment: '+e.message);
   }
 }
 
@@ -2409,6 +2601,22 @@ Cakap macam manusia sebenar dalam panggilan telefon — bukan watak komedi atau 
 }
 
 async function startCall(){
+  // Defence-in-depth: button dah disable bila cap reached, tapi check lagi
+  // sini sebab mySessions/cap mungkin stale (cth dua tab dibuka serentak).
+  // Sumber kebenaran SEBENAR ialah server (app/api/sessions POST) — ni cuma
+  // elak UX janggal (collector terlanjur masuk skrin call lepas tu kena tolak).
+  if(currentUser.maxSessionsPerDay!=null){
+    try{
+      const mySessions=await loadSessions(true);
+      const todayStr=new Date().toISOString().slice(0,10);
+      const todayCount=mySessions.filter(s=>s.date&&s.date.startsWith(todayStr)).length;
+      if(todayCount>=currentUser.maxSessionsPerDay){
+        alert(`Daily session limit reached (${currentUser.maxSessionsPerDay} sessions/day). Please try again tomorrow.`);
+        renderTraining();
+        return;
+      }
+    }catch(e){/* kalau check gagal, biar server jadi penjaga akhir — jangan block training sebab network hiccup */}
+  }
   activeVoiceId=null; // reset suara — akan pick baru untuk call ni
   warmupMic(); // panaskan mic SEAWAL mungkin — sebelum collector sempat tekan butang mic (lihat nota di atas function warmupMic)
   callHistory=[];callFullTranscript=[];callSeconds=0;callActive=true;

@@ -276,3 +276,45 @@ alter table scenarios add column if not exists score_weights jsonb not null
 -- lama kekal konsisten/tepat walaupun weight scenario diubah lepas tu.
 -- null = sesi lama sebelum fix ni; app.js fallback ke 20/kategori untuk null.
 alter table sessions add column if not exists score_max jsonb;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Fasa 4 (concern kos API): Daily session cap per collector
+-- ═══════════════════════════════════════════════════════════════════
+-- PUNCA: TTS feature flag & on-demand AI analysis dah ada untuk jimat kos,
+-- tapi takde cara had berapa banyak sesi training collector boleh buat
+-- sehari — collector boleh train tak terhad, makan kos Claude/Groq/Gemini
+-- API tanpa kawalan. Column ni null = tiada had (backward compatible,
+-- semua collector sedia ada terus unlimited macam sebelum ni) — admin/
+-- manager set integer (cth 5) melalui Manage Users untuk had collector
+-- tertentu. Enforce di server (app/api/sessions POST), bukan client-side
+-- saja, supaya tak boleh bypass dengan edit JS di browser.
+alter table users add column if not exists max_sessions_per_day integer;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Fasa 4: Manager-assigned mandatory scenarios
+-- ═══════════════════════════════════════════════════════════════════
+-- PUNCA: "Recommended" scenario sedia ada cuma cadangan (collector boleh
+-- ignore terus & pilih scenario lain) — manager takde cara assign scenario
+-- WAJIB ke collector tertentu dengan due date, dan takde cara track siapa
+-- dah/belum selesaikan assignment tu.
+create table if not exists assignments (
+  id                    text primary key,
+  collector_id          text not null,
+  scenario_id           text not null,
+  scenario_name         text not null default '', -- denormalized, sama pattern macam sessions.scenario_name — kekal walau scenario diedit/dipadam lepas tu
+  assigned_by           text not null,
+  due_date              date,
+  status                text not null default 'pending' check (status in ('pending','completed','cancelled')),
+  completed_session_id  text,
+  completed_at          timestamptz,
+  created_at            timestamptz not null default now()
+);
+
+create index if not exists idx_assignments_collector on assignments(collector_id);
+create index if not exists idx_assignments_status on assignments(status);
+
+alter table assignments enable row level security;
+
+drop policy if exists "assignments_read_all" on assignments;
+create policy "assignments_read_all" on assignments
+  for select using (true);
