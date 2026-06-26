@@ -306,6 +306,7 @@ button { font-family:inherit; cursor:pointer; }
 .alert-err { background:var(--red-light); color:var(--red); border:1px solid var(--red-border); }
 .alert-ok { background:var(--green-light); color:var(--green); border:1px solid var(--green-border); }
 .alert-info { background:var(--blue-light); color:var(--blue); border:1px solid var(--blue-border); }
+.alert-warn { background:var(--amber-light); color:var(--amber); border:1px solid var(--amber-border); }
 
 /* Mobile: stack auth panels */
 @media (max-width:768px) {

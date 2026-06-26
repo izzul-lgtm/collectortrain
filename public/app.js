@@ -1496,7 +1496,10 @@ async function renderScenarios(){
   setContent(`
   <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start">
     <div><div class="page-title">Manage Scenarios</div><div class="page-sub">${scenarios.length} scenarios available</div></div>
-    <button class="btn btn-primary" onclick="openAddScenario()">+ Tambah Senario</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-secondary" onclick="openAiScenarioBuilder()">🤖 AI Scenario Builder</button>
+      <button class="btn btn-primary" onclick="openAddScenario()">+ Tambah Senario</button>
+    </div>
   </div>
   ${recommendationBanner}
   <div class="card">
@@ -1628,6 +1631,125 @@ function applyScenarioDraft(draft){
     dcWrap.innerHTML='';
     draft.disclosures.forEach(d=>addDisclosureRow(d));
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// FASA 4 (advanced): AI Scenario Builder — "import" dari voice log CRM
+// ═══════════════════════════════════════════════════════════════════
+// NOTA PENTING: app ni TAKADA sambungan terus ke Volare/CRM (takde API
+// key/integration). "Import" sebenar di sini = manager COPY-PASTE
+// transkrip/nota call dari CRM ke dalam kotak teks — itu cara paling
+// selamat & realistic memandangkan CRM kau tertutup (bukan public API).
+// PII REDACTION berjalan di BROWSER (client-side) SEBELUM apa-apa teks
+// dihantar ke Claude — supaya IC/no. telefon/no. akaun sebenar tak
+// terhantar keluar walaupun manager terlupa nak edit dulu.
+function redactPII(text){
+  let redacted=text||'';
+  const found=[];
+  // IC Malaysia: 123456-12-1234 atau 12 digit tanpa dash
+  redacted=redacted.replace(/\b\d{6}-?\d{2}-?\d{4}\b/g,m=>{found.push('IC: '+m);return '[IC DIRAHSIAKAN]';});
+  // No telefon: 01X-XXXXXXX / 01XXXXXXXXX / landline 0X-XXXXXXX
+  redacted=redacted.replace(/\b0\d{1,2}[-\s]?\d{3}[-\s]?\d{4,5}\b/g,m=>{found.push('Telefon: '+m);return '[NO TELEFON DIRAHSIAKAN]';});
+  // No akaun/rujukan (8-16 digit) — sengaja agresif sikit (boleh false-positive
+  // pada amount besar) sebab lagi baik over-redact daripada terlepas PII sebenar.
+  redacted=redacted.replace(/\b\d{8,16}\b/g,m=>{found.push('No. Akaun/Rujukan: '+m);return '[NO AKAUN DIRAHSIAKAN]';});
+  return {redacted,found};
+}
+
+function openAiScenarioBuilder(){
+  openModal(`
+  <div class="modal-title">🤖 AI Scenario Builder — Cipta Dari Transkrip Sebenar</div>
+  <p style="font-size:12px;color:var(--text3);line-height:1.6;margin-bottom:10px">Paste transkrip/nota call sebenar dari CRM/Volare di bawah. Sistem akan <b>redact PII secara automatik</b> (IC, no. telefon, no. akaun) di browser anda sebelum apa-apa dihantar ke AI, lepas tu AI akan cadangkan draf senario (jenis penghutang, checklist, situasi) untuk anda review &amp; edit — bukan auto-publish terus.</p>
+  <div class="form-row"><label>Transkrip / Nota Call</label>
+    <textarea id="aiTranscriptInput" rows="8" placeholder="Contoh:&#10;Collector: Selamat pagi Encik Ahmad, saya dari NewVest Recoveries...&#10;Debtor: Saya tak ada duit lah sekarang, kerja pun kena cut...&#10;..."></textarea>
+  </div>
+  <div id="aiRedactPreview"></div>
+  <div style="display:flex;gap:8px;margin-top:10px">
+    <button class="btn btn-secondary" onclick="previewRedaction()">🔒 Redact &amp; Preview</button>
+    <button class="btn btn-primary" id="btnGenAiDraft" onclick="generateScenarioDraftFromTranscript()" disabled>🤖 Generate Draf Senario (AI)</button>
+  </div>
+  <div id="aiDraftOut" style="margin-top:14px"></div>
+  `);
+}
+
+function previewRedaction(){
+  const raw=document.getElementById('aiTranscriptInput').value;
+  const {redacted,found}=redactPII(raw);
+  const box=document.getElementById('aiRedactPreview');
+  if(!raw.trim()){box.innerHTML='<div class="alert alert-err" style="display:block">Sila paste transkrip dahulu.</div>';return;}
+  box.innerHTML=`
+    <div class="alert ${found.length?'alert-warn':'alert-ok'}" style="display:block;margin-top:8px">
+      ${found.length?`⚠ ${found.length} item PII dah di-redact: <i>${found.slice(0,6).join(', ')}${found.length>6?` +${found.length-6} lagi`:''}</i>`:'✓ Tiada PII jelas dikesan, tapi sila semak manual sekali lagi.'}
+    </div>
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:6px;font-size:12px;white-space:pre-wrap;max-height:160px;overflow:auto">${redacted.replace(/</g,'&lt;')}</div>`;
+  // Simpan versi redacted utk hantar ke AI (bukan raw asal)
+  document.getElementById('aiTranscriptInput').dataset.redacted=redacted;
+  document.getElementById('btnGenAiDraft').disabled=false;
+}
+
+async function generateScenarioDraftFromTranscript(){
+  const btn=document.getElementById('btnGenAiDraft');
+  const out=document.getElementById('aiDraftOut');
+  const redacted=document.getElementById('aiTranscriptInput').dataset.redacted||'';
+  if(!redacted.trim()){out.innerHTML='<div class="alert alert-err" style="display:block">Sila tekan "Redact & Preview" dahulu sebelum generate.</div>';return;}
+  btn.disabled=true;btn.textContent='Menjana draf...';
+  out.innerHTML='<div style="font-size:13px;color:var(--text3)">⏳ AI sedang analisis transkrip...</div>';
+  try{
+    const prompt=`Anda pereka senario latihan untuk syarikat pemulihan hutang telco di Malaysia. Di bawah ialah transkrip call SEBENAR (PII dah di-redact — JANGAN cuba teka/isi balik IC/no.telefon/no.akaun sebenar):
+
+"""
+${redacted}
+"""
+
+Berdasarkan transkrip ni, hasilkan draf senario latihan dalam format JSON SAHAJA (tiada teks lain, tiada markdown fence), dengan struktur EXACT macam ni:
+{
+  "emoji": "(satu emoji sesuai mood penghutang)",
+  "name": "(nama watak fiktif, BUKAN nama sebenar dari transkrip)",
+  "title": "(tajuk pendek senario, cth 'Penghutang Kesusahan Kewangan - Kena Retrenchment')",
+  "description": "(1 ayat ringkas situasi)",
+  "level": "easy|med|hard",
+  "balanceTier": "low|high",
+  "objectionType": "cooperative|denial|hardship|aggressive|avoidance",
+  "customerType": "suspended|terminated|restructured|other",
+  "prompt": "(2-4 ayat arahan untuk AI berperanan sebagai penghutang ni semasa roleplay - tone, gaya respons, objection utama yang akan dia bangkitkan)",
+  "checklist": [{"cat":"tone|delivery|counter|action|balance","text":"(perkara spesifik collector patut buat, berdasarkan apa yang BERLAKU/HILANG dalam transkrip sebenar ni)"}],
+  "disclosures": ["(jika ada disclosure/maklumat wajib yang patut diucapkan, kosongkan array jika tiada)"]
+}
+Checklist kena ada 3-5 item, betul-betul berdasarkan corak SEBENAR dalam transkrip (apa collector buat baik / apa yang patut diperbaiki) — bukan generic template.`;
+    const res=await fetch('/api/claude',{method:'POST',headers:authHeaders(),
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1200,messages:[{role:'user',content:prompt}]})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Gagal generate draf.');
+    let text=(data.content?.[0]?.text||'').trim();
+    text=text.replace(/^```json\s*/i,'').replace(/```\s*$/,'').trim(); // jaga-jaga kalau AI masih bungkus dengan fence
+    let draft;
+    try{draft=JSON.parse(text);}catch{throw new Error('AI bagi format tidak sah, sila cuba lagi.');}
+    window.__aiScenarioDraft=draft; // simpan sementara, dipakai bila "Guna Draf Ni" ditekan
+    out.innerHTML=`
+      <div class="alert alert-ok" style="display:block">✓ Draf dah siap — sila REVIEW dahulu, tiada apa disimpan secara automatik.</div>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:8px">
+        <div style="font-weight:600;margin-bottom:4px">${draft.emoji||''} ${draft.title||'(tiada tajuk)'}</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:6px">${draft.description||''}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+          <span class="chip chip-amber" style="font-size:11px">${objectionTypeIcon(draft.objectionType)} ${objectionTypeLabel(draft.objectionType)}</span>
+          <span style="font-size:11px;color:var(--text3)">${customerTypeLabel(draft.customerType)}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text3)">${(draft.checklist||[]).length} checklist item dicadangkan</div>
+      </div>
+      <button class="btn btn-primary" style="margin-top:10px" onclick="useAiScenarioDraft()">✅ Guna Draf Ni → Buka Form Untuk Edit</button>`;
+  }catch(e){
+    out.innerHTML=`<div class="alert alert-err" style="display:block">⚠ ${e.message}</div>`;
+  }finally{
+    btn.disabled=false;btn.textContent='🤖 Generate Draf Senario (AI)';
+  }
+}
+
+async function useAiScenarioDraft(){
+  const draft=window.__aiScenarioDraft;
+  if(!draft)return;
+  await openAddScenario(); // bukak form Add Senario kosong dulu
+  applyScenarioDraft(draft); // lepas tu isi dengan draf AI — manager review/edit sebelum Save
+  window.__aiScenarioDraft=null;
 }
 
 async function openAddScenario(existingId,presetObjectionType){
