@@ -267,6 +267,21 @@ function weaknessByObjectionType(sessions){
     };
   }).sort((a,b)=>a.avgScore-b.avgScore); // lemah (avg score rendah) dahulu
 }
+// Scenario effectiveness: banding avg score tempoh SEMASA vs tempoh SEBELUM
+// (guna periodSessions/prevPeriodSessions yang sama dengan filter "Hari Ini/
+// Bulan Ini/Tahun Ini" kat atas dashboard) — jawapan kepada "training jenis
+// ni betul-betul beri kesan/improve, atau stagnant?"
+function trendForObjectionType(periodSessions,prevPeriodSessions,ot){
+  const cur=periodSessions.filter(s=>(s.objectionType||'unknown')===ot);
+  const prev=prevPeriodSessions.filter(s=>(s.objectionType||'unknown')===ot);
+  if(!cur.length||!prev.length)return{icon:'—',color:'var(--text3)',label:'tiada data tempoh lepas'};
+  const curAvg=Math.round(cur.reduce((a,s)=>a+(s.totalScore||0),0)/cur.length);
+  const prevAvg=Math.round(prev.reduce((a,s)=>a+(s.totalScore||0),0)/prev.length);
+  const diff=curAvg-prevAvg;
+  if(diff>=5)return{icon:'▲',color:'var(--green)',label:`+${diff} vs tempoh lepas`};
+  if(diff<=-5)return{icon:'▼',color:'var(--red)',label:`${diff} vs tempoh lepas`};
+  return{icon:'→',color:'var(--amber)',label:`${diff>=0?'+':''}${diff} vs tempoh lepas`};
+}
 // Sokong sesi lama (format communication/empathy/compliance/effectiveness) & sesi baru (format scores{})
 function scoreRows(s){
   if(s.scores){
@@ -754,18 +769,78 @@ async function renderDashboard(){
 
   <div class="card">
     <div class="card-title">🎯 Prestasi Ikut Jenis Penghutang (Objection Type)</div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Cross-tab: purata score & skill paling kerap missed, ikut corak tingkah laku penghutang — bukan sekadar skill lemah global.</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Cross-tab: purata score & skill paling kerap missed, ikut corak tingkah laku penghutang — bukan sekadar skill lemah global. Trend banding tempoh dipilih di atas (${periodLabel(dashboardPeriod)}) vs tempoh sebelumnya.</div>
     ${weaknessByObjectionType(sessions).length===0?`<div class="empty-state"><div class="es-icon">📊</div><p>Belum cukup data — pastikan senario ada Objection Type ditag.</p></div>`:
     `<div class="table-wrap"><table>
-      <tr><th>Jenis Penghutang</th><th>Sesi</th><th>Avg Score</th><th>Skill Paling Kerap Missed</th></tr>
-      ${weaknessByObjectionType(sessions).map(g=>`<tr>
+      <tr><th>Jenis Penghutang</th><th>Sesi</th><th>Avg Score</th><th>Skill Paling Kerap Missed</th><th>Trend</th></tr>
+      ${weaknessByObjectionType(sessions).map(g=>{
+        const t=trendForObjectionType(periodSessions,prevPeriodSessions,g.objectionType);
+        return`<tr>
         <td>${objectionTypeIcon(g.objectionType)} ${objectionTypeLabel(g.objectionType)}</td>
         <td>${g.count}</td>
         <td><span class="score-pill ${g.avgScore>=70?'score-high':g.avgScore>=50?'score-mid':'score-low'}">${g.avgScore}</span></td>
         <td>${g.topWeakCat?`<span class="chip chip-red">${catIcon(g.topWeakCat)} ${catLabel(g.topWeakCat)} (${g.topWeakCount}x)</span>`:'-'}</td>
-      </tr>`).join('')}
+        <td><span style="color:${t.color};font-size:12px">${t.icon} ${t.label}</span></td>
+      </tr>`;}).join('')}
     </table></div>`}
+  </div>
+
+  <div class="card">
+    <div class="card-title">🔍 Analisis Corak Kegagalan Berulang (AI)</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Guna AI untuk cari TEMA kegagalan berulang (bukan sekadar tally kategori) daripada semua sesi sedia ada, ikut jenis penghutang. Dijalankan on-demand bila ditekan — bukan auto-run setiap kali dashboard dibuka, untuk jimat kos API.</div>
+    <button id="btnAnalyzePatterns" class="btn btn-primary" style="font-size:12px" onclick="analyzeWeaknessPatterns()">🔍 Analisis Corak Kegagalan (AI)</button>
+    <div id="patternAnalysisOut" style="margin-top:12px"></div>
   </div>`);
+}
+
+// On-demand AI pattern detection — sengaja BUKAN auto-run setiap kali
+// dashboard dibuka (Izzul dah ada concern pasal kos API sebelum ni, cth
+// TTS feature flag) — hanya jalan bila manager tekan button, dan cuma 1
+// Claude call ringan (max_tokens 1200), bukan per-sesi.
+async function analyzeWeaknessPatterns(){
+  const btn=document.getElementById('btnAnalyzePatterns');
+  const out=document.getElementById('patternAnalysisOut');
+  if(!btn||!out)return;
+  btn.disabled=true;btn.textContent='Menganalisis...';
+  out.innerHTML='<div style="font-size:13px;color:var(--text3)">⏳ Sedang analisis corak kegagalan...</div>';
+  try{
+    const sessions=await loadSessions();
+    // Hadkan kepada 15 missed items terkini setiap jenis penghutang —
+    // kawal saiz prompt (kos) & elak context overflow kalau data dah banyak.
+    const byType={};
+    sessions.forEach(s=>{
+      const ot=s.objectionType||'unknown';
+      if(!byType[ot])byType[ot]=[];
+      (s.missed||[]).forEach(m=>{if(byType[ot].length<15)byType[ot].push(`[${m.category}] ${m.issue||''}`);});
+    });
+    const summary=Object.entries(byType).filter(([,arr])=>arr.length>=3)
+      .map(([ot,arr])=>`### ${objectionTypeLabel(ot)}\n${arr.map(x=>'- '+x).join('\n')}`).join('\n\n');
+    if(!summary){
+      out.innerHTML='<div style="font-size:13px;color:var(--text3)">Belum cukup data "missed" untuk analisis pattern (perlukan sekurang-kurangnya 3 isu per jenis penghutang).</div>';
+      return;
+    }
+    const prompt=`Anda QA Manager pakar debt collection di Malaysia. Di bawah disenaraikan isu "missed" (perkara yang collector gagal/lemah lakukan) dari sesi latihan, dikumpul ikut jenis penghutang (objection type):
+
+${summary}
+
+Untuk SETIAP jenis penghutang di atas, kenal pasti 2-3 CORAK kegagalan BERULANG (tema yang muncul lebih dari sekali — bukan senarai semua isu satu-satu) dan SATU cadangan coaching ringkas, spesifik & boleh terus diamalkan untuk setiap corak. Jawab dalam Bahasa Malaysia, format markdown ringkas dengan heading "### [Jenis Penghutang]" untuk setiap jenis.`;
+    const res=await fetch('/api/claude',{method:'POST',headers:authHeaders(),
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1200,messages:[{role:'user',content:prompt}]})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Gagal analisis.');
+    const text=(data.content?.[0]?.text||'Tiada hasil.');
+    // Escape HTML asas (data ni dari AI, bukan dari user, tapi tetap berjaga-jaga)
+    // lepas tu tukar newline ke <br> & heading ### ringkas, supaya senang dibaca.
+    const escaped=text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const html=escaped
+      .replace(/^### (.+)$/gm,'<div style="font-weight:600;margin-top:14px;margin-bottom:4px">🎯 $1</div>')
+      .replace(/\n/g,'<br>');
+    out.innerHTML=`<div style="font-size:13px;line-height:1.7;color:var(--text2)">${html}</div>`;
+  }catch(e){
+    out.innerHTML=`<div style="font-size:13px;color:var(--red)">⚠ Gagal analisis: ${e.message}</div>`;
+  }finally{
+    btn.disabled=false;btn.textContent='🔍 Analisis Corak Kegagalan (AI)';
+  }
 }
 
 // Cache senario dalam memory supaya selectScenario() (klik kad senario) tak
@@ -1330,18 +1405,31 @@ async function viewSession(id){
 async function renderScenarios(){
   if(currentUser.role==='collector')return;
   setContent('<div class="page-header"><div class="page-title">Manage Scenarios</div></div><div class="card">Memuatkan senario...</div>');
-  let scenarios;
+  let scenarios, sessions;
   try{
     scenarios=await loadScenarios(true); // force=true: manager perlu data terkini, bukan cache lama
+    sessions=await loadSessions();
   }catch(e){
     setContent(`<div class="page-header"><div class="page-title">Manage Scenarios</div></div><div class="card">⚠ Gagal memuatkan senario: ${e.message}</div>`);
     return;
   }
+  // Weakness-to-scenario link: cadang jenis senario apa nak fokus seterusnya,
+  // berdasarkan data sesi sebenar (bukan tekaan manager). Minimum 3 sesi
+  // supaya cadangan ni ada asas data, bukan dari 1-2 sesi outlier.
+  const weakGroups=weaknessByObjectionType(sessions).filter(g=>g.count>=3);
+  const recommendation=weakGroups.length?weakGroups[0]:null; // dah sorted, avgScore terendah dahulu
+  const recommendationBanner=recommendation?`
+  <div class="card" style="border-left:4px solid var(--amber)">
+    <div class="card-title">🎯 Recommended Focus <span style="font-weight:400;color:var(--text3);font-size:11px">(auto-generated dari data sesi sebenar)</span></div>
+    <p style="font-size:13px;color:var(--text2);line-height:1.6">Team paling lemah bila lawan penghutang jenis <b>${objectionTypeLabel(recommendation.objectionType)}</b> — avg score <b>${recommendation.avgScore}/100</b> daripada ${recommendation.count} sesi${recommendation.topWeakCat?`, terutamanya pada skill <b>${catLabel(recommendation.topWeakCat)}</b> (${recommendation.topWeakCount}x missed)`:''}.</p>
+    <button class="btn btn-primary" style="margin-top:6px;font-size:12px" onclick="openAddScenario(null,'${recommendation.objectionType}')">+ Cipta Senario ${objectionTypeLabel(recommendation.objectionType)} Baru</button>
+  </div>`:'';
   setContent(`
   <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start">
     <div><div class="page-title">Manage Scenarios</div><div class="page-sub">${scenarios.length} scenarios available</div></div>
     <button class="btn btn-primary" onclick="openAddScenario()">+ Tambah Senario</button>
   </div>
+  ${recommendationBanner}
   <div class="card">
     <div class="table-wrap"><table>
       <tr><th>Emoji</th><th>Name</th><th>Client</th><th>Title</th><th>Objection</th><th>Customer Type</th><th>Debt</th><th>Balance</th><th>Level</th><th>Checklist</th><th>Actions</th></tr>
@@ -1473,7 +1561,7 @@ function applyScenarioDraft(draft){
   }
 }
 
-async function openAddScenario(existingId){
+async function openAddScenario(existingId,presetObjectionType){
   const scenarios=await loadScenarios();
   const s=existingId?scenarios.find(x=>x.id===existingId):null;
   // Client "Lain-lain" — kalau client sedia ada bukan salah satu dari 3
@@ -1520,7 +1608,7 @@ async function openAddScenario(existingId){
   <div class="two-col">
     <div class="form-row"><label>Objection Type <span style="font-weight:400;color:var(--text3)">(corak tingkah laku penghutang semasa call — untuk analytics weakness ikut jenis)</span></label>
       <select id="scObjectionType">
-        ${OBJECTION_TYPES.map(t=>`<option value="${t}" ${s&&s.objectionType===t?'selected':(!s&&t==='cooperative'?'selected':'')}>${objectionTypeIcon(t)} ${objectionTypeLabel(t)}</option>`).join('')}
+        ${OBJECTION_TYPES.map(t=>`<option value="${t}" ${s&&s.objectionType===t?'selected':(!s&&t===(presetObjectionType||'cooperative')?'selected':'')}>${objectionTypeIcon(t)} ${objectionTypeLabel(t)}</option>`).join('')}
       </select>
     </div>
     <div class="form-row"><label>Customer Type <span style="font-weight:400;color:var(--text3)">(segmen akaun — rujuk bucket assignment SOP-COL-002)</span></label>
