@@ -1670,9 +1670,11 @@ async function approveUser(id,approve){
     if(approve){
       await userApi.approve(id);
     } else {
-      if(!confirm('Reject and revoke access for this user?'))return;
-      await userApi.reject(id);
+      // Reject = delete the account entirely (pending requests don't need to linger)
+      if(!confirm('Reject this account? The registration will be permanently deleted.'))return;
+      await userApi.remove(id);
     }
+    usersCache=null;
     await loadUsers(true);
     renderUsers();
   }catch(e){
