@@ -3571,7 +3571,7 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
 
   try{
     const res=await fetch('/api/claude',{method:'POST',headers:authHeaders(),
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:2600,messages:[{role:'user',content:prompt}]})});
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:4096,messages:[{role:'user',content:prompt}]})});
     const data=await res.json();
     const raw=(data.content?.[0]?.text||'{}').replace(/```json|```/g,'').trim();
     let r;
@@ -3581,8 +3581,16 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
       // Cuba selamatkan JSON jika Claude tambah teks luar {...} atau ada
       // pemotongan kecil di hujung — ambil dari '{' pertama ke '}' terakhir.
       const start=raw.indexOf('{');const end=raw.lastIndexOf('}');
-      if(start===-1||end<=start)throw parseErr;
-      r=JSON.parse(raw.slice(start,end+1));
+      if(start===-1||end<=start){
+        console.error('[evalCall] JSON parse gagal, raw response:',raw);
+        throw parseErr;
+      }
+      try{
+        r=JSON.parse(raw.slice(start,end+1));
+      }catch(repairErr){
+        console.error('[evalCall] JSON repair pun gagal, raw response:',raw);
+        throw repairErr;
+      }
     }
     const rawScores=Object.assign({tone:0,delivery:0,counter:0,action:0,balance:0},r.scores||{});
     // Skala markah mentah AI (0-20 setiap kategori) ke max yang sudah dinormalise
