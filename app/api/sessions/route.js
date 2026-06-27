@@ -10,6 +10,7 @@ function toClientShape(row) {
     duration: row.duration,
     totalScore: row.total_score,
     scores: row.scores || {},
+    scoreMax: row.score_max || null,
     scoreReasons: row.score_reasons || {},
     strengths: row.strengths || [],
     missed: row.missed || [],
@@ -33,6 +34,7 @@ function toDbShape(data) {
     duration: data.duration,
     total_score: data.totalScore,
     scores: data.scores || {},
+    score_max: data.scoreMax || null,
     score_reasons: data.scoreReasons || {},
     strengths: data.strengths || [],
     missed: data.missed || [],
@@ -90,12 +92,49 @@ export async function POST(req) {
     }
 
     const sb = supabaseAdmin();
+
+    // ── Daily session cap (enforce di server, BUKAN client-side saja —
+    // collector tak boleh bypass dengan edit JS di browser) ──────────────
+    if (authUser.role === 'collector') {
+      const { data: userRow, error: userErr } = await sb
+        .from('users')
+        .select('max_sessions_per_day')
+        .eq('id', authUser.id)
+        .maybeSingle();
+      if (userErr) throw userErr;
+      const cap = userRow?.max_sessions_per_day;
+      if (cap != null) {
+        const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+        const { count, error: countErr } = await sb
+          .from('sessions')
+          .select('id', { count: 'exact', head: true })
+          .eq('collector_id', authUser.id)
+          .gte('created_at', todayStart.toISOString());
+        if (countErr) throw countErr;
+        if ((count || 0) >= cap) {
+          return Response.json({ error: `Daily session limit reached (${cap} session${cap > 1 ? 's' : ''}/day). Please try again tomorrow, or ask your manager to adjust your limit.` }, { status: 429 });
+        }
+      }
+    }
+
     const { data, error } = await sb
       .from('sessions')
       .insert(toDbShape(body))
       .select()
       .single();
     if (error) throw error;
+
+    // ── Auto-complete matching assignment, kalau sesi ni padan dengan
+    // assignment "pending" untuk collector & scenario yang sama ───────────
+    if (body.collectorId && body.scenarioId) {
+      await sb
+        .from('assignments')
+        .update({ status: 'completed', completed_session_id: data.id, completed_at: new Date().toISOString() })
+        .eq('collector_id', body.collectorId)
+        .eq('scenario_id', body.scenarioId)
+        .eq('status', 'pending');
+    }
+
     return Response.json({ session: toClientShape(data) });
   } catch (e) {
     return Response.json({ error: e.message || 'Gagal simpan sesi latihan.' }, { status: 500 });

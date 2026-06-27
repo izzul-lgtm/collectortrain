@@ -188,6 +188,12 @@ const userApi = {
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Failed to reject user.');
     return data.user;
+  },
+  async setLimit(id,maxSessionsPerDay){
+    const res=await fetch('/api/users',{method:'PATCH',headers:authHeaders(),body:JSON.stringify({id,max_sessions_per_day:maxSessionsPerDay})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to update session limit.');
+    return data.user;
   }
 };
 let usersCache=null;
@@ -197,6 +203,34 @@ async function loadUsers(force){
   return usersCache;
 }
 function findUserById(usersArr,id){return (usersArr||[]).find(u=>u.id===id);}
+
+// ── Manager-assigned mandatory scenarios ────────────────────────────────
+const assignmentApi = {
+  async list(){
+    const res=await fetch('/api/assignments',{headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load assignments.');
+    return data.assignments||[];
+  },
+  async create(collectorId,scenarioId,scenarioName,dueDate){
+    const res=await fetch('/api/assignments',{method:'POST',headers:authHeaders(),body:JSON.stringify({collectorId,scenarioId,scenarioName,dueDate})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to create assignment.');
+    return data.assignment;
+  },
+  async remove(id){
+    const res=await fetch('/api/assignments',{method:'DELETE',headers:authHeaders(),body:JSON.stringify({id})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to cancel assignment.');
+    return true;
+  }
+};
+let assignmentsCache=null;
+async function loadAssignments(force){
+  if(assignmentsCache&&!force)return assignmentsCache;
+  assignmentsCache=await assignmentApi.list();
+  return assignmentsCache;
+}
 // PERMINTAAN: tunjuk waktu (bukan tarikh sahaja) untuk setiap sesi latihan —
 // senang semak kalau ada beberapa sesi pada hari yang sama (cth nak confirm
 // sesi mana dah betul-betul masuk Supabase semasa testing/audit).
@@ -278,14 +312,14 @@ function trendForObjectionType(periodSessions,prevPeriodSessions,ot){
   const curAvg=Math.round(cur.reduce((a,s)=>a+(s.totalScore||0),0)/cur.length);
   const prevAvg=Math.round(prev.reduce((a,s)=>a+(s.totalScore||0),0)/prev.length);
   const diff=curAvg-prevAvg;
-  if(diff>=5)return{icon:'▲',color:'var(--green)',label:`+${diff} vs tempoh lepas`};
-  if(diff<=-5)return{icon:'▼',color:'var(--red)',label:`${diff} vs tempoh lepas`};
-  return{icon:'→',color:'var(--amber)',label:`${diff>=0?'+':''}${diff} vs tempoh lepas`};
+  if(diff>=5)return{icon:'▲',color:'var(--green)',label:`+${diff} vs previous period`};
+  if(diff<=-5)return{icon:'▼',color:'var(--red)',label:`${diff} vs previous period`};
+  return{icon:'→',color:'var(--amber)',label:`${diff>=0?'+':''}${diff} vs previous period`};
 }
 // Sokong sesi lama (format communication/empathy/compliance/effectiveness) & sesi baru (format scores{})
 function scoreRows(s){
   if(s.scores){
-    return SCORE_CATS.map(c=>[catLabel(c),s.scores[c]||0,20,c,(s.scoreReasons&&s.scoreReasons[c])||'']);
+    return SCORE_CATS.map(c=>[catLabel(c),s.scores[c]||0,(s.scoreMax&&s.scoreMax[c])||20,c,(s.scoreReasons&&s.scoreReasons[c])||'']);
   }
   return [['Komunikasi',s.communication||0,25],['Empati',s.empathy||0,25],['Pematuhan',s.compliance||0,25],['Keberkesanan',s.effectiveness||0,25]];
 }
@@ -337,7 +371,7 @@ function paginationBar(currentPage,totalItems,pageSize,onPageChange){
   if(totalPages<=1)return'';
   return`
   <div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:14px 0 4px">
-    <button class="btn btn-secondary" style="padding:5px 12px;font-size:12px" ${currentPage<=1?'disabled':''} onclick="${onPageChange}(${currentPage-1})">‹ Sebelum</button>
+    <button class="btn btn-secondary" style="padding:5px 12px;font-size:12px" ${currentPage<=1?'disabled':''} onclick="${onPageChange}(${currentPage-1})">‹ Previous</button>
     <span style="font-size:12px;color:var(--text3)">Muka ${currentPage} dari ${totalPages}</span>
     <button class="btn btn-secondary" style="padding:5px 12px;font-size:12px" ${currentPage>=totalPages?'disabled':''} onclick="${onPageChange}(${currentPage+1})">Next ›</button>
   </div>`;
@@ -348,6 +382,10 @@ function goMyHistoryPage(p){myHistoryPage=p;renderMyHistory();}
 // Filter dashboard "Hari Ini / Bulan Ini / Tahun Ini / Semua" — supaya admin/manager
 // senang nak tengok prestasi ikut tempoh tertentu tanpa kira manual dari senarai penuh.
 let dashboardPeriod='all';
+// Custom range state — dipakai bila dashboardPeriod==='custom'. Disimpan sebagai
+// string 'YYYY-MM-DD' (terus dari <input type=date>) supaya senang nak bind balik ke input.
+let dashboardCustomFrom='';
+let dashboardCustomTo='';
 function getPeriodRange(period){
   const now=new Date();
   if(period==='day'){
@@ -365,9 +403,15 @@ function getPeriodRange(period){
     const end=new Date(now.getFullYear()+1,0,1);
     return{start,end};
   }
+  if(period==='custom'){
+    if(!dashboardCustomFrom||!dashboardCustomTo)return null; // belum lengkap pilih — anggap macam 'all'
+    const start=new Date(dashboardCustomFrom+'T00:00:00');
+    const end=new Date(dashboardCustomTo+'T00:00:00');end.setDate(end.getDate()+1); // inclusive sampai hujung hari 'to'
+    return{start,end};
+  }
   return null; // 'all' — tiada had tarikh
 }
-// Tempoh SEBELUM tempoh semasa (sama jenis) — untuk kira trend ▲▼ vs tempoh lepas
+// Tempoh SEBELUM tempoh semasa (sama jenis) — untuk kira trend ▲▼ vs previous period
 function getPrevPeriodRange(period){
   const now=new Date();
   if(period==='day'){
@@ -385,6 +429,14 @@ function getPrevPeriodRange(period){
     const end=new Date(now.getFullYear(),0,1);
     return{start,end};
   }
+  if(period==='custom'){
+    const r=getPeriodRange('custom');
+    if(!r)return null;
+    const days=Math.round((r.end-r.start)/86400000);
+    const start=new Date(r.start);start.setDate(start.getDate()-days);
+    const end=new Date(r.start);
+    return{start,end};
+  }
   return null;
 }
 function filterSessionsByRange(sessions,range){
@@ -392,9 +444,15 @@ function filterSessionsByRange(sessions,range){
   return sessions.filter(s=>{const d=new Date(s.date);return d>=range.start&&d<range.end;});
 }
 function periodLabel(period){
+  if(period==='custom'){
+    if(!dashboardCustomFrom||!dashboardCustomTo)return 'Custom Range';
+    return `${dashboardCustomFrom} → ${dashboardCustomTo}`;
+  }
   return{day:'Today',month:'This Month',year:'This Year'}[period]||'All Time';
 }
 function setDashboardPeriod(p){dashboardPeriod=p;renderDashboard();}
+function setDashboardCustomFrom(v){dashboardCustomFrom=v;if(dashboardPeriod==='custom')renderDashboard();}
+function setDashboardCustomTo(v){dashboardCustomTo=v;if(dashboardPeriod==='custom')renderDashboard();}
 
 // Tapis array sesi berdasarkan satu set filter (dipakai oleh renderSessions
 // & renderMyHistory — logik sama, beza saja sumber filter & ada/tiada collectorId).
@@ -513,6 +571,7 @@ function buildNav(){
     {page:'dashboard',icon:'📈',label:'Dashboard'},
     {page:'collectors',icon:'👥',label:'All Collectors'},
     {page:'sessions',icon:'📋',label:'Training Sessions'},
+    {page:'assignments',icon:'📌',label:'Assignments'},
     {page:'scenarios',icon:'🎭',label:'Manage Scenarios'},
     {page:'users',icon:'👤',label:'Manage Users'},
   ];
@@ -542,6 +601,7 @@ function navigate(page){
     'sessions':renderSessions,
     'scenarios':renderScenarios,
     'users':renderUsers,
+    'assignments':renderAssignments,
     'call':renderCallScreen,
     'score':renderScoreScreen
   };
@@ -633,7 +693,7 @@ async function renderDashboard(){
     }).join('');
   }
 
-  // Stat card: minggu ini vs minggu lepas (semua collector)
+  // Stat card: minggu ini vs last week (semua collector)
   const thisWeekSessions=sessions.filter(s=>{const d=new Date(s.date);return d>=thisWeek.start&&d<thisWeek.end;});
   const lastWeekSessions=sessions.filter(s=>{const d=new Date(s.date);return d>=lastWeek.start&&d<lastWeek.end;});
   const thisWeekAvg=thisWeekSessions.length?Math.round(thisWeekSessions.reduce((a,s)=>a+s.totalScore,0)/thisWeekSessions.length):null;
@@ -645,24 +705,31 @@ async function renderDashboard(){
 
   <div class="card" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px">
     <span style="font-size:12px;color:var(--text3);margin-right:4px">Performance Period:</span>
-    ${periodBtn('day','Hari Ini')}
-    ${periodBtn('month','Bulan Ini')}
-    ${periodBtn('year','Tahun Ini')}
-    ${periodBtn('all','Keseluruhan')}
+    ${periodBtn('day','Today')}
+    ${periodBtn('month','This Month')}
+    ${periodBtn('year','This Year')}
+    ${periodBtn('all','All Time')}
+    ${periodBtn('custom','Custom Range')}
+    ${dashboardPeriod==='custom'?`
+      <span style="display:flex;align-items:center;gap:6px;margin-left:4px">
+        <input type="date" value="${dashboardCustomFrom}" onchange="setDashboardCustomFrom(this.value)" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text)">
+        <span style="font-size:12px;color:var(--text3)">to</span>
+        <input type="date" value="${dashboardCustomTo}" onchange="setDashboardCustomTo(this.value)" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text)">
+      </span>`:''}
   </div>
 
   <div class="stats-grid">
     <div class="stat-card"><div class="stat-label">Total Sessions</div><div class="stat-val">${periodSessions.length}</div><div class="stat-sub">${periodLabel(dashboardPeriod)}</div></div>
-    <div class="stat-card"><div class="stat-label">Average Score</div><div class="stat-val">${periodAvg}</div><div class="stat-sub">${periodDiff!==null?`<span style="color:${periodDiff>=0?'var(--green)':'var(--red)'}">${periodDiff>=0?'▲ +':'▼ '}${periodDiff} vs tempoh lepas</span>`:'/ 100'}</div></div>
-    <div class="stat-card"><div class="stat-label">Session Hari Ini</div><div class="stat-val">${todaySessions}</div><div class="stat-sub">Latihan hari ini</div></div>
-    <div class="stat-card"><div class="stat-label">Score Minggu Ini</div><div class="stat-val">${thisWeekAvg!==null?thisWeekAvg:'—'}</div><div class="stat-sub">${weekDiff!==null?`<span style="color:${weekDiff>=0?'var(--green)':'var(--red)'}">${weekDiff>=0?'▲ +':'▼ '}${weekDiff} vs minggu lepas</span>`:`${thisWeekSessions.length} sesi minggu ini`}</div></div>
-    <div class="stat-card"><div class="stat-label">Compliance Issues</div><div class="stat-val" style="color:${periodFlagged.length?'var(--red)':'inherit'}">${periodFlagged.length}</div><div class="stat-sub">Session berisiko · ${periodLabel(dashboardPeriod)}</div></div>
+    <div class="stat-card"><div class="stat-label">Average Score</div><div class="stat-val">${periodAvg}</div><div class="stat-sub">${periodDiff!==null?`<span style="color:${periodDiff>=0?'var(--green)':'var(--red)'}">${periodDiff>=0?'▲ +':'▼ '}${periodDiff} vs previous period</span>`:'/ 100'}</div></div>
+    <div class="stat-card"><div class="stat-label">Sessions Today</div><div class="stat-val">${todaySessions}</div><div class="stat-sub">Training today</div></div>
+    <div class="stat-card"><div class="stat-label">Score This Week</div><div class="stat-val">${thisWeekAvg!==null?thisWeekAvg:'—'}</div><div class="stat-sub">${weekDiff!==null?`<span style="color:${weekDiff>=0?'var(--green)':'var(--red)'}">${weekDiff>=0?'▲ +':'▼ '}${weekDiff} vs last week</span>`:`${thisWeekSessions.length} sessions this week`}</div></div>
+    <div class="stat-card"><div class="stat-label">Compliance Issues</div><div class="stat-val" style="color:${periodFlagged.length?'var(--red)':'inherit'}">${periodFlagged.length}</div><div class="stat-sub">Risky sessions · ${periodLabel(dashboardPeriod)}</div></div>
   </div>
 
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <div class="card-title" style="margin-bottom:0">📅 Trend Mingguan Per Collector (4 Minggu)</div>
-      <div style="font-size:11px;color:var(--text3)">Purata markah · Isnin–Ahad</div>
+      <div class="card-title" style="margin-bottom:0">📅 Weekly Trend Per Collector (4 Weeks)</div>
+      <div style="font-size:11px;color:var(--text3)">Average score · Mon–Sun</div>
     </div>
     <div style="display:grid;grid-template-columns:160px 1fr;gap:12px;align-items:center;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border)">
       <div style="font-size:11px;color:var(--text3)">Name · Trend</div>
@@ -670,7 +737,7 @@ async function renderDashboard(){
         ${WEEKS.map((w,i)=>`<div style="flex:1;text-align:center;font-size:11px;font-weight:600;color:${i===3?'var(--purple)':'var(--text3)'}">${w.label}${i===3?' ★':''}</div>`).join('')}
       </div>
     </div>
-    ${collectors.length===0?`<div class="empty-state"><div class="es-icon">👥</div><p>Belum ada collector berdaftar.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Daftar akaun collector dari menu <strong>Manage Users</strong>.</p></div>`:''}
+    ${collectors.length===0?`<div class="empty-state"><div class="es-icon">👥</div><p>No collectors registered yet.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Register a collector account from the <strong>Manage Users</strong> menu.</p></div>`:''}
     ${collectors.map(c=>{
       const wData=weeklyData(c.id);
       const arrow=trendArrow(wData);
@@ -685,7 +752,7 @@ async function renderDashboard(){
             <span style="font-size:14px;color:${arrow.color};font-weight:700">${arrow.icon}</span>
             ${arrow.label?`<span style="font-size:11px;color:${arrow.color};font-weight:600">${arrow.label}</span>`:''}
           </div>
-          <div style="font-size:10px;color:var(--text3);margin-top:3px">${cs.length} sesi jumlah</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:3px">${cs.length} total sessions</div>
         </div>
         <div style="display:flex;align-items:flex-end;gap:6px;height:80px">
           ${weeklyBars(wData)}
@@ -699,8 +766,8 @@ async function renderDashboard(){
 
   <div class="two-col">
     <div class="card">
-      <div class="card-title">Prestasi Per Collector — ${periodLabel(dashboardPeriod)}</div>
-      ${collectors.length===0?`<div class="empty-state"><div class="es-icon">👥</div><p>Tiada collector lagi</p></div>`:''}
+      <div class="card-title">Performance Per Collector — ${periodLabel(dashboardPeriod)}</div>
+      ${collectors.length===0?`<div class="empty-state"><div class="es-icon">👥</div><p>No collectors yet</p></div>`:''}
       ${collectors.map(c=>{
         const cs=periodSessions.filter(s=>s.collectorId===c.id);
         const avg=cs.length?Math.round(cs.reduce((a,s)=>a+s.totalScore,0)/cs.length):0;
@@ -718,13 +785,13 @@ async function renderDashboard(){
           <div style="background:var(--bg);border-radius:3px;height:6px;overflow:hidden">
             <div style="height:100%;width:${avg}%;background:${avg>=70?'#5CB85C':avg>=50?'#F0AD4E':'#E24B4A'};border-radius:3px;transition:width 0.5s"></div>
           </div>
-          <div style="font-size:11px;color:var(--text3);margin-top:2px">${cs.length} sesi · ${periodLabel(dashboardPeriod)}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px">${cs.length} sessions · ${periodLabel(dashboardPeriod)}</div>
         </div>`;
       }).join('')}
     </div>
     <div class="card">
-      <div class="card-title">Session Terbaru</div>
-      ${recentSessions.length===0?`<div class="empty-state"><div class="es-icon">📋</div><p>Tiada sesi latihan lagi.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Collector boleh mulakan latihan dari menu <strong>Voice Training</strong>.</p></div>`:''}
+      <div class="card-title">Recent Sessions</div>
+      ${recentSessions.length===0?`<div class="empty-state"><div class="es-icon">📋</div><p>No training sessions yet.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Collectors can start training from the <strong>Voice Training</strong> menu.</p></div>`:''}
       ${recentSessions.map(s=>{
         const u=findUserById(users,s.collectorId);
         return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
@@ -737,8 +804,8 @@ async function renderDashboard(){
 
   <div class="two-col">
     <div class="card">
-      <div class="card-title">🎯 Aspek Paling Kerap Tersilap (Seluruh Pasukan)</div>
-      ${weakness.length===0?`<div class="empty-state"><div class="es-icon">📊</div><p>Belum cukup data untuk analisis.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Perlukan sekurang-kurangnya 3 sesi latihan.</p></div>`:
+      <div class="card-title">🎯 Most Frequently Missed Aspects (Whole Team)</div>
+      ${weakness.length===0?`<div class="empty-state"><div class="es-icon">📊</div><p>Not enough data for analysis yet.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Requires at least 3 training sessions.</p></div>`:
       weakness.slice(0,5).map(([cat,count])=>{
         const pct=weaknessTotal?Math.round(count/weaknessTotal*100):0;
         return`<div style="margin-bottom:12px">
@@ -753,15 +820,15 @@ async function renderDashboard(){
       }).join('')}
     </div>
     <div class="card">
-      <div class="card-title">⚠ Isu Pematuhan / Harassment Terkini</div>
-      ${recentFlagged.length===0?`<div class="empty-state"><div class="es-icon">✅</div><p>Tiada isu pematuhan dikesan setakat ini.</p></div>`:
+      <div class="card-title">⚠ Recent Compliance / Harassment Issues</div>
+      ${recentFlagged.length===0?`<div class="empty-state"><div class="es-icon">✅</div><p>No compliance issues detected so far.</p></div>`:
       recentFlagged.map(s=>{
         const u=findUserById(users,s.collectorId);
         return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-size:13px;font-weight:500">${u?u.name:'—'}</div><div style="font-size:11px;color:var(--text3)">${s.scenarioName}</div></div>
           <div style="display:flex;align-items:center;gap:6px">
             <span class="chip ${s.harassmentRisk==='high'?'chip-red':'chip-amber'}">⚠ ${s.harassmentRisk}</span>
-            <button class="btn btn-secondary" style="padding:3px 8px;font-size:11px" onclick="viewSession('${s.id}')">Lihat</button>
+            <button class="btn btn-secondary" style="padding:3px 8px;font-size:11px" onclick="viewSession('${s.id}')">View</button>
           </div>
         </div>`;
       }).join('')}
@@ -769,11 +836,11 @@ async function renderDashboard(){
   </div>
 
   <div class="card">
-    <div class="card-title">🎯 Prestasi Ikut Jenis Penghutang (Objection Type)</div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Cross-tab: purata score & skill paling kerap missed, ikut corak tingkah laku penghutang — bukan sekadar skill lemah global. Trend banding tempoh dipilih di atas (${periodLabel(dashboardPeriod)}) vs tempoh sebelumnya.</div>
-    ${weaknessByObjectionType(sessions).length===0?`<div class="empty-state"><div class="es-icon">📊</div><p>Belum cukup data — pastikan senario ada Objection Type ditag.</p></div>`:
+    <div class="card-title">🎯 Performance By Debtor Type (Objection Type)</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Cross-tab: average score & most frequently missed skill, by debtor behavior pattern — not just a global weak skill. Trend compares the period selected above (${periodLabel(dashboardPeriod)}) vs the previous period.</div>
+    ${weaknessByObjectionType(sessions).length===0?`<div class="empty-state"><div class="es-icon">📊</div><p>Not enough data yet — make sure scenarios have Objection Type tagged.</p></div>`:
     `<div class="table-wrap"><table>
-      <tr><th>Jenis Penghutang</th><th>Sesi</th><th>Avg Score</th><th>Skill Paling Kerap Missed</th><th>Trend</th></tr>
+      <tr><th>Debtor Type</th><th>Sessions</th><th>Avg Score</th><th>Most Frequently Missed Skill</th><th>Trend</th></tr>
       ${weaknessByObjectionType(sessions).map(g=>{
         const t=trendForObjectionType(periodSessions,prevPeriodSessions,g.objectionType);
         return`<tr>
@@ -787,9 +854,9 @@ async function renderDashboard(){
   </div>
 
   <div class="card">
-    <div class="card-title">🔍 Analisis Corak Kegagalan Berulang (AI)</div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Guna AI untuk cari TEMA kegagalan berulang (bukan sekadar tally kategori) daripada semua sesi sedia ada, ikut jenis penghutang. Dijalankan on-demand bila ditekan — bukan auto-run setiap kali dashboard dibuka, untuk jimat kos API.</div>
-    <button id="btnAnalyzePatterns" class="btn btn-primary" style="font-size:12px" onclick="analyzeWeaknessPatterns()">🔍 Analisis Corak Kegagalan (AI)</button>
+    <div class="card-title">🔍 Recurring Failure Pattern Analysis (AI)</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Uses AI to find recurring failure THEMES (not just a category tally) across all existing sessions, by debtor type. Runs on-demand when clicked — not auto-run every time the dashboard opens, to save API cost.</div>
+    <button id="btnAnalyzePatterns" class="btn btn-primary" style="font-size:12px" onclick="analyzeWeaknessPatterns()">🔍 Analyze Failure Patterns (AI)</button>
     <div id="patternAnalysisOut" style="margin-top:12px"></div>
   </div>`);
 }
@@ -803,7 +870,7 @@ async function analyzeWeaknessPatterns(){
   const out=document.getElementById('patternAnalysisOut');
   if(!btn||!out)return;
   btn.disabled=true;btn.textContent='Menganalisis...';
-  out.innerHTML='<div style="font-size:13px;color:var(--text3)">⏳ Sedang analisis corak kegagalan...</div>';
+  out.innerHTML='<div style="font-size:13px;color:var(--text3)">⏳ Analyzing failure patterns...</div>';
   try{
     const sessions=await loadSessions();
     // Hadkan kepada 15 missed items terkini setiap jenis penghutang —
@@ -817,7 +884,7 @@ async function analyzeWeaknessPatterns(){
     const summary=Object.entries(byType).filter(([,arr])=>arr.length>=3)
       .map(([ot,arr])=>`### ${objectionTypeLabel(ot)}\n${arr.map(x=>'- '+x).join('\n')}`).join('\n\n');
     if(!summary){
-      out.innerHTML='<div style="font-size:13px;color:var(--text3)">Belum cukup data "missed" untuk analisis pattern (perlukan sekurang-kurangnya 3 isu per jenis penghutang).</div>';
+      out.innerHTML='<div style="font-size:13px;color:var(--text3)">Not enough "missed" data for pattern analysis yet (requires at least 3 issues per debtor type).</div>';
       return;
     }
     const prompt=`Anda QA Manager pakar debt collection di Malaysia. Di bawah disenaraikan isu "missed" (perkara yang collector gagal/lemah lakukan) dari sesi latihan, dikumpul ikut jenis penghutang (objection type):
@@ -858,18 +925,32 @@ async function loadScenarios(force){
 
 async function renderTraining(){
   setContent('<div class="page-header"><div class="page-title">Voice Training</div></div><div class="card">Loading scenarios...</div>');
-  let scenarios, mySessions;
+  let scenarios, mySessions, myAssignments;
   try{
     scenarios=await loadScenarios();
     // API server-side dah filter: collector cuma dapat sesi dia sendiri
     // (lihat app/api/sessions/route.js GET — authUser.role==='collector'
     // → query.eq('collector_id', authUser.id)), jadi takyah filter lagi kat sini.
     mySessions=await loadSessions();
+    myAssignments=await loadAssignments(); // server pun dah filter: collector cuma dapat assignment sendiri
   }catch(e){
     setContent(`<div class="page-header"><div class="page-title">Voice Training</div></div><div class="card">⚠ Failed to load scenarios: ${e.message}</div>`);
     return;
   }
   if(!scenario&&scenarios.length)scenario=scenarios[0];
+
+  // ── Daily session cap (FASA 4) — kira sesi HARI NI je, enforce client-side
+  // (untuk UX — block awal sebelum buang masa pilih scenario) DAN server-side
+  // (app/api/sessions POST, sumber kebenaran sebenar — client ni cuma UX).
+  const todayStr=new Date().toISOString().slice(0,10);
+  const todaySessionCount=mySessions.filter(s=>s.date&&s.date.startsWith(todayStr)).length;
+  const dailyCap=currentUser.maxSessionsPerDay;
+  const dailyCapReached=dailyCap!=null&&todaySessionCount>=dailyCap;
+
+  // ── Assignment wajib (FASA 4) — scenario yang manager assign khusus untuk
+  // collector ni, status masih 'pending'. Map by scenarioId untuk badge cepat.
+  const pendingAssignments=(myAssignments||[]).filter(a=>a.status==='pending');
+  const assignedScenarioIds=new Set(pendingAssignments.map(a=>a.scenarioId));
 
   // ═══════ FASA 3: Collector Target Plan — auto-cadang scenario seterusnya ═══════
   // Guna jenis penghutang yang PALING lemah untuk collector NI SENDIRI
@@ -899,7 +980,7 @@ async function renderTraining(){
       ?`<div class="preview-section-title">📢 Required Disclosures</div>${(s.disclosures||[]).map(d=>`<div class="preview-disclosure">• ${d}</div>`).join('')}`
       :'';
     const checklistHTML=(s.checklist||[]).length
-      ?`<div class="preview-section-title" style="margin-top:14px">✅ Evaluation Checklist</div>${(s.checklist||[]).map(c=>`<div class="preview-checklist-item"><span class="preview-cl-cat">${c.cat}</span><span class="preview-cl-text">${c.text}</span></div>`).join('')}`
+      ?`<div class="preview-section-title" style="margin-top:14px">✅ Evaluation Checklist</div>${(s.checklist||[]).map(c=>`<div class="preview-checklist-item"><span class="preview-cl-cat">${c.cat}</span><span class="preview-cl-text">${c.text}${c.critical?' <span style="color:#C0392B;font-weight:600;font-size:11px">⚠️ Critical</span>':''}</span></div>`).join('')}`
       :'';
     return`
       <div class="sc-preview-header">
@@ -936,10 +1017,36 @@ async function renderTraining(){
 
   setContent(`
   <div class="page-header"><div class="page-title">Voice Training</div><div class="page-sub">Select a scenario, review the details, then start the call</div></div>
+  ${dailyCapReached?`
+  <div class="card" style="border-left:4px solid var(--red);margin-bottom:14px;background:#fff5f5">
+    <div class="card-title" style="color:var(--red)">🚫 Daily Session Limit Reached</div>
+    <p style="font-size:13px;color:var(--text2);line-height:1.6">You've completed <b>${todaySessionCount}/${dailyCap}</b> training sessions allowed today. The limit resets at midnight. Contact your manager if you need this adjusted.</p>
+  </div>`:dailyCap!=null?`
+  <div class="card" style="border-left:4px solid var(--amber);margin-bottom:14px;padding:10px 14px">
+    <span style="font-size:12px;color:var(--text2)">📊 Sessions today: <b>${todaySessionCount}/${dailyCap}</b></span>
+  </div>`:''}
+  ${pendingAssignments.length?`
+  <div class="card" style="border-left:4px solid var(--purple);margin-bottom:14px">
+    <div class="card-title">📌 Assigned to You (${pendingAssignments.length})</div>
+    <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:10px">Your manager assigned these scenarios as mandatory. Complete them by the due date.</p>
+    ${pendingAssignments.map(a=>{
+      const s=scenarios.find(x=>x.id===a.scenarioId);
+      const overdue=a.dueDate&&new Date(a.dueDate)<new Date(todayStr);
+      return`
+      <div class="sc-card ${scenario&&scenario.id===a.scenarioId?'selected':''}" style="margin-bottom:8px;cursor:${s?'pointer':'default'}" ${s?`onclick="selectScenario('${a.scenarioId}')"`:''}>
+        <div class="sc-emoji">${s?s.emoji:'❓'}</div>
+        <div class="sc-body">
+          <div class="sc-name">${a.scenarioName||(s?s.title:'(scenario deleted)')}</div>
+          <div class="sc-desc">${a.dueDate?`Due ${new Date(a.dueDate).toLocaleDateString('en-MY')}`:'No due date'}${overdue?' <span style="color:var(--red);font-weight:600">· Overdue</span>':''}</div>
+        </div>
+        <div class="sc-check">${scenario&&scenario.id===a.scenarioId?'✓':''}</div>
+      </div>`;
+    }).join('')}
+  </div>`:''}
   ${recommendedScenario?`
   <div class="card" style="border-left:4px solid var(--amber);margin-bottom:14px">
-    <div class="card-title">🎯 Disyorkan Untuk Anda</div>
-    <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:10px">Berdasarkan rekod latihan anda, anda paling lemah bila lawan penghutang jenis <b>${objectionTypeLabel(myWeakest.objectionType)}</b> (avg score ${myWeakest.avgScore}/100 daripada ${myWeakest.count} sesi)${myWeakest.topWeakCat?`, terutamanya pada skill <b>${catLabel(myWeakest.topWeakCat)}</b>`:''}. Cuba senario ni seterusnya:</p>
+    <div class="card-title">🎯 Recommended For You</div>
+    <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:10px">Based on your training record, you're weakest against <b>${objectionTypeLabel(myWeakest.objectionType)}</b> type debtors (avg score ${myWeakest.avgScore}/100 from ${myWeakest.count} sessions)${myWeakest.topWeakCat?`, especially on the <b>${catLabel(myWeakest.topWeakCat)}</b> skill`:''}. Try this scenario next:</p>
     <div class="sc-card selected" style="margin:0;cursor:pointer" onclick="selectScenario('${recommendedScenario.id}')">
       <div class="sc-emoji">${recommendedScenario.emoji}</div>
       <div class="sc-body">
@@ -962,7 +1069,7 @@ async function renderTraining(){
           <div class="sc-card ${scenario&&scenario.id===s.id?'selected':''}" onclick="selectScenario('${s.id}')">
             <div class="sc-emoji">${s.emoji}</div>
             <div class="sc-body">
-              <div class="sc-name">${s.title}${recommendedScenario&&recommendedScenario.id===s.id?' <span style="font-size:10px;color:var(--amber);font-weight:600">⭐ Disyorkan</span>':''}</div>
+              <div class="sc-name">${s.title}${assignedScenarioIds.has(s.id)?' <span style="font-size:10px;color:var(--purple);font-weight:600">📌 Assigned</span>':recommendedScenario&&recommendedScenario.id===s.id?' <span style="font-size:10px;color:var(--amber);font-weight:600">⭐ Recommended</span>':''}</div>
               <div class="sc-desc">${s.description||s.desc||''}</div>
               <div class="sc-meta">
                 <span class="level-badge level-${s.level}">${s.level==='easy'?'Easy':s.level==='med'?'Medium':'Hard'}</span>
@@ -985,7 +1092,7 @@ async function renderTraining(){
           <div style="font-size:12px;color:#bf360c;margin-top:2px">Training can still run. Debtor text will appear in chat as usual.</div>
         </div>
       </div>`:''}
-      <button class="btn btn-primary" style="width:100%;padding:13px;font-size:15px;margin-top:0" onclick="startCall()">🎙 Start Training Call</button>
+      <button class="btn btn-primary" style="width:100%;padding:13px;font-size:15px;margin-top:0" ${dailyCapReached?'disabled':''} onclick="startCall()">${dailyCapReached?'🚫 Daily Limit Reached':'🎙 Start Training Call'}</button>
     </div>
   </div>`);
 }
@@ -1018,7 +1125,7 @@ function selectScenario(id){
       ?`<div class="preview-section-title">📢 Required Disclosures</div>${(scenario.disclosures||[]).map(d=>`<div class="preview-disclosure">• ${d}</div>`).join('')}`
       :'';
     const checklistHTML=(scenario.checklist||[]).length
-      ?`<div class="preview-section-title" style="margin-top:14px">✅ Evaluation Checklist</div>${(scenario.checklist||[]).map(c=>`<div class="preview-checklist-item"><span class="preview-cl-cat">${c.cat}</span><span class="preview-cl-text">${c.text}</span></div>`).join('')}`
+      ?`<div class="preview-section-title" style="margin-top:14px">✅ Evaluation Checklist</div>${(scenario.checklist||[]).map(c=>`<div class="preview-checklist-item"><span class="preview-cl-cat">${c.cat}</span><span class="preview-cl-text">${c.text}${c.critical?' <span style="color:#C0392B;font-weight:600;font-size:11px">⚠️ Critical</span>':''}</span></div>`).join('')}`
       :'';
     preview.innerHTML=`
       <div class="sc-preview-header">
@@ -1069,7 +1176,7 @@ function renderCallScreen(){
           </div>
           <div class="call-timer" id="callTimer">00:00</div>
         </div>
-        <div class="status-bar"><div class="status-dot green" id="statusDot"></div><span id="statusText">Session aktif</span>${!TTS_ENABLED?'<span style="margin-left:auto;font-size:11px;font-weight:600;color:#e65100;background:#fff3e0;border:1px solid #ffb74d;border-radius:20px;padding:2px 8px">🔇 Mod Senyap</span>':''}</div>
+        <div class="status-bar"><div class="status-dot green" id="statusDot"></div><span id="statusText">Session active</span>${!TTS_ENABLED?'<span style="margin-left:auto;font-size:11px;font-weight:600;color:#e65100;background:#fff3e0;border:1px solid #ffb74d;border-radius:20px;padding:2px 8px">🔇 Silent Mode</span>':''}</div>
         <div class="transcript" id="transcriptBox"></div>
         <div class="mic-area">
           <div class="live-text" id="liveText"></div>
@@ -1078,10 +1185,10 @@ function renderCallScreen(){
           <div class="mic-label" id="micLabel">Press to speak</div>
         </div>
       </div>
-      <button class="btn btn-danger btn-full" onclick="endCall()">📵 Tamatkan Panggilan</button>
+      <button class="btn btn-danger btn-full" onclick="endCall()">📵 End Call</button>
     </div>
     <div class="acc-ref-card">
-      <div class="acc-ref-title">📒 Maklumat Akaun (rujukan nego)</div>
+      <div class="acc-ref-title">📒 Account Info (negotiation reference)</div>
       ${acc('Client',scenario.client)}
       ${acc('Name',scenario.name)}
       ${acc('IC No.',scenario.icNumber)}
@@ -1109,7 +1216,7 @@ function renderScoreScreen(){
         </div>
         ${harassmentBadge(s.harassmentRisk)}
       </div>
-      ${s.harassmentRisk&&s.harassmentRisk!=='none'?`<div class="alert alert-err" style="display:block;margin-top:0">⚠ <strong>Isu Pematuhan/Harassment:</strong> ${s.harassmentNote||'Nada/ayat berisiko dikesan dalam panggilan ini.'}</div>`:''}
+      ${s.harassmentRisk&&s.harassmentRisk!=='none'?`<div class="alert alert-err" style="display:block;margin-top:0">⚠ <strong>Compliance/Harassment Issue:</strong> ${s.harassmentNote||'Risky tone or wording was detected in this call.'}</div>`:''}
       <div class="score-rows">
         ${scoreRows(s).map(([l,v,m,cat,reason])=>`
         <div class="score-row" style="flex-direction:column;align-items:stretch;gap:4px">
@@ -1146,7 +1253,7 @@ function renderScoreScreen(){
     </div>`:''}
     ${s.priorityFocus?`
     <div class="card" style="border-left:4px solid var(--purple)">
-      <div class="card-title">🎯 Fokus Latihan Akan Datang</div>
+      <div class="card-title">🎯 Focus For Next Training</div>
       <span class="chip chip-purple">${catIcon(s.priorityFocus.category)} ${catLabel(s.priorityFocus.category)}</span>
       <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-top:8px">${s.priorityFocus.tip||''}</p>
     </div>`:''}
@@ -1158,8 +1265,8 @@ function renderScoreScreen(){
       </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-primary" style="flex:1;min-width:120px" onclick="navigate('training')">🔁 Latihan Semula</button>
-      <button class="btn btn-secondary" style="flex:1;min-width:120px" onclick="navigate('my-history')">📊 Lihat Rekod</button>
+      <button class="btn btn-primary" style="flex:1;min-width:120px" onclick="navigate('training')">🔁 Retrain</button>
+      <button class="btn btn-secondary" style="flex:1;min-width:120px" onclick="navigate('my-history')">📊 View History</button>
       <button class="btn btn-secondary" style="flex:1;min-width:120px" onclick="copyScoreSummary()">📋 Salin Ringkasan</button>
     </div>
   </div>`);
@@ -1169,23 +1276,23 @@ function copyScoreSummary(){
   const s=window._lastScore;
   if(!s)return;
   const catLabels={tone:'Tone',delivery:'Delivery',counter:'Counter Argument',action:'Action & Compliance',balance:'Balance Strategy'};
-  const scoreLines=Object.entries(s.scores||{}).map(([k,v])=>`  ${catLabels[k]||k}: ${v}/20`).join('\n');
+  const scoreLines=Object.entries(s.scores||{}).map(([k,v])=>`  ${catLabels[k]||k}: ${v}/${(s.scoreMax&&s.scoreMax[k])||20}`).join('\n');
   const strengthLines=(s.strengths||[]).map(t=>`  ✅ ${t}`).join('\n');
   const missedLines=(s.missed||[]).map(m=>`  ⚠ ${m.issue||''} → ${m.suggestion||''}`).join('\n');
-  const harassment=s.harassmentRisk&&s.harassmentRisk!=='none'?`\n⚠ Isu Pematuhan (${s.harassmentRisk}): ${s.harassmentNote||''}\n`:'';
+  const harassment=s.harassmentRisk&&s.harassmentRisk!=='none'?`\n⚠ Compliance Issue (${s.harassmentRisk}): ${s.harassmentNote||''}\n`:'';
   const text=[
-    `📊 Keputusan Latihan CollectorTrain`,
-    `Scenario: ${s.scenarioName||'-'} · Masa: ${s.duration||'-'}`,
-    `Score Keseluruhan: ${s.totalScore}/100`,
+    `📊 CollectorTrain Training Results`,
+    `Scenario: ${s.scenarioName||'-'} · Duration: ${s.duration||'-'}`,
+    `Overall Score: ${s.totalScore}/100`,
     ``,
-    `Pecahan Markah:`,
+    `Score Breakdown:`,
     scoreLines,
     harassment,
-    strengthLines?`Kekuatan:\n${strengthLines}`:'',
-    missedLines?`Perlu Diperbaiki:\n${missedLines}`:'',
-    s.priorityFocus?`\n🎯 Fokus Seterusnya (${catLabels[s.priorityFocus.category]||s.priorityFocus.category}):\n  ${s.priorityFocus.tip||''}`:'',
+    strengthLines?`Strengths:\n${strengthLines}`:'',
+    missedLines?`Needs Improvement:\n${missedLines}`:'',
+    s.priorityFocus?`\n🎯 Next Focus (${catLabels[s.priorityFocus.category]||s.priorityFocus.category}):\n  ${s.priorityFocus.tip||''}`:'',
     ``,
-    `💬 Maklum Balas AI:`,
+    `💬 AI Feedback:`,
     s.feedback||'',
   ].filter(Boolean).join('\n');
   navigator.clipboard.writeText(text).then(()=>{
@@ -1236,17 +1343,17 @@ async function renderMyHistory(){
     <div class="stat-card"><div class="stat-label">Total Sessions</div><div class="stat-val">${sessions.length}</div></div>
     <div class="stat-card"><div class="stat-label">Average Score</div><div class="stat-val">${Math.round(sessions.reduce((a,s)=>a+s.totalScore,0)/sessions.length)}</div><div class="stat-sub">/ 100</div></div>
     <div class="stat-card"><div class="stat-label">Score Tertinggi</div><div class="stat-val">${Math.max(...sessions.map(s=>s.totalScore))}</div></div>
-    <div class="stat-card"><div class="stat-label">Session Terbaru</div><div class="stat-val">${sessions[0].totalScore}</div><div class="stat-sub">mata</div></div>
+    <div class="stat-card"><div class="stat-label">Most Recent Session</div><div class="stat-val">${sessions[0].totalScore}</div><div class="stat-sub">points</div></div>
   </div>
   ${latestFocus?`
   <div class="card" style="border-left:4px solid var(--purple)">
-    <div class="card-title">🎯 Fokus Latihan Akan Datang</div>
+    <div class="card-title">🎯 Focus For Next Training</div>
     <span class="chip chip-purple">${catIcon(latestFocus.category)} ${catLabel(latestFocus.category)}</span>
     <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-top:8px">${latestFocus.tip||''}</p>
   </div>`:''}
   <div class="card">
-    <div class="card-title">🛠 Aspek Paling Kerap Perlu Diperbaiki</div>
-    ${weakness.length===0?`<div style="font-size:13px;color:var(--text3)">Belum cukup data — teruskan latihan untuk lihat corak kesilapan anda.</div>`:
+    <div class="card-title">🛠 Most Frequently Needed Improvement Aspects</div>
+    ${weakness.length===0?`<div style="font-size:13px;color:var(--text3)">Not enough data yet — keep training to see your mistake patterns.</div>`:
     weakness.slice(0,5).map(([cat,count])=>`
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
         <span style="font-size:13px">${catIcon(cat)} ${catLabel(cat)}</span>
@@ -1254,17 +1361,17 @@ async function renderMyHistory(){
       </div>`).join('')}
   </div>
   <div class="card">
-    <div class="card-title">🎯 Prestasi Anda Ikut Jenis Penghutang</div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Jenis penghutang mana anda paling kuat / paling perlu latihan tambahan.</div>
-    ${weaknessByObjectionType(sessions).length===0?`<div style="font-size:13px;color:var(--text3)">Belum cukup data.</div>`:
+    <div class="card-title">🎯 Your Performance By Debtor Type</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Which debtor type you're strongest at / need the most extra training for.</div>
+    ${weaknessByObjectionType(sessions).length===0?`<div style="font-size:13px;color:var(--text3)">Not enough data yet.</div>`:
     weaknessByObjectionType(sessions).map(g=>`
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
-        <span style="font-size:13px">${objectionTypeIcon(g.objectionType)} ${objectionTypeLabel(g.objectionType)} <span style="color:var(--text3);font-size:11px">(${g.count} sesi)</span></span>
+        <span style="font-size:13px">${objectionTypeIcon(g.objectionType)} ${objectionTypeLabel(g.objectionType)} <span style="color:var(--text3);font-size:11px">(${g.count} sessions)</span></span>
         <span class="score-pill ${g.avgScore>=70?'score-high':g.avgScore>=50?'score-mid':'score-low'}">${g.avgScore}</span>
       </div>`).join('')}
   </div>
   <div class="card">
-    <div class="card-title">Trend Markah</div>
+    <div class="card-title">Score Trend</div>
     <div class="chart-bar-wrap">
       ${sessions.slice(0,10).reverse().map((s,i)=>`
       <div class="chart-bar-col">
@@ -1275,7 +1382,7 @@ async function renderMyHistory(){
     </div>
   </div>
   <div class="card">
-    <div class="card-title">Semua Sesi</div>
+    <div class="card-title">All Sessions</div>
     <div class="table-wrap"><table>
       <tr><th>#</th><th>Scenario</th><th>Duration</th><th>Score</th><th>Date</th><th></th></tr>
       ${pageSessions.map((s,i)=>`<tr>
@@ -1284,7 +1391,7 @@ async function renderMyHistory(){
         <td>${s.duration}</td>
         <td><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span></td>
         <td style="font-size:12px">${fmtDateTime(s.date)}</td>
-        <td><button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="viewSession('${s.id}')">Lihat</button></td>
+        <td><button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="viewSession('${s.id}')">View</button></td>
       </tr>`).join('')}
     </table></div>
     ${paginationBar(myHistoryPage,sessions.length,SESSIONS_PAGE_SIZE,'goMyHistoryPage')}
@@ -1301,7 +1408,7 @@ async function renderCollectors(){
   <div class="page-header"><div class="page-title">All Collectors</div><div class="page-sub">${collectors.length} collectors registered</div></div>
   <div class="card">
     <div class="table-wrap"><table>
-      <tr><th>Name</th><th>ID</th><th>Sessions</th><th>Average</th><th>Highest</th><th>Weak Aspect</th><th>Weakest Debtor Type</th><th>Cadangan Senario</th><th>Harassment</th><th>Last Session</th></tr>
+      <tr><th>Name</th><th>ID</th><th>Sessions</th><th>Average</th><th>Highest</th><th>Weak Aspect</th><th>Weakest Debtor Type</th><th>Recommended Scenario</th><th>Harassment</th><th>Last Session</th></tr>
       ${collectors.map(c=>{
         const cs=sessions.filter(s=>s.collectorId===c.id);
         const avg=cs.length?Math.round(cs.reduce((a,s)=>a+s.totalScore,0)/cs.length):'-';
@@ -1379,7 +1486,7 @@ async function renderSessions(){
     <input type="date" id="filtSessionsTo" value="${sessionsFilter.dateTo}" onchange="sessionsFilter.dateTo=this.value;sessionsPage=1;renderSessions();" title="To date"/>
     <button class="btn btn-secondary" onclick="sessionsFilter={collectorId:'',scenario:'',objectionType:'',skor:'',dateFrom:'',dateTo:''};sessionsPage=1;renderSessions();">Reset</button>
   </div>
-  ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📋</div><p>Tiada sesi latihan sepadan dengan filter.</p></div></div>`:''}
+  ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📋</div><p>No training sessions match the filter.</p></div></div>`:''}
   ${sessions.length>0?`<div class="card">
     <div class="table-wrap"><table>
       <tr><th>Collector</th><th>Scenario</th><th>Objection</th><th>Duration</th><th>Score</th><th>Harassment Risk</th><th>Date</th><th></th></tr>
@@ -1393,7 +1500,7 @@ async function renderSessions(){
           <td><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span></td>
           <td>${s.harassmentRisk&&s.harassmentRisk!=='none'?`<span class="chip chip-red">⚠ ${s.harassmentRisk}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
           <td style="font-size:12px;color:var(--text3)">${fmtDateTime(s.date)}</td>
-          <td><button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="viewSession('${s.id}')">Lihat</button></td>
+          <td><button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="viewSession('${s.id}')">View</button></td>
         </tr>`;
       }).join('')}
     </table></div>
@@ -1414,7 +1521,7 @@ async function viewSession(id){
   <div style="display:flex;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:8px">
     <div><div style="font-size:12px;color:var(--text3)">Collector</div><div style="font-weight:500">${u?u.name:'—'}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Scenario</div><div style="font-weight:500">${s.scenarioName}</div></div>
-    <div><div style="font-size:12px;color:var(--text3)">Jenis Penghutang</div><div style="font-weight:500">${s.objectionType?`${objectionTypeIcon(s.objectionType)} ${objectionTypeLabel(s.objectionType)}`:'-'}</div></div>
+    <div><div style="font-size:12px;color:var(--text3)">Debtor Type</div><div style="font-weight:500">${s.objectionType?`${objectionTypeIcon(s.objectionType)} ${objectionTypeLabel(s.objectionType)}`:'-'}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Masa</div><div style="font-weight:500">${s.duration}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Date & Waktu</div><div style="font-weight:500">${fmtDateTime(s.date)}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Score</div><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}/100</span></div>
@@ -1440,7 +1547,7 @@ async function viewSession(id){
   <div style="font-size:13px;font-weight:500;margin-bottom:8px">💬 Maklum Balas AI</div>
   <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:1rem">${s.feedback||''}</p>
   ${(s.strengths&&s.strengths.length)?`
-  <div style="font-size:13px;font-weight:500;margin-bottom:8px">✅ Kekuatan</div>
+  <div style="font-size:13px;font-weight:500;margin-bottom:8px">✅ Strengths</div>
   ${s.strengths.map(t=>`<div style="font-size:12px;color:var(--text2);margin-bottom:4px">• ${t}</div>`).join('')}
   <hr class="divider"/>`:''}
   ${(s.missed&&s.missed.length)?`
@@ -1454,7 +1561,7 @@ async function viewSession(id){
   </div>`).join('')}
   <hr class="divider"/>`:''}
   ${s.priorityFocus?`
-  <div style="font-size:13px;font-weight:500;margin-bottom:8px">🎯 Fokus Latihan Akan Datang</div>
+  <div style="font-size:13px;font-weight:500;margin-bottom:8px">🎯 Focus For Next Training</div>
   <div style="margin-bottom:1rem">
     <span class="chip chip-purple" style="font-size:11px">${catIcon(s.priorityFocus.category)} ${catLabel(s.priorityFocus.category)}</span>
     <div style="font-size:12px;color:var(--text2);margin-top:4px">${s.priorityFocus.tip||''}</div>
@@ -1473,13 +1580,13 @@ async function viewSession(id){
 
 async function renderScenarios(){
   if(currentUser.role==='collector')return;
-  setContent('<div class="page-header"><div class="page-title">Manage Scenarios</div></div><div class="card">Memuatkan senario...</div>');
+  setContent('<div class="page-header"><div class="page-title">Manage Scenarios</div></div><div class="card">Loading scenarios...</div>');
   let scenarios, sessions;
   try{
     scenarios=await loadScenarios(true); // force=true: manager perlu data terkini, bukan cache lama
     sessions=await loadSessions();
   }catch(e){
-    setContent(`<div class="page-header"><div class="page-title">Manage Scenarios</div></div><div class="card">⚠ Gagal memuatkan senario: ${e.message}</div>`);
+    setContent(`<div class="page-header"><div class="page-title">Manage Scenarios</div></div><div class="card">⚠ Failed to load scenarios: ${e.message}</div>`);
     return;
   }
   // Weakness-to-scenario link: cadang jenis senario apa nak fokus seterusnya,
@@ -1489,16 +1596,16 @@ async function renderScenarios(){
   const recommendation=weakGroups.length?weakGroups[0]:null; // dah sorted, avgScore terendah dahulu
   const recommendationBanner=recommendation?`
   <div class="card" style="border-left:4px solid var(--amber)">
-    <div class="card-title">🎯 Recommended Focus <span style="font-weight:400;color:var(--text3);font-size:11px">(auto-generated dari data sesi sebenar)</span></div>
-    <p style="font-size:13px;color:var(--text2);line-height:1.6">Team paling lemah bila lawan penghutang jenis <b>${objectionTypeLabel(recommendation.objectionType)}</b> — avg score <b>${recommendation.avgScore}/100</b> daripada ${recommendation.count} sesi${recommendation.topWeakCat?`, terutamanya pada skill <b>${catLabel(recommendation.topWeakCat)}</b> (${recommendation.topWeakCount}x missed)`:''}.</p>
-    <button class="btn btn-primary" style="margin-top:6px;font-size:12px" onclick="openAddScenario(null,'${recommendation.objectionType}')">+ Cipta Senario ${objectionTypeLabel(recommendation.objectionType)} Baru</button>
+    <div class="card-title">🎯 Recommended Focus <span style="font-weight:400;color:var(--text3);font-size:11px">(auto-generated from real session data)</span></div>
+    <p style="font-size:13px;color:var(--text2);line-height:1.6">Team is weakest against <b>${objectionTypeLabel(recommendation.objectionType)}</b> type debtors — avg score <b>${recommendation.avgScore}/100</b> from ${recommendation.count} sessions${recommendation.topWeakCat?`, especially on the <b>${catLabel(recommendation.topWeakCat)}</b> skill (${recommendation.topWeakCount}x missed)`:''}.</p>
+    <button class="btn btn-primary" style="margin-top:6px;font-size:12px" onclick="openAddScenario(null,'${recommendation.objectionType}')">+ Create New ${objectionTypeLabel(recommendation.objectionType)} Scenario</button>
   </div>`:'';
   setContent(`
   <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start">
     <div><div class="page-title">Manage Scenarios</div><div class="page-sub">${scenarios.length} scenarios available</div></div>
     <div style="display:flex;gap:8px">
       <button class="btn btn-secondary" onclick="openAiScenarioBuilder()">🤖 AI Scenario Builder</button>
-      <button class="btn btn-primary" onclick="openAddScenario()">+ Tambah Senario</button>
+      <button class="btn btn-primary" onclick="openAddScenario()">+ Add Scenario</button>
     </div>
   </div>
   ${recommendationBanner}
@@ -1515,10 +1622,10 @@ async function renderScenarios(){
         <td>${s.amount}</td>
         <td><span class="chip ${s.balanceTier==='high'?'chip-red':'chip-green'}">${s.balanceTier==='high'?'High':'Low'}</span></td>
         <td><span class="level-badge level-${s.level}">${s.level==='easy'?'Easy':s.level==='med'?'Medium':'Hard'}</span></td>
-        <td style="font-size:12px;color:var(--text3)">${(s.checklist||[]).length} item${(s.disclosures||[]).length?` · 📢${(s.disclosures||[]).length}`:''}</td>
+        <td style="font-size:12px;color:var(--text3)">${(s.checklist||[]).length} item${(s.checklist||[]).filter(c=>c.critical).length?` · ⚠️${(s.checklist||[]).filter(c=>c.critical).length}`:''}${(s.disclosures||[]).length?` · 📢${(s.disclosures||[]).length}`:''}</td>
         <td><div class="action-row">
           <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="editScenario('${s.id}')">Edit</button>
-          <button class="btn btn-danger" style="padding:4px 10px;font-size:12px" onclick="deleteScenario('${s.id}')">Padam</button>
+          <button class="btn btn-danger" style="padding:4px 10px;font-size:12px" onclick="deleteScenario('${s.id}')">Delete</button>
         </div></td>
       </tr>`).join('')}
     </table></div>
@@ -1557,7 +1664,8 @@ function readScenarioFormDraft(){
     regDate:(document.getElementById('scRegDate')||{}).value||'',
     termDate:(document.getElementById('scTermDate')||{}).value||'',
     checklist:Array.from(document.querySelectorAll('#checklistRows .checklist-row'))
-      .map(r=>({cat:r.querySelector('.cl-cat').value,text:r.querySelector('.cl-text').value})),
+      .map(r=>({cat:r.querySelector('.cl-cat').value,text:r.querySelector('.cl-text').value,critical:r.querySelector('.cl-critical').checked})),
+    scoreWeights:Object.fromEntries(SCORE_CATS.map(c=>{const el=document.getElementById('scWeight_'+c);return [c,el?el.value:'1'];})),
     disclosures:Array.from(document.querySelectorAll('#disclosureRows .disclosure-row .dc-text'))
       .map(i=>i.value),
     _existingId:(document.getElementById('modalBox')||{}).dataset&&document.getElementById('modalBox').dataset.scenarioEditId||'',
@@ -1615,6 +1723,7 @@ function applyScenarioDraft(draft){
   set('scAccType',draft.accType);
   set('scRegDate',draft.regDate);
   set('scTermDate',draft.termDate);
+  if(draft.scoreWeights){SCORE_CATS.forEach(c=>{const el=document.getElementById('scWeight_'+c);if(el&&draft.scoreWeights[c])el.value=draft.scoreWeights[c];});}
   // Client dropdown
   const clientSel=document.getElementById('scClient');
   if(clientSel&&draft.clientSel){clientSel.value=draft.clientSel;toggleClientOther();}
@@ -1656,120 +1765,216 @@ function redactPII(text){
   return {redacted,found};
 }
 
+// ── Job Sheet redaction (key-based) ─────────────────────────────────────
+// Job sheet CRM (Volare) formatnya BERSTRUKTUR — setiap field sensitif ada
+// LABEL jelas di depan ("ACCOUNT NO :", "CARD NO 1 :", "NEW IC NO :"...).
+// Regex nombor-je (redactPII di atas) terlepas value yang campur huruf+nombor
+// (cth no. kad "PDRFRL2060420264100009"), so kita redact ikut LABEL dulu —
+// apa-apa value lepas label sensitif terus dibuang, tak kira format dia.
+// Lepas tu kita run redactPII jugak sebagai "net" untuk apa-apa PII yang
+// tersebut bebas dalam remarks log (cth no. telefon ditaip dalam nota call).
+const JOB_SHEET_SENSITIVE_LABELS=[
+  'IC NO','NEW IC NO','OLD IC NO','NEW IC','OLD IC','IC NUMBER','NRIC',
+  'ACCOUNT NO','ACC NO','A/C NO',
+  'CARD NO','CARD NUMBER',
+  'CUSTOMER NAME','NAME','CONTACT PERSON','RELATION NAME',
+  'ADDRESS','HOME ADDRESS','MAILING ADDRESS',
+  'CONTACT NO','CONTACTNO','PHONE','MOBILE','TEL NO','H/P',
+  'EMAIL',
+];
+function redactJobSheet(text){
+  let redacted=text||'';
+  const found=[];
+  let customerName=null;
+  // Padan baris bentuk "LABEL : value" (job sheet Volare guna layout 2 lajur
+  // bersebelahan dalam 1 baris fizikal, so kita stop value bila jumpa 3+
+  // space berturut — itu tanda sempadan lajur seterusnya, bukan newline je).
+  // "(?:^|\s{2,})" depan label elak terpadan label yang muncul SEBAGAI
+  // sebahagian perkataan lain (cth "Relation name:" — bukan field "NAME").
+  // "\s*\d{0,2}\s*:" benarkan index field macam "CARD NO1 :" (TANPA \b
+  // selepas label sebab \b gagal antara huruf-ke-digit yang bercantum terus).
+  const labelPattern=JOB_SHEET_SENSITIVE_LABELS.map(l=>l.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|');
+  const re=new RegExp(`(^|\\s{2,})(${labelPattern})\\s*\\d{0,2}\\s*:\\s*([^\\n]*?)(?=\\s{3,}\\S|\\n|$)`,'gim');
+  redacted=redacted.replace(re,(m,lead,label,value)=>{
+    if(!value.trim())return m; // medan kosong, tiada apa nak redact
+    found.push(`${label.trim()}: ${value.trim()}`);
+    // Simpan nama penghutang utama — dipakai lepas ni untuk scrub sebutan
+    // bebas nama dia di bahagian LAIN dokumen (cth "Relationship:"/"ATTN:"
+    // sering sebut nama sama TANPA label "NAME" terus depan dia, so regex
+    // label-based ni je tak cukup tangkap — kena cari & ganti global jugak).
+    if(/^CUSTOMER NAME$/i.test(label.trim())&&value.trim().length>2)customerName=value.trim();
+    return `${lead}${label} : [DIRAHSIAKAN]`;
+  });
+  if(customerName){
+    const escaped=customerName.replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(/\s+/g,'\\s+');
+    const nameRe=new RegExp(escaped,'gi');
+    redacted=redacted.replace(nameRe,(m)=>{found.push('Sebutan nama lain: '+m);return '[DIRAHSIAKAN]';});
+  }
+  // Safety net — regex nombor (IC/telefon/no.akaun) untuk apa-apa yang
+  // disebut tanpa label jelas, cth dalam remarks log.
+  const {redacted:redacted2,found:found2}=redactPII(redacted);
+  return {redacted:redacted2,found:[...found,...found2]};
+}
+
 function openAiScenarioBuilder(){
+  window.__aiBuilderMode='transcript';
   openModal(`
   <div class="modal-title">🤖 AI Scenario Builder</div>
-  <p style="font-size:12px;color:var(--text3);line-height:1.6;margin-bottom:14px">AI akan analisis input anda dan cadangkan draf senario untuk di-review &amp; edit sebelum disimpan. PII (IC, no. telefon, akaun) akan <b>di-redact secara automatik</b> di browser sebelum dihantar ke AI.</p>
+  <p style="font-size:12px;color:var(--text3);line-height:1.6;margin-bottom:10px">Paste real data from CRM/Volare below. The system will <b>auto-redact PII</b> (IC, phone no., account no., card no., name, address) in your browser before anything is sent to the AI, then the AI will suggest a draft scenario for you to review &amp; edit — not auto-published directly.</p>
 
-  <div style="display:flex;gap:8px;margin-bottom:16px">
-    <button id="aiTabTranscript" onclick="switchAiBuilderTab('transcript')" style="display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;padding:12px 8px;border-radius:10px;border:2px solid var(--purple);background:var(--purple-light);cursor:pointer;transition:all .15s">
-      <span style="font-size:22px">📞</span>
-      <span style="font-size:12px;font-weight:600;color:var(--purple)">Transkrip Call</span>
-      <span style="font-size:10px;color:var(--text3);text-align:center">Paste dialog collector vs debtor dari CRM/Volare</span>
+  <div style="display:flex;gap:8px;margin-bottom:12px">
+    <button type="button" id="srcModeTranscript" onclick="setAiBuilderMode('transcript')" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 8px;border-radius:var(--radius-sm);cursor:pointer;border:1.5px solid var(--purple);background:var(--purple);color:#fff;text-align:center">
+      <span style="font-size:18px;line-height:1">💬</span>
+      <span style="font-size:12px;font-weight:600;line-height:1.3">Transkrip Call</span>
+      <span style="font-size:10px;opacity:.85;font-weight:400;line-height:1.3">Paste dialog/perbualan sebenar</span>
     </button>
-    <button id="aiTabJobsheet" onclick="switchAiBuilderTab('jobsheet')" style="display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;padding:12px 8px;border-radius:10px;border:2px solid var(--border2);background:var(--bg);cursor:pointer;transition:all .15s">
-      <span style="font-size:22px">📋</span>
-      <span style="font-size:12px;font-weight:600;color:var(--text2)">Job Sheet / Nota</span>
-      <span style="font-size:10px;color:var(--text3);text-align:center">Paste nota kerja, remarks atau summary akaun</span>
+    <button type="button" id="srcModeJobSheet" onclick="setAiBuilderMode('jobsheet')" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 8px;border-radius:var(--radius-sm);cursor:pointer;border:1.5px solid var(--border2);background:var(--surface);color:var(--text2);text-align:center">
+      <span style="font-size:18px;line-height:1">📄</span>
+      <span style="font-size:12px;font-weight:600;line-height:1.3">Job Sheet CRM</span>
+      <span style="font-size:10px;opacity:.85;font-weight:400;line-height:1.3">Paste/import job sheet/case history</span>
     </button>
   </div>
 
-  <div id="aiPanelTranscript">
-    <div class="form-row" style="margin-bottom:8px">
-      <label style="margin-bottom:6px;display:block">Dialog perbualan sebenar</label>
-      <textarea id="aiTranscriptInput" rows="7" placeholder="Contoh:&#10;Collector: Selamat pagi Encik Ahmad, saya dari NewVest Recoveries...&#10;Debtor: Saya tak ada duit lah sekarang, kerja pun kena cut...&#10;Collector: Saya faham situasi Encik, tapi akaun dah tertunggak...&#10;..."></textarea>
+  <div class="form-row"><label id="aiInputLabel">Transkrip / Nota Call</label>
+    <div id="aiImportZone" onclick="document.getElementById('aiFileInput').click()" ondragover="event.preventDefault();this.style.borderColor='var(--purple)'" ondragleave="this.style.borderColor='var(--border2)'" ondrop="handleAiFileDrop(event)" style="border:1.5px dashed var(--border2);border-radius:8px;padding:14px;text-align:center;cursor:pointer;margin-bottom:8px;transition:border-color .15s">
+      <div style="font-size:13px;font-weight:500">📤 Click to import file, or drag &amp; drop</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px">PDF, TXT, or CSV export from CRM/Volare</div>
+      <input type="file" id="aiFileInput" accept=".pdf,.txt,.csv" style="display:none" onchange="handleAiFileSelect(event)" />
     </div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:10px;padding:7px 10px;background:var(--bg);border-radius:6px">
-      💡 IC, no. telefon &amp; no. akaun akan di-<b>redact automatik</b> sebelum dihantar ke AI. Anda boleh preview dulu sebelum generate.
-    </div>
-    <div id="aiRedactPreview"></div>
-    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-      <button class="btn btn-secondary" style="flex:1;min-width:140px" onclick="previewRedaction()">🔒 Redact &amp; Preview</button>
-      <button class="btn btn-primary" id="btnGenAiDraft" style="flex:1;min-width:140px" onclick="generateScenarioDraftFromTranscript()" disabled>✨ Generate Draf (AI)</button>
-    </div>
+    <div id="aiImportStatus"></div>
+    <div style="font-size:11px;color:var(--text3);margin:6px 0">— or paste text manually below —</div>
+    <textarea id="aiTranscriptInput" rows="8" placeholder="Contoh:&#10;Collector: Selamat pagi Encik Ahmad, saya dari NewVest Recoveries...&#10;Debtor: Saya tak ada duit lah sekarang, kerja pun kena cut...&#10;..."></textarea>
   </div>
-
-  <div id="aiPanelJobsheet" style="display:none">
-    <div class="form-row" style="margin-bottom:8px">
-      <label style="margin-bottom:6px;display:block">Job sheet / nota akaun / remarks CRM</label>
-      <textarea id="aiJobsheetInput" rows="7" placeholder="Contoh:&#10;Nama: Ahmad bin Hassan&#10;Akaun: RedOne Postpaid&#10;Baki: RM1,250&#10;Status: Terminated — gagal bayar 4 bulan&#10;Nota: Customer selalu bagi alasan kerja swasta, pendapatan tak menentu...&#10;..."></textarea>
-    </div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:10px;padding:7px 10px;background:var(--bg);border-radius:6px">
-      💡 IC, no. telefon &amp; no. akaun dalam job sheet akan di-<b>redact automatik</b>. Nama sebenar boleh kekal — AI akan ganti dengan nama fiktif dalam draf senario.
-    </div>
-    <div id="aiJobsheetRedactPreview"></div>
-    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-      <button class="btn btn-secondary" style="flex:1;min-width:140px" onclick="previewJobsheetRedaction()">🔒 Redact &amp; Preview</button>
-      <button class="btn btn-primary" id="btnGenAiDraftJobsheet" style="flex:1;min-width:140px" onclick="generateScenarioDraftFromJobsheet()" disabled>✨ Generate Draf (AI)</button>
-    </div>
+  <div id="aiRedactPreview"></div>
+  <div style="display:flex;gap:8px;margin-top:10px">
+    <button class="btn btn-secondary" onclick="previewRedaction()">🔒 Redact &amp; Preview</button>
+    <button class="btn btn-primary" id="btnGenAiDraft" onclick="generateScenarioDraftFromTranscript()" disabled>🤖 Generate Scenario Draft (AI)</button>
   </div>
-
   <div id="aiDraftOut" style="margin-top:14px"></div>
   `);
 }
+function setAiBuilderMode(mode){
+  window.__aiBuilderMode=mode;
+  const isTranscript=mode==='transcript';
+  const tBtn=document.getElementById('srcModeTranscript'), jBtn=document.getElementById('srcModeJobSheet');
+  tBtn.style.background=isTranscript?'var(--purple)':'var(--surface)';
+  tBtn.style.color=isTranscript?'#fff':'var(--text2)';
+  tBtn.style.borderColor=isTranscript?'var(--purple)':'var(--border2)';
+  jBtn.style.background=!isTranscript?'var(--purple)':'var(--surface)';
+  jBtn.style.color=!isTranscript?'#fff':'var(--text2)';
+  jBtn.style.borderColor=!isTranscript?'var(--purple)':'var(--border2)';
+  document.getElementById('aiInputLabel').textContent=isTranscript?'Transkrip / Nota Call':'Job Sheet / Case History (export dari CRM)';
+  document.getElementById('aiTranscriptInput').placeholder=isTranscript
+    ?'Contoh:\nCollector: Selamat pagi Encik Ahmad, saya dari NewVest Recoveries...\nDebtor: Saya tak ada duit lah sekarang, kerja pun kena cut...\n...'
+    :'Paste job sheet penuh dari CRM/Volare di sini (info akaun + remarks log setiap attempt call)...';
+  // Reset preview/draft bila tukar mode — elak campur data dari mode lain
+  document.getElementById('aiRedactPreview').innerHTML='';
+  document.getElementById('aiDraftOut').innerHTML='';
+  document.getElementById('aiImportStatus').innerHTML='';
+  document.getElementById('aiFileInput').value='';
+  document.getElementById('btnGenAiDraft').disabled=true;
+  delete document.getElementById('aiTranscriptInput').dataset.redacted;
+}
 
-function switchAiBuilderTab(tab){
-  const isTranscript = tab === 'transcript';
-  const tBtn = document.getElementById('aiTabTranscript');
-  const jBtn = document.getElementById('aiTabJobsheet');
-  const tPanel = document.getElementById('aiPanelTranscript');
-  const jPanel = document.getElementById('aiPanelJobsheet');
-  if(!tBtn||!jBtn||!tPanel||!jPanel) return;
-
-  // Active tab styling
-  tBtn.style.border = isTranscript ? '2px solid var(--purple)' : '2px solid var(--border2)';
-  tBtn.style.background = isTranscript ? 'var(--purple-light)' : 'var(--bg)';
-  tBtn.querySelector('span:nth-child(2)').style.color = isTranscript ? 'var(--purple)' : 'var(--text2)';
-
-  jBtn.style.border = !isTranscript ? '2px solid var(--purple)' : '2px solid var(--border2)';
-  jBtn.style.background = !isTranscript ? 'var(--purple-light)' : 'var(--bg)';
-  jBtn.querySelector('span:nth-child(2)').style.color = !isTranscript ? 'var(--purple)' : 'var(--text2)';
-
-  tPanel.style.display = isTranscript ? 'block' : 'none';
-  jPanel.style.display = !isTranscript ? 'block' : 'none';
-
-  // Clear output when switching tabs so it doesn't confuse
-  const out = document.getElementById('aiDraftOut');
-  if(out) out.innerHTML = '';
+// ── Import file (PDF/TXT/CSV) terus ke textarea — alternatif untuk
+// copy-paste manual. Extract text jalan di SERVER (/api/parse-document,
+// guna pdf-parse) — PDF tak boleh di-parse selamat 100% kat browser tanpa
+// load library besar, so kita hantar fail mentah (BUKAN PII redacted lagi,
+// sebab redaction perlukan teks plain dulu) ke server kita sendiri untuk
+// extract teks. Selepas teks balik, redaction PII jalan di BROWSER macam
+// biasa sebelum apa-apa pergi ke AI — server parse cuma "baca" fail,
+// tak pernah hantar kandungan fail ke mana-mana selain balik ke browser ni.
+function handleAiFileDrop(ev){
+  ev.preventDefault();
+  ev.currentTarget.style.borderColor='var(--border2)';
+  const file=ev.dataTransfer.files[0];
+  if(file)importAiFile(file);
+}
+function handleAiFileSelect(ev){
+  const file=ev.target.files[0];
+  if(file)importAiFile(file);
+}
+async function importAiFile(file){
+  const status=document.getElementById('aiImportStatus');
+  status.innerHTML='<div style="font-size:12px;color:var(--text3);margin-top:6px">⏳ Reading '+file.name+'...</div>';
+  try{
+    const fd=new FormData();
+    fd.append('file',file);
+    const id=localStorage.getItem('ct_session_id')||'';
+    const res=await fetch('/api/parse-document',{method:'POST',headers:{'x-user-id':id},body:fd});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to read file.');
+    document.getElementById('aiTranscriptInput').value=data.text;
+    status.innerHTML=`<div class="alert alert-ok" style="display:block;margin-top:6px">✓ Imported "${file.name}" (${data.text.length} characters). Please click "Redact &amp; Preview" next.</div>`;
+    // Reset preview/draft lama (kalau ada) sebab textarea content dah ganti
+    document.getElementById('aiRedactPreview').innerHTML='';
+    document.getElementById('aiDraftOut').innerHTML='';
+    document.getElementById('btnGenAiDraft').disabled=true;
+    delete document.getElementById('aiTranscriptInput').dataset.redacted;
+  }catch(e){
+    status.innerHTML=`<div class="alert alert-err" style="display:block;margin-top:6px">⚠ ${e.message}</div>`;
+  }
 }
 
 function previewRedaction(){
   const raw=document.getElementById('aiTranscriptInput').value;
-  const {redacted,found}=redactPII(raw);
+  const mode=window.__aiBuilderMode||'transcript';
   const box=document.getElementById('aiRedactPreview');
-  if(!raw.trim()){box.innerHTML='<div class="alert alert-err" style="display:block">Sila paste transkrip dahulu.</div>';return;}
+  if(!raw.trim()){box.innerHTML='<div class="alert alert-err" style="display:block">Sila paste '+(mode==='jobsheet'?'job sheet':'transkrip')+' dahulu.</div>';return;}
+  // Safety net: kesan kalau teks yang ditampal NAMPAK macam job sheet
+  // (banyak field "LABEL :" macam "ACCOUNT NO", "CUSTOMER NAME") tapi mod
+  // "Transkrip Call" yang aktif — kalau diteruskan, redaction guna regex
+  // je (bukan key-based), risiko PII job sheet (cth no. kad alphanumeric)
+  // terlepas. Beri amaran & block proceed sehingga manager confirm/tukar mod.
+  const jobSheetSignals=(raw.match(/\b(ACCOUNT NO|CUSTOMER NAME|CARD NO|IC NO|OUTSTANDING AMT|AGING DAYS)\s*\d{0,2}\s*:/gi)||[]).length;
+  if(mode==='transcript'&&jobSheetSignals>=3){
+    box.innerHTML=`<div class="alert alert-warn" style="display:block">⚠ Teks ni nampak macam <b>job sheet CRM</b> (jumpa ${jobSheetSignals} field macam "ACCOUNT NO :", "CUSTOMER NAME :"...), bukan transkrip dialog. Mod "Transkrip Call" guna kaedah redaction yang kurang sesuai untuk format ni. <button class="btn btn-secondary" style="padding:4px 10px;font-size:11px;margin-left:4px" onclick="setAiBuilderMode('jobsheet');previewRedaction()">Tukar ke mod Job Sheet</button></div>`;
+    return;
+  }
+  const {redacted,found}=mode==='jobsheet'?redactJobSheet(raw):redactPII(raw);
   box.innerHTML=`
     <div class="alert ${found.length?'alert-warn':'alert-ok'}" style="display:block;margin-top:8px">
       ${found.length?`⚠ ${found.length} item PII dah di-redact: <i>${found.slice(0,6).join(', ')}${found.length>6?` +${found.length-6} lagi`:''}</i>`:'✓ Tiada PII jelas dikesan, tapi sila semak manual sekali lagi.'}
     </div>
-    <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:6px;font-size:12px;white-space:pre-wrap;max-height:140px;overflow:auto">${redacted.replace(/</g,'&lt;')}</div>`;
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:6px;font-size:12px;white-space:pre-wrap;max-height:160px;overflow:auto">${redacted.replace(/</g,'&lt;')}</div>`;
+  // Simpan versi redacted utk hantar ke AI (bukan raw asal)
   document.getElementById('aiTranscriptInput').dataset.redacted=redacted;
   document.getElementById('btnGenAiDraft').disabled=false;
-}
-
-function previewJobsheetRedaction(){
-  const raw=document.getElementById('aiJobsheetInput').value;
-  const {redacted,found}=redactPII(raw);
-  const box=document.getElementById('aiJobsheetRedactPreview');
-  if(!raw.trim()){box.innerHTML='<div class="alert alert-err" style="display:block">Sila paste job sheet dahulu.</div>';return;}
-  box.innerHTML=`
-    <div class="alert ${found.length?'alert-warn':'alert-ok'}" style="display:block;margin-top:8px">
-      ${found.length?`⚠ ${found.length} item PII dah di-redact: <i>${found.slice(0,6).join(', ')}${found.length>6?` +${found.length-6} lagi`:''}</i>`:'✓ Tiada PII jelas dikesan, tapi sila semak manual sekali lagi.'}
-    </div>
-    <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:6px;font-size:12px;white-space:pre-wrap;max-height:140px;overflow:auto">${redacted.replace(/</g,'&lt;')}</div>`;
-  document.getElementById('aiJobsheetInput').dataset.redacted=redacted;
-  document.getElementById('btnGenAiDraftJobsheet').disabled=false;
 }
 
 async function generateScenarioDraftFromTranscript(){
   const btn=document.getElementById('btnGenAiDraft');
   const out=document.getElementById('aiDraftOut');
   const redacted=document.getElementById('aiTranscriptInput').dataset.redacted||'';
-  if(!redacted.trim()){out.innerHTML='<div class="alert alert-err" style="display:block">Sila tekan "Redact & Preview" dahulu sebelum generate.</div>';return;}
+  const mode=window.__aiBuilderMode||'transcript';
+  if(!redacted.trim()){out.innerHTML='<div class="alert alert-err" style="display:block">Please click "Redact &amp; Preview" first before generating.</div>';return;}
   btn.disabled=true;btn.textContent='Menjana draf...';
-  out.innerHTML='<div style="font-size:13px;color:var(--text3)">⏳ AI sedang analisis transkrip...</div>';
+  out.innerHTML='<div style="font-size:13px;color:var(--text3)">⏳ AI sedang analisis '+(mode==='jobsheet'?'job sheet':'transkrip')+'...</div>';
   try{
-    const prompt=`Anda pereka senario latihan untuk syarikat pemulihan hutang telco di Malaysia. Di bawah ialah transkrip call SEBENAR (PII dah di-redact — JANGAN cuba teka/isi balik IC/no.telefon/no.akaun sebenar):
+    const prompt=mode==='jobsheet'?`Anda pereka senario latihan untuk syarikat pemulihan hutang telco di Malaysia. Di bawah ialah JOB SHEET / CASE HISTORY SEBENAR dari sistem CRM (PII dah di-redact — JANGAN cuba teka/isi balik IC/no.telefon/no.akaun/nama sebenar). Job sheet ni mengandungi info akaun (amount, aging) dan LOG REMARKS — ringkasan setiap attempt call/SMS secara kronologi, BUKAN transkrip dialog penuh. Remarks sering guna singkatan: SW=Spoke With, CM=Customer, PTP=Promise to Pay, RNA=Ring No Answer, HG UP=Hang Up, VM=Voice Mail, BP=Broken Promise, CTC=Contact.
+
+"""
+${redacted}
+"""
+
+TUGAS ANDA: baca KESELURUHAN log remarks (bukan satu entry je) dan kenal pasti CORAK TINGKAH LAKU penghutang ni merentas pelbagai attempt — cth adakah dia jenis selalu bagi PTP tapi broken promise berulang kali, jenis terus elak/RNA, jenis bagi alasan konsisten (kerja/kesihatan/komisen), jenis agresif/hang up, dsb. Guna corak tu untuk reka satu watak penghutang yang REALISTIK untuk roleplay — bukan cuma rephrase satu remarks entry.
+
+Hasilkan draf senario latihan dalam format JSON SAHAJA (tiada teks lain, tiada markdown fence), dengan struktur EXACT macam ni:
+{
+  "emoji": "(satu emoji sesuai mood/corak penghutang)",
+  "name": "(nama watak fiktif, BUKAN nama sebenar dari job sheet)",
+  "title": "(tajuk pendek senario, cth 'Penghutang Serial Broken Promise - Alasan Komisen')",
+  "description": "(1 ayat ringkas situasi & corak tingkah laku)",
+  "level": "easy|med|hard",
+  "balanceTier": "low|high",
+  "objectionType": "cooperative|denial|hardship|aggressive|avoidance",
+  "customerType": "suspended|terminated|restructured|other",
+  "prompt": "(2-4 ayat arahan untuk AI berperanan sebagai penghutang ni semasa roleplay - tone, gaya respons, objection utama yang akan dia bangkitkan, berdasarkan CORAK SEBENAR dari log remarks)",
+  "checklist": [{"cat":"tone|delivery|counter|action|balance","text":"(perkara spesifik collector patut buat, berdasarkan corak/kelemahan yang nampak dalam log remarks ni - cth kalau penghutang selalu broken promise, checklist patut sebut pasal cara nail down PTP yang lebih kukuh)"}],
+  "disclosures": ["(jika ada disclosure/maklumat wajib yang patut diucapkan, kosongkan array jika tiada)"]
+}
+Checklist kena ada 3-5 item, betul-betul berdasarkan CORAK SEBENAR yang berulang dalam log remarks ni — bukan generic template.`
+    :`Anda pereka senario latihan untuk syarikat pemulihan hutang telco di Malaysia. Di bawah ialah transkrip call SEBENAR (PII dah di-redact — JANGAN cuba teka/isi balik IC/no.telefon/no.akaun sebenar):
 
 """
 ${redacted}
@@ -1791,87 +1996,38 @@ Berdasarkan transkrip ni, hasilkan draf senario latihan dalam format JSON SAHAJA
 }
 Checklist kena ada 3-5 item, betul-betul berdasarkan corak SEBENAR dalam transkrip (apa collector buat baik / apa yang patut diperbaiki) — bukan generic template.`;
     const res=await fetch('/api/claude',{method:'POST',headers:authHeaders(),
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1200,messages:[{role:'user',content:prompt}]})});
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:2000,messages:[{role:'user',content:prompt}]})});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Gagal generate draf.');
     let text=(data.content?.[0]?.text||'').trim();
     text=text.replace(/^```json\s*/i,'').replace(/```\s*$/,'').trim(); // jaga-jaga kalau AI masih bungkus dengan fence
+    // Kadang AI tambah ayat pengenalan sebelum/lepas JSON walaupun diarah
+    // jangan — so extract blok {...} TERLUAR je (dari "{" pertama ke "}"
+    // terakhir) sebelum parse, bukan terus JSON.parse teks mentah.
+    const firstBrace=text.indexOf('{'), lastBrace=text.lastIndexOf('}');
+    if(firstBrace!==-1&&lastBrace>firstBrace)text=text.slice(firstBrace,lastBrace+1);
     let draft;
-    try{draft=JSON.parse(text);}catch{throw new Error('AI bagi format tidak sah, sila cuba lagi.');}
+    try{draft=JSON.parse(text);}catch(parseErr){
+      console.error('[AI Scenario Builder] Gagal parse JSON. Raw response:',text);
+      throw new Error('AI bagi format tidak sah, sila cuba lagi. (Jika berulang, cuba ringkaskan job sheet/transkrip sikit.)');
+    }
     window.__aiScenarioDraft=draft; // simpan sementara, dipakai bila "Guna Draf Ni" ditekan
     out.innerHTML=`
-      <div class="alert alert-ok" style="display:block">✓ Draf dah siap — sila REVIEW dahulu, tiada apa disimpan secara automatik.</div>
+      <div class="alert alert-ok" style="display:block">✓ Draft is ready — please REVIEW first, nothing is saved automatically.</div>
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:8px">
-        <div style="font-weight:600;margin-bottom:4px">${draft.emoji||''} ${draft.title||'(tiada tajuk)'}</div>
+        <div style="font-weight:600;margin-bottom:4px">${draft.emoji||''} ${draft.title||'(no title)'}</div>
         <div style="font-size:12px;color:var(--text2);margin-bottom:6px">${draft.description||''}</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
           <span class="chip chip-amber" style="font-size:11px">${objectionTypeIcon(draft.objectionType)} ${objectionTypeLabel(draft.objectionType)}</span>
           <span style="font-size:11px;color:var(--text3)">${customerTypeLabel(draft.customerType)}</span>
         </div>
-        <div style="font-size:12px;color:var(--text3)">${(draft.checklist||[]).length} checklist item dicadangkan</div>
+        <div style="font-size:12px;color:var(--text3)">${(draft.checklist||[]).length} checklist items suggested</div>
       </div>
       <button class="btn btn-primary" style="margin-top:10px" onclick="useAiScenarioDraft()">✅ Guna Draf Ni → Buka Form Untuk Edit</button>`;
   }catch(e){
     out.innerHTML=`<div class="alert alert-err" style="display:block">⚠ ${e.message}</div>`;
   }finally{
-    btn.disabled=false;btn.textContent='🤖 Generate Draf Senario (AI)';
-  }
-}
-
-async function generateScenarioDraftFromJobsheet(){
-  const btn=document.getElementById('btnGenAiDraftJobsheet');
-  const out=document.getElementById('aiDraftOut');
-  const redacted=document.getElementById('aiJobsheetInput').dataset.redacted||'';
-  if(!redacted.trim()){out.innerHTML='<div class="alert alert-err" style="display:block">Sila tekan "Redact & Preview" dahulu sebelum generate.</div>';return;}
-  btn.disabled=true;btn.textContent='Menjana draf...';
-  out.innerHTML='<div style="font-size:13px;color:var(--text3)">⏳ AI sedang analisis job sheet...</div>';
-  try{
-    const prompt=`Anda pereka senario latihan untuk syarikat pemulihan hutang telco di Malaysia. Di bawah ialah job sheet / nota akaun / remarks CRM sebenar (PII dah di-redact — JANGAN cuba teka/isi balik IC/no.telefon/no.akaun sebenar):
-
-"""
-${redacted}
-"""
-
-Berdasarkan maklumat ni, bayangkan bagaimana debtor ini kemungkinan besar akan bertindak balas dalam panggilan collection, lalu hasilkan draf senario latihan dalam format JSON SAHAJA (tiada teks lain, tiada markdown fence), dengan struktur EXACT macam ni:
-{
-  "emoji": "(satu emoji sesuai mood/situasi penghutang)",
-  "name": "(nama watak fiktif — JANGAN guna nama sebenar dari job sheet)",
-  "title": "(tajuk pendek senario)",
-  "description": "(1 ayat ringkas situasi berdasarkan nota akaun)",
-  "level": "easy|med|hard",
-  "balanceTier": "low|high",
-  "objectionType": "cooperative|denial|hardship|aggressive|avoidance",
-  "customerType": "suspended|terminated|restructured|other",
-  "prompt": "(2-4 ayat arahan untuk AI berperanan sebagai debtor — tone, gaya, objection utama yang dijangka berdasarkan profil akaun ini)",
-  "checklist": [{"cat":"tone|delivery|counter|action|balance","text":"(perkara spesifik yang collector perlu buat untuk handle debtor jenis ini)"}],
-  "disclosures": ["(disclosure/maklumat wajib berkaitan akaun ini, kosongkan jika tiada)"]
-}
-Checklist kena ada 3-5 item yang relevan dengan profil akaun dan jenis objection yang dijangka.`;
-    const res=await fetch('/api/claude',{method:'POST',headers:authHeaders(),
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1200,messages:[{role:'user',content:prompt}]})});
-    const data=await res.json();
-    if(!res.ok)throw new Error(data.error||'Gagal generate draf.');
-    let text=(data.content?.[0]?.text||'').trim();
-    text=text.replace(/^```json\s*/i,'').replace(/```\s*$/,'').trim();
-    let draft;
-    try{draft=JSON.parse(text);}catch{throw new Error('AI bagi format tidak sah, sila cuba lagi.');}
-    window.__aiScenarioDraft=draft;
-    out.innerHTML=`
-      <div class="alert alert-ok" style="display:block">✓ Draf dah siap — sila REVIEW dahulu, tiada apa disimpan secara automatik.</div>
-      <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:8px">
-        <div style="font-weight:600;margin-bottom:4px">${draft.emoji||''} ${draft.title||'(tiada tajuk)'}</div>
-        <div style="font-size:12px;color:var(--text2);margin-bottom:6px">${draft.description||''}</div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-          <span class="chip chip-amber" style="font-size:11px">${objectionTypeIcon(draft.objectionType)} ${objectionTypeLabel(draft.objectionType)}</span>
-          <span style="font-size:11px;color:var(--text3)">${customerTypeLabel(draft.customerType)}</span>
-        </div>
-        <div style="font-size:12px;color:var(--text3)">${(draft.checklist||[]).length} checklist item dicadangkan</div>
-      </div>
-      <button class="btn btn-primary" style="margin-top:10px" onclick="useAiScenarioDraft()">✅ Guna Draf Ni → Buka Form Untuk Edit</button>`;
-  }catch(e){
-    out.innerHTML=`<div class="alert alert-err" style="display:block">⚠ ${e.message}</div>`;
-  }finally{
-    btn.disabled=false;btn.textContent='✨ Generate Draf (AI)';
+    btn.disabled=false;btn.textContent='🤖 Generate Scenario Draft (AI)';
   }
 }
 
@@ -1892,8 +2048,8 @@ async function openAddScenario(existingId,presetObjectionType){
   const KNOWN_CLIENTS=['RedOne','Celcom','Digi'];
   const isCustomClient=!!(s&&s.client&&!KNOWN_CLIENTS.includes(s.client));
   openModal(`
-  <div class="modal-title">${s?'Edit':'Add'} Senario</div>
-  <div class="form-row"><label>Emoji Senario</label>
+  <div class="modal-title">${s?'Edit':'Add'} Scenario</div>
+  <div class="form-row"><label>Scenario Emoji</label>
     <div style="display:flex;gap:8px;align-items:center">
       <input id="scEmoji" type="text" value="${s?s.emoji:'😐'}" placeholder="😐" style="max-width:70px;font-size:24px;text-align:center" maxlength="4" />
       <div style="display:flex;flex-wrap:wrap;gap:4px">
@@ -1916,7 +2072,7 @@ async function openAddScenario(existingId,presetObjectionType){
   </div>
   <div class="form-row"><label>Scenario Title</label><input id="scTitle" value="${s?s.title:''}" placeholder="Debtor Bekerjasama" /></div>
   <div class="two-col">
-    <div class="form-row"><label>Outstanding Amount</label><input id="scAmount" value="${s?s.amount:'RM5,000'}" placeholder="e.g. RM1,234.50" pattern="^RM[\d,]+(\.[\d]{1,2})?$" title="Format: RM diikuti nombor sahaja, cth RM1,234.50" /></div>
+    <div class="form-row"><label>Outstanding Amount</label><input id="scAmount" value="${s?s.amount:'RM5,000'}" placeholder="e.g. RM1,234.50" pattern="^RM[\d,]+(\.[\d]{1,2})?$" title="Format: RM followed by numbers only, e.g. RM1,234.50" /></div>
     <div class="form-row"><label>Days Overdue</label><input id="scDays" value="${s?s.days:30}" type="number" /></div>
   </div>
   <div class="two-col">
@@ -1928,33 +2084,36 @@ async function openAddScenario(existingId,presetObjectionType){
     </div>
   </div>
   <div class="two-col">
-    <div class="form-row"><label>Objection Type <span style="font-weight:400;color:var(--text3)">(corak tingkah laku penghutang semasa call — untuk analytics weakness ikut jenis)</span></label>
+    <div class="form-row"><label>Objection Type <span style="font-weight:400;color:var(--text3)">(debtor behavior pattern during the call — used for weakness analytics by type)</span></label>
       <select id="scObjectionType">
         ${OBJECTION_TYPES.map(t=>`<option value="${t}" ${s&&s.objectionType===t?'selected':(!s&&t===(presetObjectionType||'cooperative')?'selected':'')}>${objectionTypeIcon(t)} ${objectionTypeLabel(t)}</option>`).join('')}
       </select>
     </div>
-    <div class="form-row"><label>Customer Type <span style="font-weight:400;color:var(--text3)">(segmen akaun — rujuk bucket assignment SOP-COL-002)</span></label>
+    <div class="form-row"><label>Customer Type <span style="font-weight:400;color:var(--text3)">(account segment — refer to bucket assignment SOP-COL-002)</span></label>
       <select id="scCustomerType">
         ${CUSTOMER_TYPES.map(t=>`<option value="${t}" ${s&&s.customerType===t?'selected':(!s&&t==='other'?'selected':'')}>${customerTypeLabel(t)}</option>`).join('')}
       </select>
     </div>
   </div>
   <hr class="divider"/>
-  <div style="font-size:13px;font-weight:600;margin-bottom:10px">📒 Customer Account Information <span style="font-weight:400;color:var(--text3)">(required — shown as collector reference during call)</span></div>
+  <div style="font-size:13px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+    <span>📒 Customer Account Information <span style="font-weight:400;color:var(--text3)">(required — shown as collector reference during call)</span></span>
+    <button type="button" class="btn btn-secondary" style="font-size:11px;padding:5px 10px;font-weight:500" onclick="autofillDummyData()">🎲 Auto-fill Dummy Data</button>
+  </div>
   <div class="two-col">
     <div class="form-row"><label>Client</label>
       <select id="scClient" onchange="toggleClientOther()">
-        <option value="" ${!s||!s.client?'selected':''} disabled>— Pilih Client —</option>
+        <option value="" ${!s||!s.client?'selected':''} disabled>— Select Client —</option>
         <option value="RedOne" ${s&&s.client==='RedOne'?'selected':''}>RedOne</option>
         <option value="Celcom" ${s&&s.client==='Celcom'?'selected':''}>Celcom</option>
         <option value="Digi" ${s&&s.client==='Digi'?'selected':''}>Digi</option>
         <option value="Lain-lain" ${isCustomClient?'selected':''}>Other</option>
       </select>
-      <input id="scClientOther" value="${isCustomClient?s.client.replace(/"/g,'&quot;'):''}" placeholder="Taip nama client lain..." style="margin-top:6px;display:${isCustomClient?'block':'none'}" />
+      <input id="scClientOther" value="${isCustomClient?s.client.replace(/"/g,'&quot;'):''}" placeholder="Type other client name..." style="margin-top:6px;display:${isCustomClient?'block':'none'}" />
     </div>
     <div class="form-row"><label>No. IC</label><input id="scIc" value="${s?s.icNumber:''}" placeholder="901231-10-1234" /></div>
   <div style="background:#FAEEDA;border:1px solid #EF9F27;border-radius:8px;padding:8px 12px;font-size:12px;color:#854F0B;margin-bottom:4px">
-    ⚠️ <b>Privasi:</b> Gunakan nombor IC, akaun, dan nombor telefon <b>fiktif/dummy</b> sahaja. Jangan masukkan data pelanggan sebenar dalam sistem latihan ini.
+    ⚠️ <b>Privacy:</b> Use <b>fictional/dummy</b> IC, account, and phone numbers only. Do not enter real customer data into this training system.
   </div>
   </div>
   <div class="two-col">
@@ -1964,7 +2123,7 @@ async function openAddScenario(existingId,presetObjectionType){
   <div class="two-col">
     <div class="form-row"><label>Acc Type</label>
       <select id="scAccType">
-        <option value="" ${!s||!s.accType?'selected':''} disabled>— Pilih Jenis —</option>
+        <option value="" ${!s||!s.accType?'selected':''} disabled>— Select Type —</option>
         <option value="Active" ${s&&s.accType==='Active'?'selected':''}>Active</option>
         <option value="Pre-NPL" ${s&&s.accType==='Pre-NPL'?'selected':''}>Pre-NPL</option>
         <option value="NPL" ${s&&s.accType==='NPL'?'selected':''}>NPL</option>
@@ -1974,7 +2133,7 @@ async function openAddScenario(existingId,presetObjectionType){
     <div></div>
   </div>
   <div class="two-col">
-    <div class="form-row"><label>Date Daftar</label><input id="scRegDate" type="date" value="${s&&s.registrationDate?s.registrationDate:''}" /></div>
+    <div class="form-row"><label>Registration Date</label><input id="scRegDate" type="date" value="${s&&s.registrationDate?s.registrationDate:''}" /></div>
     <div class="form-row"><label>Date Termination</label><input id="scTermDate" type="date" value="${s&&s.terminationDate?s.terminationDate:''}" /></div>
   </div>
   <hr class="divider"/>
@@ -1987,7 +2146,7 @@ async function openAddScenario(existingId,presetObjectionType){
     </div>
   </div>
   <div class="form-row">
-    <label>Evaluation Checklist <span style="font-weight:400;color:var(--text3)">(AI akan nilai & beri markah berdasarkan 5 kategori ini secara automatik)</span></label>
+    <label>Evaluation Checklist <span style="font-weight:400;color:var(--text3)">(AI will evaluate & score automatically based on these 5 categories)</span></label>
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
       <span style="padding:4px 10px;border-radius:20px;background:var(--bg);border:1px solid var(--border2);font-size:12px;font-weight:600;color:var(--text2)">🗣 Tone / Nada</span>
       <span style="padding:4px 10px;border-radius:20px;background:var(--bg);border:1px solid var(--border2);font-size:12px;font-weight:600;color:var(--text2)">📢 Cara Penyampaian</span>
@@ -1995,22 +2154,31 @@ async function openAddScenario(existingId,presetObjectionType){
       <span style="padding:4px 10px;border-radius:20px;background:var(--bg);border:1px solid var(--border2);font-size:12px;font-weight:600;color:var(--text2)">✅ Tindakan & Pematuhan</span>
       <span style="padding:4px 10px;border-radius:20px;background:var(--bg);border:1px solid var(--border2);font-size:12px;font-weight:600;color:var(--text2)">💰 Strategi Baki Hutang</span>
     </div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Tambah item spesifik untuk senario ini (pilihan):</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:6px">Score Weight per category <span style="font-weight:400">(optional — adjust which category matters more for this scenario; max points are auto-normalised to total 100)</span>:</div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+      ${SCORE_CATS.map(c=>`<div style="display:flex;flex-direction:column;gap:2px">
+        <label style="font-size:10px;color:var(--text3)">${catIcon(c)} ${catLabel(c)}</label>
+        <select id="scWeight_${c}" style="font-size:12px;padding:4px 6px">
+          ${[0.5,1,1.5,2].map(w=>`<option value="${w}" ${(((s&&s.scoreWeights&&s.scoreWeights[c])||1)==w)?'selected':''}>${w}×</option>`).join('')}
+        </select>
+      </div>`).join('')}
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Add specific items for this scenario (optional):</div>
     <div id="checklistRows"></div>
-    <button type="button" class="btn btn-secondary" style="font-size:12px;padding:6px 10px" onclick="addChecklistRow('action','')">+ Tambah Item</button>
+    <button type="button" class="btn btn-secondary" style="font-size:12px;padding:6px 10px" onclick="addChecklistRow('action','')">+ Add Item</button>
   </div>
   <div class="form-row">
-    <label>📢 Pengumuman / Polisi Wajib Dimaklumkan kepada Penghutang <span style="font-weight:400;color:var(--text3)">(new information/policy that the collector MUST mention during this call — cth: "Maklumkan penghutang yang ewallet/paylater akan disekat kerana akaun dimasukkan ke CTOS". Optional — leave empty if no special announcement for this scenario.)</span></label>
+    <label>📢 Mandatory Announcement / Policy To Inform Debtor <span style="font-weight:400;color:var(--text3)">(new information/policy that the collector MUST mention during this call — cth: "Inform the debtor that ewallet/paylater will be blocked because the account was listed with CTOS". Optional — leave empty if no special announcement for this scenario.)</span></label>
     <div id="disclosureRows"></div>
-    <button type="button" class="btn btn-secondary" style="margin-top:6px;font-size:12px;padding:6px 10px" onclick="addDisclosureRow('')">+ Tambah Pengumuman</button>
+    <button type="button" class="btn btn-secondary" style="margin-top:6px;font-size:12px;padding:6px 10px" onclick="addDisclosureRow('')">+ Add Announcement</button>
   </div>
   <div class="modal-footer">
-    <button class="btn btn-secondary" onclick="cancelScenarioForm()">Batal</button>
-    <button class="btn btn-primary" onclick="saveScenario('${existingId||''}')">Simpan</button>
+    <button class="btn btn-secondary" onclick="cancelScenarioForm()">Cancel</button>
+    <button class="btn btn-primary" onclick="saveScenario('${existingId||''}')">Save</button>
   </div>`);
   // Hanya load extra checklist items — 5 kategori utama auto-score oleh AI
   const clData=(s&&s.checklist&&s.checklist.length)?s.checklist:[];
-  clData.forEach(c=>addChecklistRow(c.cat,c.text));
+  clData.forEach(c=>addChecklistRow(c.cat,c.text,c.critical));
   const existingDisclosures=(s&&s.disclosures&&s.disclosures.length)?s.disclosures:[];
   existingDisclosures.forEach(d=>addDisclosureRow(d));
 
@@ -2045,7 +2213,7 @@ function cancelScenarioForm(){
   const name=(document.getElementById("scName")||{}).value||"";
   const prompt=(document.getElementById("scPrompt")||{}).value||"";
   const hasContent=name.trim()||prompt.trim();
-  if(hasContent&&!confirm("Borang belum disimpan. Batalkan dan buang perubahan?")){
+  if(hasContent&&!confirm("Form not saved yet. Cancel and discard changes?")){
     return;
   }
   clearScenarioDraft();
@@ -2063,7 +2231,42 @@ function toggleClientOther(){
   if(sel.value!=='Lain-lain')other.value='';
 }
 
-function addChecklistRow(cat,text){
+// Auto-fill Dummy Data — generate IC/Acc Number/Service No format yang betul
+// secara rawak, supaya manager senang buat scenario baru tanpa kena fikir
+// nombor manual setiap kali. Manager boleh override lepas auto-fill kalau
+// nak nilai specifik. Client/Acc Type/Dates TIDAK disentuh — biar manager pilih sendiri.
+function genDummyIC(){
+  // Format: YYMMDD-PB-XXXX. PB = kod negeri pendaftaran (gunakan set umum yang sah).
+  const stateCodes=['01','02','03','04','05','06','07','08','09','10','11','12','13','14','15','16'];
+  const yy=String(Math.floor(Math.random()*50)+50).padStart(2,'0'); // 50-99 → lahir 1950-1999
+  const mm=String(Math.floor(Math.random()*12)+1).padStart(2,'0');
+  const dd=String(Math.floor(Math.random()*28)+1).padStart(2,'0');
+  const pb=stateCodes[Math.floor(Math.random()*stateCodes.length)];
+  const last=String(Math.floor(Math.random()*9999)).padStart(4,'0');
+  return `${yy}${mm}${dd}-${pb}-${last}`;
+}
+function genDummyAccNumber(){
+  let n='';
+  for(let i=0;i<10;i++)n+=Math.floor(Math.random()*10);
+  return n;
+}
+function genDummyServiceNo(){
+  const prefixes=['010','011','012','013','016','017','018','019'];
+  const p=prefixes[Math.floor(Math.random()*prefixes.length)];
+  let n='';
+  for(let i=0;i<7;i++)n+=Math.floor(Math.random()*10);
+  return `${p}-${n}`;
+}
+function autofillDummyData(){
+  const ic=document.getElementById('scIc');
+  const acc=document.getElementById('scAccNumber');
+  const svc=document.getElementById('scServiceNo');
+  if(ic)ic.value=genDummyIC();
+  if(acc)acc.value=genDummyAccNumber();
+  if(svc)svc.value=genDummyServiceNo();
+}
+
+function addChecklistRow(cat,text,critical){
   const wrap=document.getElementById('checklistRows');
   if(!wrap)return;
   const row=document.createElement('div');
@@ -2072,6 +2275,9 @@ function addChecklistRow(cat,text){
   row.innerHTML=`
     <input class="cl-cat" type="hidden" value="${cat||'action'}" />
     <input class="cl-text" value="${(text||'').replace(/"/g,'&quot;')}" placeholder="E.g. Ensure collector verifies identity sebelum bagi maklumat akaun..." style="flex:1" />
+    <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text3);flex-shrink:0;white-space:nowrap;padding-top:8px" title="Critical — kalau miss, markah aspek action MESTI rendah">
+      <input class="cl-critical" type="checkbox" ${critical?'checked':''} style="margin:0" />⚠️ Critical
+    </label>
     <button type="button" class="btn btn-danger" style="padding:6px 10px;flex-shrink:0" onclick="this.parentElement.remove()">✕</button>`;
   wrap.appendChild(row);
 }
@@ -2095,11 +2301,17 @@ function addDisclosureRow(text){
 function editScenario(id){openAddScenario(id);}
 async function saveScenario(existingId){
   const checklist=Array.from(document.querySelectorAll('#checklistRows .checklist-row'))
-    .map(r=>({cat:r.querySelector('.cl-cat').value,text:r.querySelector('.cl-text').value.trim()}))
+    .map(r=>({cat:r.querySelector('.cl-cat').value,text:r.querySelector('.cl-text').value.trim(),critical:r.querySelector('.cl-critical').checked}))
     .filter(c=>c.text);
   const disclosures=Array.from(document.querySelectorAll('#disclosureRows .disclosure-row .dc-text'))
     .map(i=>i.value.trim())
     .filter(Boolean);
+  // Score weight per kategori — fallback 1 (neutral) kalau select tak jumpa.
+  const scoreWeights={};
+  SCORE_CATS.forEach(c=>{
+    const el=document.getElementById('scWeight_'+c);
+    scoreWeights[c]=el?parseFloat(el.value)||1:1;
+  });
   const gender=document.getElementById('scGender').value;
   const accent=document.getElementById('scAccent').value;
   // Client: kalau dropdown set ke "Lain-lain", guna nama yang ditaip dalam
@@ -2123,6 +2335,7 @@ async function saveScenario(existingId){
     prompt:document.getElementById('scPrompt').value.trim(),
     checklist,
     disclosures,
+    scoreWeights,
     client:clientValue,
     icNumber:document.getElementById('scIc').value.trim(),
     accNumber:document.getElementById('scAccNumber').value.trim(),
@@ -2217,12 +2430,21 @@ async function renderUsers(){
   <div class="card">
     <div class="card-title">✅ Approved Users (${approved.length})</div>
     <div class="table-wrap"><table>
-      <tr><th>Name</th><th>ID</th><th>Role</th><th>Registered At</th><th>Actions</th></tr>
+      <tr><th>Name</th><th>ID</th><th>Role</th><th>Registered At</th><th>Daily Session Limit</th><th>Actions</th></tr>
       ${approved.map(u=>`<tr>
         <td><div style="font-weight:500">${u.name}</div></td>
         <td><span class="chip chip-purple">${u.id}</span></td>
         <td><span class="user-role-badge badge-${u.role}">${u.role==='admin'?'Admin':u.role==='manager'?'Manager':'Collector'}</span></td>
         <td style="font-size:12px;color:var(--text3)">${u.registeredAt?new Date(u.registeredAt).toLocaleDateString('en-MY'):'-'}</td>
+        <td>
+          ${u.role==='collector'?`
+          <div style="display:flex;align-items:center;gap:6px">
+            <input type="number" min="1" step="1" id="limit-${u.id}" value="${u.maxSessionsPerDay??''}" placeholder="Unlimited" style="width:80px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text)">
+            <button class="btn btn-secondary" style="padding:4px 10px;font-size:11px" onclick="saveSessionLimit('${u.id}')">Save</button>
+          </div>
+          <div style="font-size:10px;color:var(--text3);margin-top:3px">${u.maxSessionsPerDay?`Max ${u.maxSessionsPerDay} session${u.maxSessionsPerDay>1?'s':''}/day`:'No limit'}</div>
+          `:`<span style="font-size:12px;color:var(--text3)">—</span>`}
+        </td>
         <td>
           <div class="action-row">
           ${u.id!==currentUser.id?`
@@ -2235,6 +2457,22 @@ async function renderUsers(){
     </table></div>
   </div>`);
 }
+async function saveSessionLimit(id){
+  const input=document.getElementById('limit-'+id);
+  const raw=input.value.trim();
+  const val=raw===''?null:parseInt(raw,10);
+  if(val!==null&&(!Number.isInteger(val)||val<1)){
+    alert('Daily session limit must be a positive whole number, or leave empty for unlimited.');
+    return;
+  }
+  try{
+    await userApi.setLimit(id,val);
+    await loadUsers(true);
+    renderUsers();
+  }catch(e){
+    alert('Failed to update session limit: '+e.message);
+  }
+}
 async function deleteUser(id){
   if(!confirm('Delete this user?'))return;
   try{
@@ -2243,6 +2481,97 @@ async function deleteUser(id){
     renderUsers();
   }catch(e){
     alert('Failed to delete user: '+e.message);
+  }
+}
+
+// ═══════════ ASSIGNMENTS (manager-assigned mandatory scenarios) ═══════════
+async function renderAssignments(){
+  if(currentUser.role==='collector')return;
+  setContent('<div class="page-header"><div class="page-title">Assignments</div></div><div class="card">Loading...</div>');
+  let allAssignments,users,scenarios;
+  try{
+    [allAssignments,users,scenarios]=await Promise.all([loadAssignments(true),loadUsers(),loadScenarios()]);
+  }catch(e){
+    setContent(`<div class="page-header"><div class="page-title">Assignments</div></div><div class="card">⚠ Failed to load: ${e.message}</div>`);
+    return;
+  }
+  const collectors=users.filter(u=>u.role==='collector');
+  const todayStr=new Date().toISOString().slice(0,10);
+  const statusBadge=(a)=>{
+    if(a.status==='completed')return`<span class="chip" style="background:#e8f5e9;color:#2e7d32;font-size:11px">✓ Completed</span>`;
+    const overdue=a.dueDate&&a.dueDate<todayStr;
+    if(overdue)return`<span class="chip" style="background:#fdecea;color:var(--red);font-size:11px">⚠ Overdue</span>`;
+    return`<span class="chip chip-amber" style="font-size:11px">⏳ Pending</span>`;
+  };
+  setContent(`
+  <div class="page-header"><div class="page-title">Assignments</div><div class="page-sub">Assign mandatory scenarios to collectors with a due date, and track completion</div></div>
+
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-title">➕ New Assignment</div>
+    ${collectors.length===0?`<p style="font-size:13px;color:var(--text3)">No collectors registered yet.</p>`:`
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+      <div style="flex:1;min-width:160px">
+        <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">Collector</label>
+        <select id="asgCollector" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px">
+          ${collectors.map(c=>`<option value="${c.id}">${c.name} (${c.id})</option>`).join('')}
+        </select>
+      </div>
+      <div style="flex:1;min-width:200px">
+        <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">Scenario</label>
+        <select id="asgScenario" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px">
+          ${scenarios.map(s=>`<option value="${s.id}">${s.emoji} ${s.title}</option>`).join('')}
+        </select>
+      </div>
+      <div style="min-width:150px">
+        <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">Due Date (optional)</label>
+        <input type="date" id="asgDueDate" style="width:100%;padding:7px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px">
+      </div>
+      <button class="btn btn-primary" style="padding:9px 16px;font-size:13px" onclick="createAssignment()">Assign</button>
+    </div>`}
+  </div>
+
+  <div class="card">
+    <div class="card-title">All Assignments (${allAssignments.length})</div>
+    ${allAssignments.length===0?`<div class="empty-state"><div class="es-icon">📌</div><p>No assignments yet.</p></div>`:`
+    <div class="table-wrap"><table>
+      <tr><th>Collector</th><th>Scenario</th><th>Assigned By</th><th>Due Date</th><th>Status</th><th>Actions</th></tr>
+      ${allAssignments.map(a=>{
+        const c=findUserById(collectors,a.collectorId);
+        const assigner=findUserById(users,a.assignedBy);
+        return`<tr>
+          <td><div style="font-weight:500">${c?c.name:a.collectorId}</div><div style="font-size:11px;color:var(--text3)">${a.collectorId}</div></td>
+          <td>${a.scenarioName||a.scenarioId}</td>
+          <td style="font-size:12px;color:var(--text3)">${assigner?assigner.name:a.assignedBy}</td>
+          <td style="font-size:12px;color:var(--text3)">${a.dueDate?new Date(a.dueDate).toLocaleDateString('en-MY'):'—'}</td>
+          <td>${statusBadge(a)}</td>
+          <td>${a.status==='pending'?`<button class="btn btn-danger" style="padding:4px 10px;font-size:11px" onclick="cancelAssignment('${a.id}')">Cancel</button>`:'-'}</td>
+        </tr>`;
+      }).join('')}
+    </table></div>`}
+  </div>`);
+}
+async function createAssignment(){
+  const collectorId=document.getElementById('asgCollector').value;
+  const scenarioId=document.getElementById('asgScenario').value;
+  const dueDate=document.getElementById('asgDueDate').value||null;
+  const scenarios=scenariosCache||[];
+  const sc=scenarios.find(s=>s.id===scenarioId);
+  try{
+    await assignmentApi.create(collectorId,scenarioId,sc?sc.title:'',dueDate);
+    await loadAssignments(true);
+    renderAssignments();
+  }catch(e){
+    alert('Failed to create assignment: '+e.message);
+  }
+}
+async function cancelAssignment(id){
+  if(!confirm('Cancel this assignment?'))return;
+  try{
+    await assignmentApi.remove(id);
+    await loadAssignments(true);
+    renderAssignments();
+  }catch(e){
+    alert('Failed to cancel assignment: '+e.message);
   }
 }
 
@@ -2450,6 +2779,22 @@ Cakap macam manusia sebenar dalam panggilan telefon — bukan watak komedi atau 
 }
 
 async function startCall(){
+  // Defence-in-depth: button dah disable bila cap reached, tapi check lagi
+  // sini sebab mySessions/cap mungkin stale (cth dua tab dibuka serentak).
+  // Sumber kebenaran SEBENAR ialah server (app/api/sessions POST) — ni cuma
+  // elak UX janggal (collector terlanjur masuk skrin call lepas tu kena tolak).
+  if(currentUser.maxSessionsPerDay!=null){
+    try{
+      const mySessions=await loadSessions(true);
+      const todayStr=new Date().toISOString().slice(0,10);
+      const todayCount=mySessions.filter(s=>s.date&&s.date.startsWith(todayStr)).length;
+      if(todayCount>=currentUser.maxSessionsPerDay){
+        alert(`Daily session limit reached (${currentUser.maxSessionsPerDay} sessions/day). Please try again tomorrow.`);
+        renderTraining();
+        return;
+      }
+    }catch(e){/* kalau check gagal, biar server jadi penjaga akhir — jangan block training sebab network hiccup */}
+  }
   activeVoiceId=null; // reset suara — akan pick baru untuk call ni
   warmupMic(); // panaskan mic SEAWAL mungkin — sebelum collector sempat tekan butang mic (lihat nota di atas function warmupMic)
   callHistory=[];callFullTranscript=[];callSeconds=0;callActive=true;
@@ -2531,7 +2876,7 @@ async function endCall(){
     <div style="text-align:center;padding:3rem 1rem">
       <div style="font-size:48px;margin-bottom:16px;animation:spin 1.5s linear infinite;display:inline-block">⏳</div>
       <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:8px" id="scoreLoadingMsg">Menganalisis nada & cara penyampaian...</div>
-      <div style="font-size:13px;color:var(--text3)">AI sedang menilai prestasi anda. Boleh sehingga seminit untuk panggilan yang panjang.</div>
+      <div style="font-size:13px;color:var(--text3)">AI is evaluating your performance. May take up to a minute for longer calls.</div>
     </div>
     <style>@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style>
   `;
@@ -3123,6 +3468,20 @@ async function processSpeech(rawText){
 async function evalCall(duration){
   const transcript=callFullTranscript.map(m=>`${m.role==='user'?'Collector':'Debtor'}: ${m.content}`).join('\n');
   const checklist=(scenario&&scenario.checklist)||[];
+  // Score weight per kategori (default semua 1.0 = neutral, sama macam tak ada weight) —
+  // dinormalise supaya jumlah scoreMax 5 kategori tetap 100, walau apa pun weight dipilih.
+  const rawWeights=Object.assign({tone:1,delivery:1,counter:1,action:1,balance:1},(scenario&&scenario.scoreWeights)||{});
+  const weightSum=SCORE_CATS.reduce((a,c)=>a+(Number(rawWeights[c])||1),0)||5;
+  const scoreMax={};let _maxAcc=0;
+  SCORE_CATS.forEach((c,i)=>{
+    if(i<SCORE_CATS.length-1){const m=Math.round((Number(rawWeights[c])||1)/weightSum*100);scoreMax[c]=m;_maxAcc+=m;}
+    else{scoreMax[c]=100-_maxAcc;} // kategori terakhir ambil baki, supaya total TEPAT 100
+  });
+  const weightedCats=SCORE_CATS.filter(c=>Number(rawWeights[c])!==1);
+  const weightNote=weightedCats.length
+    ?'\n\nNOTA PEMBERAT SENARIO INI (pertimbangkan dalam analisis & feedback anda, terutama bahagian "feedback" dan "priorityFocus" — kategori berpemberat tinggi PATUT mendapat perhatian lebih kritikal):\n'
+      +weightedCats.map(c=>`- Aspek ${catLabel(c)} ${Number(rawWeights[c])>1?'lebih kritikal':'kurang kritikal'} untuk senario ini (weight ${rawWeights[c]}×, max ${scoreMax[c]}/100 berbanding baseline 20/100).`).join('\n')
+    :'';
   // 5 kategori scoring sentiasa dinilai — ini standard untuk SEMUA senario
   const fixedCriteria=[
     '- [Tone / Nada] Nada collector sepanjang panggilan — sopan, tenang, profesional, tidak agresif atau defensif',
@@ -3131,11 +3490,14 @@ async function evalCall(duration){
     '- [Tindakan & Pematuhan] Ikut SOP — sahkan identiti, nyatakan tujuan panggilan, dapatkan PTP jelas & spesifik, dokumentasi betul, tidak mengugut',
     '- [Strategi Baki Hutang] Pendekatan strategi mengikut tahap baki hutang ('+( scenario&&scenario.balanceTier==='low'?'RENDAH — dorong bayaran penuh':'TINGGI — tawar ansuran berstruktur')+')'
   ].join('\n');
-  // Extra items spesifik untuk senario ini (kalau ada)
+  // Extra items spesifik untuk senario ini (kalau ada) — item "critical" diberi
+  // amaran eksplisit dalam prompt supaya AI cap markah action kalau item tu miss.
   const extraItems=checklist.length
-    ?'\n\nITEM TAMBAHAN SPESIFIK SENARIO INI:\n'+checklist.map(c=>`- ${c.text}`).join('\n')
+    ?'\n\nITEM TAMBAHAN SPESIFIK SENARIO INI:\n'+checklist.map(c=>c.critical
+        ?`- ⚠️ CRITICAL — ${c.text} (item ini WAJIB dibuat; jika collector GAGAL/TERLEPAS perkara ini, markah aspek action MESTI ≤12/20 walaupun aspek lain baik)`
+        :`- ${c.text}`).join('\n')
     :'';
-  const checklistText=fixedCriteria+extraItems;
+  const checklistText=fixedCriteria+extraItems+weightNote;
   const disclosures=(scenario&&scenario.disclosures)||[];
   const disclosuresText=disclosures.length
     ?disclosures.map(d=>`- ${d}`).join('\n')
@@ -3216,8 +3578,13 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
       if(start===-1||end<=start)throw parseErr;
       r=JSON.parse(raw.slice(start,end+1));
     }
-    const scores=Object.assign({tone:0,delivery:0,counter:0,action:0,balance:0},r.scores||{});
-    const totalScore=typeof r.totalScore==='number'?r.totalScore:Object.values(scores).reduce((a,b)=>a+b,0);
+    const rawScores=Object.assign({tone:0,delivery:0,counter:0,action:0,balance:0},r.scores||{});
+    // Skala markah mentah AI (0-20 setiap kategori) ke max yang sudah dinormalise
+    // ikut scoreWeights senario (scoreMax dikira di atas) — kalau semua weight 1.0,
+    // hasil ni sama persis macam sebelum ni (max 20 tiap kategori, total 100).
+    const scores={};
+    SCORE_CATS.forEach(c=>{scores[c]=Math.round((rawScores[c]/20)*scoreMax[c]);});
+    const totalScore=SCORE_CATS.reduce((a,c)=>a+scores[c],0);
     const missed=Array.isArray(r.missed)?r.missed.slice(0,5):[];
     const priorityFocus=(r.priorityFocus&&r.priorityFocus.category)?{category:r.priorityFocus.category,tip:r.priorityFocus.tip||''}:fallbackPriority(scores,missed);
     // PUNCA BUG "session tak tersimpan": jadual `sessions` ada CHECK constraint
@@ -3232,7 +3599,7 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
       scenarioName:scenario?scenario.title:'',duration,date:new Date().toISOString(),
       customerType:scenario?scenario.customerType||'':'',
       objectionType:scenario?scenario.objectionType||'':'',
-      totalScore,scores,
+      totalScore,scores,scoreMax,
       strengths:Array.isArray(r.strengths)?r.strengths:[],
       scoreReasons:r.scoreReasons||{},
       missed,priorityFocus,

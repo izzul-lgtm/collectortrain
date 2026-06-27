@@ -8,6 +8,7 @@ function toClientShape(row) {
     role: row.role,
     registeredAt: row.registered_at,
     isApproved: row.is_approved,
+    maxSessionsPerDay: row.max_sessions_per_day ?? null,
   };
 }
 
@@ -18,7 +19,7 @@ export async function GET(req) {
     const sb = supabaseAdmin();
     const { data, error } = await sb
       .from('users')
-      .select('id, name, role, registered_at, is_approved')
+      .select('id, name, role, registered_at, is_approved, max_sessions_per_day')
       .order('registered_at', { ascending: false });
     if (error) throw error;
     return Response.json({ users: data.map(toClientShape) });
@@ -41,21 +42,33 @@ export async function DELETE(req) {
   }
 }
 
-// PATCH — approve or reject a user account
+// PATCH — approve/reject a user account, and/or set their daily session cap
 export async function PATCH(req) {
   const authErr = await requireAuth(req, ['admin', 'manager']);
   if (authErr) return authErr;
   try {
-    const { id, is_approved } = await req.json();
-    if (!id || typeof is_approved !== 'boolean') {
+    const { id, is_approved, max_sessions_per_day } = await req.json();
+    if (!id) {
       return Response.json({ error: 'Invalid request.' }, { status: 400 });
+    }
+    const update = {};
+    if (typeof is_approved === 'boolean') update.is_approved = is_approved;
+    if (max_sessions_per_day !== undefined) {
+      // null = remove the cap (unlimited); otherwise must be a positive integer
+      if (max_sessions_per_day !== null && (!Number.isInteger(max_sessions_per_day) || max_sessions_per_day < 1)) {
+        return Response.json({ error: 'Daily session cap must be a positive whole number, or empty for unlimited.' }, { status: 400 });
+      }
+      update.max_sessions_per_day = max_sessions_per_day;
+    }
+    if (Object.keys(update).length === 0) {
+      return Response.json({ error: 'Nothing to update.' }, { status: 400 });
     }
     const sb = supabaseAdmin();
     const { data, error } = await sb
       .from('users')
-      .update({ is_approved })
+      .update(update)
       .eq('id', id)
-      .select('id, name, role, registered_at, is_approved')
+      .select('id, name, role, registered_at, is_approved, max_sessions_per_day')
       .single();
     if (error) throw error;
     return Response.json({ user: toClientShape(data) });
