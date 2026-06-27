@@ -1765,11 +1765,57 @@ function redactPII(text){
   return {redacted,found};
 }
 
+// ── Job Sheet redaction (key-based) ─────────────────────────────────────
+// Job sheet CRM (Volare) formatnya BERSTRUKTUR — setiap field sensitif ada
+// LABEL jelas di depan ("ACCOUNT NO :", "CARD NO 1 :", "NEW IC NO :"...).
+// Regex nombor-je (redactPII di atas) terlepas value yang campur huruf+nombor
+// (cth no. kad "PDRFRL2060420264100009"), so kita redact ikut LABEL dulu —
+// apa-apa value lepas label sensitif terus dibuang, tak kira format dia.
+// Lepas tu kita run redactPII jugak sebagai "net" untuk apa-apa PII yang
+// tersebut bebas dalam remarks log (cth no. telefon ditaip dalam nota call).
+const JOB_SHEET_SENSITIVE_LABELS=[
+  'IC NO','NEW IC NO','OLD IC NO','NEW IC','OLD IC','IC NUMBER','NRIC',
+  'ACCOUNT NO','ACC NO','A/C NO',
+  'CARD NO','CARD NUMBER',
+  'CUSTOMER NAME','NAME','CONTACT PERSON','RELATION NAME',
+  'ADDRESS','HOME ADDRESS','MAILING ADDRESS',
+  'CONTACT NO','CONTACTNO','PHONE','MOBILE','TEL NO','H/P',
+  'EMAIL',
+];
+function redactJobSheet(text){
+  let redacted=text||'';
+  const found=[];
+  // Padan baris bentuk "LABEL : value" (job sheet Volare guna layout 2 lajur
+  // bersebelahan dalam 1 baris fizikal, so kita stop value bila jumpa 3+
+  // space berturut — itu tanda sempadan lajur seterusnya, bukan newline je).
+  // "(?:^|\s{2,})" depan label elak terpadan label yang muncul SEBAGAI
+  // sebahagian perkataan lain (cth "Relation name:" — bukan field "NAME").
+  // "\s*\d{0,2}\s*:" benarkan index field macam "CARD NO 1 :".
+  const labelPattern=JOB_SHEET_SENSITIVE_LABELS.map(l=>l.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|');
+  const re=new RegExp(`(^|\\s{2,})(${labelPattern})\\b\\s*\\d{0,2}\\s*:\\s*([^\\n]*?)(?=\\s{3,}\\S|\\n|$)`,'gim');
+  redacted=redacted.replace(re,(m,lead,label,value)=>{
+    if(!value.trim())return m; // medan kosong, tiada apa nak redact
+    found.push(`${label.trim()}: ${value.trim()}`);
+    return `${lead}${label} : [DIRAHSIAKAN]`;
+  });
+  // Safety net — regex nombor (IC/telefon/no.akaun) untuk apa-apa yang
+  // disebut tanpa label jelas, cth dalam remarks log.
+  const {redacted:redacted2,found:found2}=redactPII(redacted);
+  return {redacted:redacted2,found:[...found,...found2]};
+}
+
 function openAiScenarioBuilder(){
+  window.__aiBuilderMode='transcript';
   openModal(`
-  <div class="modal-title">🤖 AI Scenario Builder — Cipta Dari Transkrip Sebenar</div>
-  <p style="font-size:12px;color:var(--text3);line-height:1.6;margin-bottom:10px">Paste an actual call transcript/notes from CRM/Volare below. The system will <b>auto-redact PII</b> (IC, phone no., account no.) in your browser before anything is sent to the AI, then the AI will suggest a draft scenario (debtor type, checklist, situation) for you to review &amp; edit — not auto-published directly.</p>
-  <div class="form-row"><label>Transkrip / Nota Call</label>
+  <div class="modal-title">🤖 AI Scenario Builder</div>
+  <p style="font-size:12px;color:var(--text3);line-height:1.6;margin-bottom:10px">Paste real data from CRM/Volare below. The system will <b>auto-redact PII</b> (IC, phone no., account no., card no., name, address) in your browser before anything is sent to the AI, then the AI will suggest a draft scenario for you to review &amp; edit — not auto-published directly.</p>
+
+  <div style="display:flex;gap:8px;margin-bottom:12px">
+    <button type="button" id="srcModeTranscript" class="btn btn-secondary" style="flex:1;padding:10px;font-size:12px;border-color:var(--purple);background:var(--purple);color:#fff" onclick="setAiBuilderMode('transcript')">💬 Transkrip Call<br><span style="font-size:10px;opacity:.85;font-weight:400">Paste dialog/perbualan sebenar</span></button>
+    <button type="button" id="srcModeJobSheet" class="btn btn-secondary" style="flex:1;padding:10px;font-size:12px" onclick="setAiBuilderMode('jobsheet')">📄 Job Sheet CRM<br><span style="font-size:10px;opacity:.85;font-weight:400">Paste export job sheet/case history</span></button>
+  </div>
+
+  <div class="form-row"><label id="aiInputLabel">Transkrip / Nota Call</label>
     <textarea id="aiTranscriptInput" rows="8" placeholder="Contoh:&#10;Collector: Selamat pagi Encik Ahmad, saya dari NewVest Recoveries...&#10;Debtor: Saya tak ada duit lah sekarang, kerja pun kena cut...&#10;..."></textarea>
   </div>
   <div id="aiRedactPreview"></div>
@@ -1780,12 +1826,32 @@ function openAiScenarioBuilder(){
   <div id="aiDraftOut" style="margin-top:14px"></div>
   `);
 }
+function setAiBuilderMode(mode){
+  window.__aiBuilderMode=mode;
+  const isTranscript=mode==='transcript';
+  document.getElementById('srcModeTranscript').style.background=isTranscript?'var(--purple)':'';
+  document.getElementById('srcModeTranscript').style.color=isTranscript?'#fff':'';
+  document.getElementById('srcModeTranscript').style.borderColor=isTranscript?'var(--purple)':'';
+  document.getElementById('srcModeJobSheet').style.background=!isTranscript?'var(--purple)':'';
+  document.getElementById('srcModeJobSheet').style.color=!isTranscript?'#fff':'';
+  document.getElementById('srcModeJobSheet').style.borderColor=!isTranscript?'var(--purple)':'';
+  document.getElementById('aiInputLabel').textContent=isTranscript?'Transkrip / Nota Call':'Job Sheet / Case History (export dari CRM)';
+  document.getElementById('aiTranscriptInput').placeholder=isTranscript
+    ?'Contoh:\nCollector: Selamat pagi Encik Ahmad, saya dari NewVest Recoveries...\nDebtor: Saya tak ada duit lah sekarang, kerja pun kena cut...\n...'
+    :'Paste job sheet penuh dari CRM/Volare di sini (info akaun + remarks log setiap attempt call)...';
+  // Reset preview/draft bila tukar mode — elak campur data dari mode lain
+  document.getElementById('aiRedactPreview').innerHTML='';
+  document.getElementById('aiDraftOut').innerHTML='';
+  document.getElementById('btnGenAiDraft').disabled=true;
+  delete document.getElementById('aiTranscriptInput').dataset.redacted;
+}
 
 function previewRedaction(){
   const raw=document.getElementById('aiTranscriptInput').value;
-  const {redacted,found}=redactPII(raw);
+  const mode=window.__aiBuilderMode||'transcript';
+  const {redacted,found}=mode==='jobsheet'?redactJobSheet(raw):redactPII(raw);
   const box=document.getElementById('aiRedactPreview');
-  if(!raw.trim()){box.innerHTML='<div class="alert alert-err" style="display:block">Sila paste transkrip dahulu.</div>';return;}
+  if(!raw.trim()){box.innerHTML='<div class="alert alert-err" style="display:block">Sila paste '+(mode==='jobsheet'?'job sheet':'transkrip')+' dahulu.</div>';return;}
   box.innerHTML=`
     <div class="alert ${found.length?'alert-warn':'alert-ok'}" style="display:block;margin-top:8px">
       ${found.length?`⚠ ${found.length} item PII dah di-redact: <i>${found.slice(0,6).join(', ')}${found.length>6?` +${found.length-6} lagi`:''}</i>`:'✓ Tiada PII jelas dikesan, tapi sila semak manual sekali lagi.'}
@@ -1800,11 +1866,35 @@ async function generateScenarioDraftFromTranscript(){
   const btn=document.getElementById('btnGenAiDraft');
   const out=document.getElementById('aiDraftOut');
   const redacted=document.getElementById('aiTranscriptInput').dataset.redacted||'';
+  const mode=window.__aiBuilderMode||'transcript';
   if(!redacted.trim()){out.innerHTML='<div class="alert alert-err" style="display:block">Please click "Redact &amp; Preview" first before generating.</div>';return;}
   btn.disabled=true;btn.textContent='Menjana draf...';
-  out.innerHTML='<div style="font-size:13px;color:var(--text3)">⏳ AI sedang analisis transkrip...</div>';
+  out.innerHTML='<div style="font-size:13px;color:var(--text3)">⏳ AI sedang analisis '+(mode==='jobsheet'?'job sheet':'transkrip')+'...</div>';
   try{
-    const prompt=`Anda pereka senario latihan untuk syarikat pemulihan hutang telco di Malaysia. Di bawah ialah transkrip call SEBENAR (PII dah di-redact — JANGAN cuba teka/isi balik IC/no.telefon/no.akaun sebenar):
+    const prompt=mode==='jobsheet'?`Anda pereka senario latihan untuk syarikat pemulihan hutang telco di Malaysia. Di bawah ialah JOB SHEET / CASE HISTORY SEBENAR dari sistem CRM (PII dah di-redact — JANGAN cuba teka/isi balik IC/no.telefon/no.akaun/nama sebenar). Job sheet ni mengandungi info akaun (amount, aging) dan LOG REMARKS — ringkasan setiap attempt call/SMS secara kronologi, BUKAN transkrip dialog penuh. Remarks sering guna singkatan: SW=Spoke With, CM=Customer, PTP=Promise to Pay, RNA=Ring No Answer, HG UP=Hang Up, VM=Voice Mail, BP=Broken Promise, CTC=Contact.
+
+"""
+${redacted}
+"""
+
+TUGAS ANDA: baca KESELURUHAN log remarks (bukan satu entry je) dan kenal pasti CORAK TINGKAH LAKU penghutang ni merentas pelbagai attempt — cth adakah dia jenis selalu bagi PTP tapi broken promise berulang kali, jenis terus elak/RNA, jenis bagi alasan konsisten (kerja/kesihatan/komisen), jenis agresif/hang up, dsb. Guna corak tu untuk reka satu watak penghutang yang REALISTIK untuk roleplay — bukan cuma rephrase satu remarks entry.
+
+Hasilkan draf senario latihan dalam format JSON SAHAJA (tiada teks lain, tiada markdown fence), dengan struktur EXACT macam ni:
+{
+  "emoji": "(satu emoji sesuai mood/corak penghutang)",
+  "name": "(nama watak fiktif, BUKAN nama sebenar dari job sheet)",
+  "title": "(tajuk pendek senario, cth 'Penghutang Serial Broken Promise - Alasan Komisen')",
+  "description": "(1 ayat ringkas situasi & corak tingkah laku)",
+  "level": "easy|med|hard",
+  "balanceTier": "low|high",
+  "objectionType": "cooperative|denial|hardship|aggressive|avoidance",
+  "customerType": "suspended|terminated|restructured|other",
+  "prompt": "(2-4 ayat arahan untuk AI berperanan sebagai penghutang ni semasa roleplay - tone, gaya respons, objection utama yang akan dia bangkitkan, berdasarkan CORAK SEBENAR dari log remarks)",
+  "checklist": [{"cat":"tone|delivery|counter|action|balance","text":"(perkara spesifik collector patut buat, berdasarkan corak/kelemahan yang nampak dalam log remarks ni - cth kalau penghutang selalu broken promise, checklist patut sebut pasal cara nail down PTP yang lebih kukuh)"}],
+  "disclosures": ["(jika ada disclosure/maklumat wajib yang patut diucapkan, kosongkan array jika tiada)"]
+}
+Checklist kena ada 3-5 item, betul-betul berdasarkan CORAK SEBENAR yang berulang dalam log remarks ni — bukan generic template.`
+    :`Anda pereka senario latihan untuk syarikat pemulihan hutang telco di Malaysia. Di bawah ialah transkrip call SEBENAR (PII dah di-redact — JANGAN cuba teka/isi balik IC/no.telefon/no.akaun sebenar):
 
 """
 ${redacted}
