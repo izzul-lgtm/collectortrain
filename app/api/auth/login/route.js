@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import { supabaseAdmin } from '../../../../lib/supabaseAdmin';
 
 function toClientShape(row) {
-  return { id: row.id, name: row.name, role: row.role, registeredAt: row.registered_at, isApproved: row.is_approved, maxSessionsPerDay: row.max_sessions_per_day ?? null };
+  return { id: row.id, name: row.name, role: row.role, registeredAt: row.registered_at, isApproved: row.is_approved };
 }
 
 export async function POST(req) {
@@ -14,7 +14,7 @@ export async function POST(req) {
     const sb = supabaseAdmin();
     const { data, error } = await sb
       .from('users')
-      .select('id, name, role, registered_at, password_hash, is_approved, max_sessions_per_day')
+      .select('id, name, role, registered_at, password_hash, is_approved')
       .eq('id', id.toUpperCase())
       .maybeSingle();
     if (error) throw error;
