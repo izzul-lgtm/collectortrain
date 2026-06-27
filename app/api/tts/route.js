@@ -1,6 +1,25 @@
-// Proxies text-to-speech ke Gemini 3.1 Flash TTS API.
+// Proxies text-to-speech ke Gemini 3.1 Flash TTS API — STREAMING.
 // Emotion/style dihandle melalui audio tags dalam text ([angry], [sad], dll)
 // Style instruction guna systemInstruction field yang berasingan dari text.
+//
+// PERUBAHAN DARI VERSI NON-STREAMING (generateContent):
+// Versi lama tunggu Gemini generate SELURUH audio dulu, convert ke WAV
+// (pcmToWav, perlukan saiz buffer penuh diketahui awal utk header WAV),
+// baru return SATU blob kepada client. Client pun tunggu res.blob() siap
+// sebelum boleh play() — collector rasa voice "lambat" sebab kena tunggu:
+//   [LLM siap jana text] -> [papar bubble] -> [Gemini siap jana SEMUA audio]
+//   -> [server convert ke WAV] -> [client download blob penuh] -> [play]
+// Sekarang guna streamGenerateContent?alt=sse — Gemini hantar audio dalam
+// beberapa chunk PCM (raw, TANPA WAV header — WAV header perlukan saiz
+// total diketahui awal, tak boleh untuk streaming). Server proxy SETIAP
+// chunk terus ke client SEBAIK ia sampai dari Gemini (tak buffer/tunggu),
+// client (playNext() dalam app.js) main chunk tu guna Web Audio API
+// sebaik terima — voice boleh mula bunyi jauh lebih awal drpd tunggu
+// seluruh audio siap.
+//
+// Format raw PCM yang Gemini TTS pulangkan (sama macam versi lama):
+// 16-bit signed little-endian, mono, 24000 Hz — client kena tahu format
+// ni untuk decode (lihat playNext() dalam app.js — hardcode 24000/16-bit/mono).
 
 import { requireAuth } from '../../../lib/requireAuth';
 import { rateLimit } from '../../../lib/rateLimit';
@@ -45,9 +64,10 @@ export async function POST(request) {
   const safeText = String(text).slice(0, 200);
   const voice = geminiVoice || pickGeminiVoice(gender || 'male');
 
+  let upstream;
   try {
-    const upstream = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=${apiKey}`,
+    upstream = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:streamGenerateContent?alt=sse&key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -64,53 +84,66 @@ export async function POST(request) {
         })
       }
     );
-
-    if (!upstream.ok) {
-      const errText = await upstream.text();
-      console.error('Gemini TTS error:', errText);
-      return Response.json({ error: 'Gemini TTS error: ' + errText }, { status: upstream.status });
-    }
-
-    const json = await upstream.json();
-    const audioData = json?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-
-    if (!audioData) {
-      console.error('No audio in response:', JSON.stringify(json).slice(0, 300));
-      return Response.json({ error: 'Tiada audio dalam response Gemini.' }, { status: 500 });
-    }
-
-    const audioBuffer = Buffer.from(audioData, 'base64');
-    const wavBuffer = pcmToWav(audioBuffer, 24000, 1, 16);
-
-    return new Response(wavBuffer, {
-      status: 200,
-      headers: { 'Content-Type': 'audio/wav' }
-    });
-
   } catch (err) {
-    console.error('TTS proxy error:', err);
+    console.error('TTS stream proxy error (fetch):', err);
     return Response.json({ error: 'Ralat proxy TTS: ' + err.message }, { status: 500 });
   }
-}
 
-function pcmToWav(pcmBuffer, sampleRate, numChannels, bitDepth) {
-  const byteRate = sampleRate * numChannels * (bitDepth / 8);
-  const blockAlign = numChannels * (bitDepth / 8);
-  const dataSize = pcmBuffer.length;
-  const buffer = Buffer.alloc(44 + dataSize);
-  buffer.write('RIFF', 0);
-  buffer.writeUInt32LE(36 + dataSize, 4);
-  buffer.write('WAVE', 8);
-  buffer.write('fmt ', 12);
-  buffer.writeUInt32LE(16, 16);
-  buffer.writeUInt16LE(1, 20);
-  buffer.writeUInt16LE(numChannels, 22);
-  buffer.writeUInt32LE(sampleRate, 24);
-  buffer.writeUInt32LE(byteRate, 28);
-  buffer.writeUInt16LE(blockAlign, 32);
-  buffer.writeUInt16LE(bitDepth, 34);
-  buffer.write('data', 36);
-  buffer.writeUInt32LE(dataSize, 40);
-  pcmBuffer.copy(buffer, 44);
-  return buffer;
+  if (!upstream.ok) {
+    const errText = await upstream.text();
+    console.error('Gemini TTS stream error:', errText);
+    return Response.json({ error: 'Gemini TTS error: ' + errText }, { status: upstream.status });
+  }
+  if (!upstream.body) {
+    return Response.json({ error: 'Gemini TTS tiada response body untuk stream.' }, { status: 500 });
+  }
+
+  const reader = upstream.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  // Parse event SSE ("data: {...}\n\n") satu-satu dari upstream, extract
+  // base64 PCM chunk dari setiap event, decode, terus enqueue raw bytes ke
+  // client — TIDAK tunggu upstream habis dulu (itu yang buat streaming ni
+  // beza dari versi generateContent biasa).
+  const stream = new ReadableStream({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (value) buffer += decoder.decode(value, { stream: true });
+
+      const events = buffer.split('\n\n');
+      buffer = done ? '' : (events.pop() || '');
+
+      for (const evt of events) {
+        const line = evt.trim();
+        if (!line.startsWith('data:')) continue;
+        const jsonStr = line.slice(5).trim();
+        if (!jsonStr || jsonStr === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(jsonStr);
+          const b64 = parsed?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+          if (b64) controller.enqueue(new Uint8Array(Buffer.from(b64, 'base64')));
+        } catch (parseErr) {
+          console.error('Gagal parse SSE chunk Gemini TTS:', parseErr, jsonStr.slice(0, 200));
+        }
+      }
+
+      if (done) controller.close();
+    },
+    cancel() {
+      reader.cancel();
+    }
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      // Metadata format PCM untuk client (playNext() dalam app.js hardcode
+      // nilai yang sama, tapi header ni bagi dokumentasi/future-proofing).
+      'X-Audio-Sample-Rate': '24000',
+      'X-Audio-Channels': '1',
+      'X-Audio-Bit-Depth': '16'
+    }
+  });
 }
