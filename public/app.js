@@ -1823,15 +1823,15 @@ function openAiScenarioBuilder(){
   <p style="font-size:12px;color:var(--text3);line-height:1.6;margin-bottom:10px">Paste real data from CRM/Volare below. The system will <b>auto-redact PII</b> (IC, phone no., account no., card no., name, address) in your browser before anything is sent to the AI, then the AI will suggest a draft scenario for you to review &amp; edit — not auto-published directly.</p>
 
   <div style="display:flex;gap:8px;margin-bottom:12px">
-    <button type="button" id="srcModeTranscript" onclick="setAiBuilderMode('transcript')" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 8px;border-radius:var(--radius-sm);cursor:pointer;border:1.5px solid var(--purple);background:var(--purple);color:#fff;text-align:center">
-      <span style="font-size:18px;line-height:1">💬</span>
-      <span style="font-size:12px;font-weight:600;line-height:1.3">Transkrip Call</span>
-      <span style="font-size:10px;opacity:.85;font-weight:400;line-height:1.3">Paste dialog/perbualan sebenar</span>
+    <button type="button" id="srcModeTranscript" class="btn-mode-toggle active" onclick="setAiBuilderMode('transcript')">
+      <span class="mode-icon">💬</span>
+      <span class="mode-label">Transkrip Call</span>
+      <span class="mode-desc">Paste dialog/perbualan sebenar</span>
     </button>
-    <button type="button" id="srcModeJobSheet" onclick="setAiBuilderMode('jobsheet')" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 8px;border-radius:var(--radius-sm);cursor:pointer;border:1.5px solid var(--border2);background:var(--surface);color:var(--text2);text-align:center">
-      <span style="font-size:18px;line-height:1">📄</span>
-      <span style="font-size:12px;font-weight:600;line-height:1.3">Job Sheet CRM</span>
-      <span style="font-size:10px;opacity:.85;font-weight:400;line-height:1.3">Paste/import job sheet/case history</span>
+    <button type="button" id="srcModeJobSheet" class="btn-mode-toggle" onclick="setAiBuilderMode('jobsheet')">
+      <span class="mode-icon">📄</span>
+      <span class="mode-label">Job Sheet CRM</span>
+      <span class="mode-desc">Paste/import job sheet/case history</span>
     </button>
   </div>
 
@@ -1854,26 +1854,29 @@ function openAiScenarioBuilder(){
   `);
 }
 function setAiBuilderMode(mode){
+  const prev=window.__aiBuilderMode;
   window.__aiBuilderMode=mode;
   const isTranscript=mode==='transcript';
-  const tBtn=document.getElementById('srcModeTranscript'), jBtn=document.getElementById('srcModeJobSheet');
-  tBtn.style.background=isTranscript?'var(--purple)':'var(--surface)';
-  tBtn.style.color=isTranscript?'#fff':'var(--text2)';
-  tBtn.style.borderColor=isTranscript?'var(--purple)':'var(--border2)';
-  jBtn.style.background=!isTranscript?'var(--purple)':'var(--surface)';
-  jBtn.style.color=!isTranscript?'#fff':'var(--text2)';
-  jBtn.style.borderColor=!isTranscript?'var(--purple)':'var(--border2)';
+  // Toggle active class on buttons
+  document.getElementById('srcModeTranscript').classList.toggle('active',isTranscript);
+  document.getElementById('srcModeJobSheet').classList.toggle('active',!isTranscript);
+  // Update label
   document.getElementById('aiInputLabel').textContent=isTranscript?'Transkrip / Nota Call':'Job Sheet / Case History (export dari CRM)';
-  document.getElementById('aiTranscriptInput').placeholder=isTranscript
+  const ta=document.getElementById('aiTranscriptInput');
+  ta.placeholder=isTranscript
     ?'Contoh:\nCollector: Selamat pagi Encik Ahmad, saya dari NewVest Recoveries...\nDebtor: Saya tak ada duit lah sekarang, kerja pun kena cut...\n...'
     :'Paste job sheet penuh dari CRM/Volare di sini (info akaun + remarks log setiap attempt call)...';
-  // Reset preview/draft bila tukar mode — elak campur data dari mode lain
+  // Clear textarea content when switching modes
+  if(prev && prev!==mode){
+    ta.value='';
+    delete ta.dataset.redacted;
+  }
+  // Reset all preview/draft/status areas
   document.getElementById('aiRedactPreview').innerHTML='';
   document.getElementById('aiDraftOut').innerHTML='';
   document.getElementById('aiImportStatus').innerHTML='';
   document.getElementById('aiFileInput').value='';
   document.getElementById('btnGenAiDraft').disabled=true;
-  delete document.getElementById('aiTranscriptInput').dataset.redacted;
 }
 
 // ── Import file (PDF/TXT/CSV) terus ke textarea — alternatif untuk
