@@ -1816,6 +1816,13 @@ function openAiScenarioBuilder(){
   </div>
 
   <div class="form-row"><label id="aiInputLabel">Transkrip / Nota Call</label>
+    <div id="aiImportZone" onclick="document.getElementById('aiFileInput').click()" ondragover="event.preventDefault();this.style.borderColor='var(--purple)'" ondragleave="this.style.borderColor='var(--border2)'" ondrop="handleAiFileDrop(event)" style="border:1.5px dashed var(--border2);border-radius:8px;padding:14px;text-align:center;cursor:pointer;margin-bottom:8px;transition:border-color .15s">
+      <div style="font-size:13px;font-weight:500">📤 Click to import file, or drag &amp; drop</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px">PDF, TXT, or CSV export from CRM/Volare</div>
+      <input type="file" id="aiFileInput" accept=".pdf,.txt,.csv" style="display:none" onchange="handleAiFileSelect(event)" />
+    </div>
+    <div id="aiImportStatus"></div>
+    <div style="font-size:11px;color:var(--text3);margin:6px 0">— or paste text manually below —</div>
     <textarea id="aiTranscriptInput" rows="8" placeholder="Contoh:&#10;Collector: Selamat pagi Encik Ahmad, saya dari NewVest Recoveries...&#10;Debtor: Saya tak ada duit lah sekarang, kerja pun kena cut...&#10;..."></textarea>
   </div>
   <div id="aiRedactPreview"></div>
@@ -1842,8 +1849,50 @@ function setAiBuilderMode(mode){
   // Reset preview/draft bila tukar mode — elak campur data dari mode lain
   document.getElementById('aiRedactPreview').innerHTML='';
   document.getElementById('aiDraftOut').innerHTML='';
+  document.getElementById('aiImportStatus').innerHTML='';
+  document.getElementById('aiFileInput').value='';
   document.getElementById('btnGenAiDraft').disabled=true;
   delete document.getElementById('aiTranscriptInput').dataset.redacted;
+}
+
+// ── Import file (PDF/TXT/CSV) terus ke textarea — alternatif untuk
+// copy-paste manual. Extract text jalan di SERVER (/api/parse-document,
+// guna pdf-parse) — PDF tak boleh di-parse selamat 100% kat browser tanpa
+// load library besar, so kita hantar fail mentah (BUKAN PII redacted lagi,
+// sebab redaction perlukan teks plain dulu) ke server kita sendiri untuk
+// extract teks. Selepas teks balik, redaction PII jalan di BROWSER macam
+// biasa sebelum apa-apa pergi ke AI — server parse cuma "baca" fail,
+// tak pernah hantar kandungan fail ke mana-mana selain balik ke browser ni.
+function handleAiFileDrop(ev){
+  ev.preventDefault();
+  ev.currentTarget.style.borderColor='var(--border2)';
+  const file=ev.dataTransfer.files[0];
+  if(file)importAiFile(file);
+}
+function handleAiFileSelect(ev){
+  const file=ev.target.files[0];
+  if(file)importAiFile(file);
+}
+async function importAiFile(file){
+  const status=document.getElementById('aiImportStatus');
+  status.innerHTML='<div style="font-size:12px;color:var(--text3);margin-top:6px">⏳ Reading '+file.name+'...</div>';
+  try{
+    const fd=new FormData();
+    fd.append('file',file);
+    const id=localStorage.getItem('ct_session_id')||'';
+    const res=await fetch('/api/parse-document',{method:'POST',headers:{'x-user-id':id},body:fd});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to read file.');
+    document.getElementById('aiTranscriptInput').value=data.text;
+    status.innerHTML=`<div class="alert alert-ok" style="display:block;margin-top:6px">✓ Imported "${file.name}" (${data.text.length} characters). Please click "Redact &amp; Preview" next.</div>`;
+    // Reset preview/draft lama (kalau ada) sebab textarea content dah ganti
+    document.getElementById('aiRedactPreview').innerHTML='';
+    document.getElementById('aiDraftOut').innerHTML='';
+    document.getElementById('btnGenAiDraft').disabled=true;
+    delete document.getElementById('aiTranscriptInput').dataset.redacted;
+  }catch(e){
+    status.innerHTML=`<div class="alert alert-err" style="display:block;margin-top:6px">⚠ ${e.message}</div>`;
+  }
 }
 
 function previewRedaction(){
