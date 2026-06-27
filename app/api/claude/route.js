@@ -37,15 +37,17 @@ export async function POST(request) {
   // with token usage — this is NOT a substitute for real auth, see README.
   //
   // PENTING: cap ni pernah jadi punca evalCall() (app.js) gagal — panggilan
-  // latihan yang panjang buat Claude jana lebih banyak missed[]/quote dalam
-  // JSON penilaian, lalu output terputus sebelum sempat habis → JSON.parse()
-  // gagal → fallback "Tidak dapat menganalisis sesi ini". Cap ditetapkan ke
-  // 2600 — cukup luang untuk JSON penilaian penuh (missed[] max 5 item,
-  // feedback 2-3 ayat ringkas, lihat evalCall() dalam app.js) + buffer, TAPI
-  // tak terlalu tinggi supaya generation Claude tak ambil masa lebih lama
-  // dari perlu (result "Keputusan Latihan" terasa perlahan kalau cap tinggi
-  // sangat berbanding saiz output sebenar yang dijangka).
-  const safeMaxTokens = Math.min(Number(max_tokens) || 200, 2600);
+  // latihan yang panjang ATAU senario dengan banyak checklist/disclosures
+  // (cth senario dijana dari job sheet) buat Claude jana lebih banyak
+  // missed[]/quote/scoreReasons dalam JSON penilaian, lalu output terputus
+  // sebelum sempat habis → JSON.parse() gagal → fallback "Tidak dapat
+  // menganalisis sesi ini". Cap dinaikkan ke 4096 (dari 2600 asal) — bagi
+  // ~50% lebih ruang buffer untuk kes checklist/disclosures panjang, TAPI
+  // prompt evalCall() (app.js) tetap arah AI kekal ringkas (feedback 2-3
+  // ayat, scoreReasons 1-2 ayat, quote ≤15 patah perkataan, missed max 5
+  // item) — so output sebenar biasanya jauh bawah 4096, cap ni cuma safety
+  // ceiling bukan target panjang baru.
+  const safeMaxTokens = Math.min(Number(max_tokens) || 200, 4096);
 
   // Prompt caching — system prompt yang sama dihantar setiap turn dalam satu call.
   // Dengan cache_control: { type: 'ephemeral' }, Anthropic cache token system prompt
