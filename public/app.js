@@ -2910,25 +2910,93 @@ async function speakEl(text){
   }
   audioQueue.push(text);if(!isPlayingAudio)playNext();
 }
+// AudioContext dikongsi sepanjang call (bukan dicipta baru tiap giliran) —
+// supaya scheduling antara chunk/giliran kekal smooth & elak overhead
+// cipta context berulang kali.
+let _ttsAudioCtx=null;
+function getTtsAudioCtx(){
+  if(!_ttsAudioCtx)_ttsAudioCtx=new (window.AudioContext||window.webkitAudioContext)();
+  return _ttsAudioCtx;
+}
+
+// STREAMING TTS: dulu kita tunggu /api/tts pulangkan SATU blob WAV penuh
+// (res.blob()) sebelum boleh main — ni punca voice terasa lambat lepas
+// text reply dah keluar (kena tunggu Gemini generate SEMUA audio + server
+// convert ke WAV dulu). Sekarang server stream raw PCM chunk demi chunk
+// (lihat app/api/tts/route.js — guna streamGenerateContent?alt=sse), so
+// kita baca chunk PCM tu terus dari res.body.getReader() dan schedule main
+// dengan Web Audio API SEBAIK chunk sampai — tak tunggu seluruh audio siap.
 async function playNext(){
   if(!audioQueue.length){isPlayingAudio=false;if(callActive){setStatus('green','Tekan mikrofon untuk bercakap.');resetMicBtn();}return;}
   isPlayingAudio=true;
   const text=audioQueue.shift();
   setStatus('purple',scenario.name+' is speaking...');
   setMicState('speaking','🔊','AI is speaking...');
+
+  const ctx=getTtsAudioCtx();
+  if(ctx.state==='suspended'){try{await ctx.resume();}catch(_){/* abai — fallback try/catch di bawah akan tangkap kalau betul2 gagal */}}
+
+  let nextStartTime=ctx.currentTime;
+  let pendingSources=0;
+  let streamDone=false;
+  let hadError=false;
+  let gotAnyAudio=false;
+
+  function checkAllDone(){
+    if(!streamDone||pendingSources>0)return;
+    if(hadError||!gotAnyAudio)addBubble('debtor','[Audio error — please try again shortly]');
+    playNext();
+  }
+
   try{
     const res=await fetch('/api/tts',{
       method:'POST',
       headers:authHeaders(),
       body:JSON.stringify({text:getAudioTagInstruction(text),gender:scenario?.gender||'male',geminiVoice:getGeminiVoice()})
     });
-    if(!res.ok)throw new Error(res.status);
-    const blob=await res.blob();const url=URL.createObjectURL(blob);
-    currentAudio=new Audio(url);
-    currentAudio.onended=()=>{URL.revokeObjectURL(url);playNext();};
-    currentAudio.onerror=()=>playNext();
-    await currentAudio.play();
-  }catch(e){addBubble('debtor','[Audio error — please try again shortly]');playNext();}
+    if(!res.ok||!res.body)throw new Error(res.status);
+
+    const reader=res.body.getReader();
+    let pcmTail=new Uint8Array(0); // baki byte ganjil antara chunk (1 sample 16-bit = 2 byte — chunk network boleh putus tengah-tengah sample)
+
+    while(true){
+      const {done,value}=await reader.read();
+      if(done)break;
+      if(!value||!value.length)continue;
+
+      let combined;
+      if(pcmTail.length){
+        combined=new Uint8Array(pcmTail.length+value.length);
+        combined.set(pcmTail,0);combined.set(value,pcmTail.length);
+      }else combined=value;
+
+      const usableLen=combined.length-(combined.length%2);
+      pcmTail=combined.slice(usableLen);
+      if(usableLen<2)continue;
+
+      const samples=usableLen/2;
+      const float32=new Float32Array(samples);
+      const dv=new DataView(combined.buffer,combined.byteOffset,usableLen);
+      for(let i=0;i<samples;i++)float32[i]=dv.getInt16(i*2,true)/32768; // 16-bit little-endian PCM → Float32 [-1,1]
+
+      const audioBuffer=ctx.createBuffer(1,samples,24000); // Gemini TTS: mono, 24kHz, 16-bit PCM
+      audioBuffer.getChannelData(0).set(float32);
+
+      const source=ctx.createBufferSource();
+      source.buffer=audioBuffer;
+      source.connect(ctx.destination);
+      const startAt=Math.max(nextStartTime,ctx.currentTime);
+      source.start(startAt);
+      nextStartTime=startAt+audioBuffer.duration;
+      pendingSources++;gotAnyAudio=true;
+      source.onended=()=>{pendingSources--;checkAllDone();};
+    }
+    streamDone=true;
+    checkAllDone();
+  }catch(e){
+    hadError=true;streamDone=true;
+    checkAllDone();
+  }
 }
 
 function setStatus(dot,msg){
