@@ -2804,7 +2804,7 @@ async function startCall(){
   activeVoiceId=null; // reset suara — akan pick baru untuk call ni
   warmupMic(); // panaskan mic SEAWAL mungkin — sebelum collector sempat tekan butang mic (lihat nota di atas function warmupMic)
   callHistory=[];callFullTranscript=[];callSeconds=0;callActive=true;
-  audioQueue=[];isPlayingAudio=false;
+  audioQueue=[];isPlayingAudio=false;_nextFetchPromise=null;_nextFetchFor=null;
   if(currentAudio){currentAudio.pause();currentAudio=null;}
   navigate('call');
   timerInterval=setInterval(()=>{
@@ -2848,7 +2848,7 @@ function stopCall(){
   if(timerInterval){clearInterval(timerInterval);timerInterval=null;}
   if(recognition)try{recognition.stop();}catch(e){}
   if(currentAudio){currentAudio.pause();currentAudio=null;}
-  audioQueue=[];isPlayingAudio=false;isRecording=false;
+  audioQueue=[];isPlayingAudio=false;isRecording=false;_nextFetchPromise=null;_nextFetchFor=null;
   stopMicLevelMeter(); // lepas track mic — call dah tamat
 }
 
@@ -2902,13 +2902,39 @@ async function endCall(){
   }
 }
 
+// Pecah reply panjang ke beberapa ayat pendek (~140 aksara), supaya setiap
+// ayat boleh dihantar sebagai request /api/tts BERASINGAN dan di-PREFETCH
+// semasa ayat sebelumnya tengah main (lihat playNext()) — Gemini TTS sendiri
+// TAK support streaming (lihat note dalam app/api/tts/route.js), so ni cara
+// kita "fake" rasa streaming: ayat 1 main → ayat 2 dah tengah generate kat
+// background → bila ayat 1 habis, ayat 2 terus main tanpa gap lama.
+function splitIntoSpeechChunks(text){
+  if(!text)return[text];
+  const sentences=text.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[text];
+  const chunks=[];let buf='';
+  for(const s of sentences){
+    if((buf+s).length<=140)buf+=s;
+    else{if(buf.trim())chunks.push(buf.trim());buf=s;}
+  }
+  if(buf.trim())chunks.push(buf.trim());
+  return chunks.length?chunks:[text];
+}
+
 async function speakEl(text){
   if(!TTS_ENABLED){
     // TTS dimatikan — skip terus ke state sedia terima input
     if(callActive){setStatus('green','Press mic to speak.');resetMicBtn();}
     return;
   }
-  audioQueue.push(text);if(!isPlayingAudio)playNext();
+  // Tag emosi dikira SEKALI utk seluruh reply, then disisip ke SETIAP chunk
+  // (bukan chunk pertama je) supaya delivery emosi konsisten sepanjang ayat.
+  const tagged=getAudioTagInstruction(text);
+  const tagMatch=tagged.match(/^(\[[a-z]+\]\s*)+/i);
+  const tag=tagMatch?tagMatch[0]:'';
+  const bareText=tag?tagged.slice(tag.length):tagged;
+  const chunks=splitIntoSpeechChunks(bareText).map(c=>tag+c);
+  audioQueue.push(...chunks);
+  if(!isPlayingAudio)playNext();
 }
 // AudioContext dikongsi sepanjang call (bukan dicipta baru tiap giliran) —
 // supaya scheduling antara chunk/giliran kekal smooth & elak overhead
@@ -2919,84 +2945,79 @@ function getTtsAudioCtx(){
   return _ttsAudioCtx;
 }
 
-// STREAMING TTS: dulu kita tunggu /api/tts pulangkan SATU blob WAV penuh
-// (res.blob()) sebelum boleh main — ni punca voice terasa lambat lepas
-// text reply dah keluar (kena tunggu Gemini generate SEMUA audio + server
-// convert ke WAV dulu). Sekarang server stream raw PCM chunk demi chunk
-// (lihat app/api/tts/route.js — guna streamGenerateContent?alt=sse), so
-// kita baca chunk PCM tu terus dari res.body.getReader() dan schedule main
-// dengan Web Audio API SEBAIK chunk sampai — tak tunggu seluruh audio siap.
+// Fetch SATU chunk PCM penuh dari /api/tts (Gemini TTS tak support streaming
+// — lihat app/api/tts/route.js — so request ni tunggu seluruh audio chunk
+// tu siap, then return raw PCM bytes sekali gus).
+async function fetchTtsPcm(text){
+  const res=await fetch('/api/tts',{
+    method:'POST',
+    headers:authHeaders(),
+    body:JSON.stringify({text,gender:scenario?.gender||'male',geminiVoice:getGeminiVoice()})
+  });
+  if(!res.ok)throw new Error('TTS HTTP '+res.status);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+// PREFETCH PIPELINE: chunk semasa main SAMBIL chunk seterusnya (dalam
+// audioQueue) dah mula di-fetch kat background — bila chunk semasa habis,
+// chunk seterusnya (atau dah sedia, atau hampir sedia) terus main, kurangkan
+// rasa "gap" senyap antara ayat berbanding tunggu fetch baru bermula.
+let _nextFetchPromise=null,_nextFetchFor=null;
+
 async function playNext(){
-  if(!audioQueue.length){isPlayingAudio=false;if(callActive){setStatus('green','Tekan mikrofon untuk bercakap.');resetMicBtn();}return;}
+  if(!audioQueue.length){
+    isPlayingAudio=false;_nextFetchPromise=null;_nextFetchFor=null;
+    if(callActive){setStatus('green','Tekan mikrofon untuk bercakap.');resetMicBtn();}
+    return;
+  }
   isPlayingAudio=true;
   const text=audioQueue.shift();
   setStatus('purple',scenario.name+' is speaking...');
   setMicState('speaking','🔊','AI is speaking...');
 
+  // Guna prefetch yang dah start awal (semasa chunk SEBELUM ni main) kalau
+  // sepadan dengan chunk semasa — elak tunggu fetch start dari kosong.
+  let fetchPromise;
+  if(_nextFetchFor===text&&_nextFetchPromise)fetchPromise=_nextFetchPromise;
+  else fetchPromise=fetchTtsPcm(text);
+  _nextFetchPromise=null;_nextFetchFor=null;
+
   const ctx=getTtsAudioCtx();
   if(ctx.state==='suspended'){try{await ctx.resume();}catch(_){/* abai — fallback try/catch di bawah akan tangkap kalau betul2 gagal */}}
 
-  let nextStartTime=ctx.currentTime;
-  let pendingSources=0;
-  let streamDone=false;
-  let hadError=false;
-  let gotAnyAudio=false;
-
-  function checkAllDone(){
-    if(!streamDone||pendingSources>0)return;
-    if(hadError||!gotAnyAudio)addBubble('debtor','[Audio error — please try again shortly]');
-    playNext();
-  }
-
+  let pcmBytes;
   try{
-    const res=await fetch('/api/tts',{
-      method:'POST',
-      headers:authHeaders(),
-      body:JSON.stringify({text:getAudioTagInstruction(text),gender:scenario?.gender||'male',geminiVoice:getGeminiVoice()})
-    });
-    if(!res.ok||!res.body)throw new Error(res.status);
-
-    const reader=res.body.getReader();
-    let pcmTail=new Uint8Array(0); // baki byte ganjil antara chunk (1 sample 16-bit = 2 byte — chunk network boleh putus tengah-tengah sample)
-
-    while(true){
-      const {done,value}=await reader.read();
-      if(done)break;
-      if(!value||!value.length)continue;
-
-      let combined;
-      if(pcmTail.length){
-        combined=new Uint8Array(pcmTail.length+value.length);
-        combined.set(pcmTail,0);combined.set(value,pcmTail.length);
-      }else combined=value;
-
-      const usableLen=combined.length-(combined.length%2);
-      pcmTail=combined.slice(usableLen);
-      if(usableLen<2)continue;
-
-      const samples=usableLen/2;
-      const float32=new Float32Array(samples);
-      const dv=new DataView(combined.buffer,combined.byteOffset,usableLen);
-      for(let i=0;i<samples;i++)float32[i]=dv.getInt16(i*2,true)/32768; // 16-bit little-endian PCM → Float32 [-1,1]
-
-      const audioBuffer=ctx.createBuffer(1,samples,24000); // Gemini TTS: mono, 24kHz, 16-bit PCM
-      audioBuffer.getChannelData(0).set(float32);
-
-      const source=ctx.createBufferSource();
-      source.buffer=audioBuffer;
-      source.connect(ctx.destination);
-      const startAt=Math.max(nextStartTime,ctx.currentTime);
-      source.start(startAt);
-      nextStartTime=startAt+audioBuffer.duration;
-      pendingSources++;gotAnyAudio=true;
-      source.onended=()=>{pendingSources--;checkAllDone();};
-    }
-    streamDone=true;
-    checkAllDone();
+    pcmBytes=await fetchPromise;
   }catch(e){
-    hadError=true;streamDone=true;
-    checkAllDone();
+    addBubble('debtor','[Audio error — please try again shortly]');
+    playNext();
+    return;
   }
+
+  // SEBAIK fetch chunk semasa siap, terus mula fetch chunk SETERUSNYA dalam
+  // queue (kalau ada) — supaya bila chunk semasa habis main, chunk lepas
+  // dah sedia (atau hampir sedia) kat background.
+  if(audioQueue.length){
+    _nextFetchFor=audioQueue[0];
+    _nextFetchPromise=fetchTtsPcm(audioQueue[0]).catch(e=>{_nextFetchPromise=null;_nextFetchFor=null;throw e;});
+  }
+
+  const usableLen=pcmBytes.length-(pcmBytes.length%2);
+  if(usableLen<2){playNext();return;}
+
+  const samples=usableLen/2;
+  const float32=new Float32Array(samples);
+  const dv=new DataView(pcmBytes.buffer,pcmBytes.byteOffset,usableLen);
+  for(let i=0;i<samples;i++)float32[i]=dv.getInt16(i*2,true)/32768; // 16-bit little-endian PCM → Float32 [-1,1]
+
+  const audioBuffer=ctx.createBuffer(1,samples,24000); // Gemini TTS: mono, 24kHz, 16-bit PCM
+  audioBuffer.getChannelData(0).set(float32);
+
+  const source=ctx.createBufferSource();
+  source.buffer=audioBuffer;
+  source.connect(ctx.destination);
+  source.start();
+  source.onended=()=>{playNext();};
 }
 
 function setStatus(dot,msg){
