@@ -1785,19 +1785,31 @@ const JOB_SHEET_SENSITIVE_LABELS=[
 function redactJobSheet(text){
   let redacted=text||'';
   const found=[];
+  let customerName=null;
   // Padan baris bentuk "LABEL : value" (job sheet Volare guna layout 2 lajur
   // bersebelahan dalam 1 baris fizikal, so kita stop value bila jumpa 3+
   // space berturut — itu tanda sempadan lajur seterusnya, bukan newline je).
   // "(?:^|\s{2,})" depan label elak terpadan label yang muncul SEBAGAI
   // sebahagian perkataan lain (cth "Relation name:" — bukan field "NAME").
-  // "\s*\d{0,2}\s*:" benarkan index field macam "CARD NO 1 :".
+  // "\s*\d{0,2}\s*:" benarkan index field macam "CARD NO1 :" (TANPA \b
+  // selepas label sebab \b gagal antara huruf-ke-digit yang bercantum terus).
   const labelPattern=JOB_SHEET_SENSITIVE_LABELS.map(l=>l.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|');
-  const re=new RegExp(`(^|\\s{2,})(${labelPattern})\\b\\s*\\d{0,2}\\s*:\\s*([^\\n]*?)(?=\\s{3,}\\S|\\n|$)`,'gim');
+  const re=new RegExp(`(^|\\s{2,})(${labelPattern})\\s*\\d{0,2}\\s*:\\s*([^\\n]*?)(?=\\s{3,}\\S|\\n|$)`,'gim');
   redacted=redacted.replace(re,(m,lead,label,value)=>{
     if(!value.trim())return m; // medan kosong, tiada apa nak redact
     found.push(`${label.trim()}: ${value.trim()}`);
+    // Simpan nama penghutang utama — dipakai lepas ni untuk scrub sebutan
+    // bebas nama dia di bahagian LAIN dokumen (cth "Relationship:"/"ATTN:"
+    // sering sebut nama sama TANPA label "NAME" terus depan dia, so regex
+    // label-based ni je tak cukup tangkap — kena cari & ganti global jugak).
+    if(/^CUSTOMER NAME$/i.test(label.trim())&&value.trim().length>2)customerName=value.trim();
     return `${lead}${label} : [DIRAHSIAKAN]`;
   });
+  if(customerName){
+    const escaped=customerName.replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(/\s+/g,'\\s+');
+    const nameRe=new RegExp(escaped,'gi');
+    redacted=redacted.replace(nameRe,(m)=>{found.push('Sebutan nama lain: '+m);return '[DIRAHSIAKAN]';});
+  }
   // Safety net — regex nombor (IC/telefon/no.akaun) untuk apa-apa yang
   // disebut tanpa label jelas, cth dalam remarks log.
   const {redacted:redacted2,found:found2}=redactPII(redacted);
@@ -1965,13 +1977,21 @@ Berdasarkan transkrip ni, hasilkan draf senario latihan dalam format JSON SAHAJA
 }
 Checklist kena ada 3-5 item, betul-betul berdasarkan corak SEBENAR dalam transkrip (apa collector buat baik / apa yang patut diperbaiki) — bukan generic template.`;
     const res=await fetch('/api/claude',{method:'POST',headers:authHeaders(),
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1200,messages:[{role:'user',content:prompt}]})});
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:2000,messages:[{role:'user',content:prompt}]})});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Gagal generate draf.');
     let text=(data.content?.[0]?.text||'').trim();
     text=text.replace(/^```json\s*/i,'').replace(/```\s*$/,'').trim(); // jaga-jaga kalau AI masih bungkus dengan fence
+    // Kadang AI tambah ayat pengenalan sebelum/lepas JSON walaupun diarah
+    // jangan — so extract blok {...} TERLUAR je (dari "{" pertama ke "}"
+    // terakhir) sebelum parse, bukan terus JSON.parse teks mentah.
+    const firstBrace=text.indexOf('{'), lastBrace=text.lastIndexOf('}');
+    if(firstBrace!==-1&&lastBrace>firstBrace)text=text.slice(firstBrace,lastBrace+1);
     let draft;
-    try{draft=JSON.parse(text);}catch{throw new Error('AI bagi format tidak sah, sila cuba lagi.');}
+    try{draft=JSON.parse(text);}catch(parseErr){
+      console.error('[AI Scenario Builder] Gagal parse JSON. Raw response:',text);
+      throw new Error('AI bagi format tidak sah, sila cuba lagi. (Jika berulang, cuba ringkaskan job sheet/transkrip sikit.)');
+    }
     window.__aiScenarioDraft=draft; // simpan sementara, dipakai bila "Guna Draf Ni" ditekan
     out.innerHTML=`
       <div class="alert alert-ok" style="display:block">✓ Draft is ready — please REVIEW first, nothing is saved automatically.</div>
