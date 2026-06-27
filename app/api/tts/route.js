@@ -1,25 +1,24 @@
-// Proxies text-to-speech ke Gemini 3.1 Flash TTS API — STREAMING.
-// Emotion/style dihandle melalui audio tags dalam text ([angry], [sad], dll)
-// Style instruction guna systemInstruction field yang berasingan dari text.
+// Proxies text-to-speech ke Gemini 3.1 Flash TTS API.
 //
-// PERUBAHAN DARI VERSI NON-STREAMING (generateContent):
-// Versi lama tunggu Gemini generate SELURUH audio dulu, convert ke WAV
-// (pcmToWav, perlukan saiz buffer penuh diketahui awal utk header WAV),
-// baru return SATU blob kepada client. Client pun tunggu res.blob() siap
-// sebelum boleh play() — collector rasa voice "lambat" sebab kena tunggu:
-//   [LLM siap jana text] -> [papar bubble] -> [Gemini siap jana SEMUA audio]
-//   -> [server convert ke WAV] -> [client download blob penuh] -> [play]
-// Sekarang guna streamGenerateContent?alt=sse — Gemini hantar audio dalam
-// beberapa chunk PCM (raw, TANPA WAV header — WAV header perlukan saiz
-// total diketahui awal, tak boleh untuk streaming). Server proxy SETIAP
-// chunk terus ke client SEBAIK ia sampai dari Gemini (tak buffer/tunggu),
-// client (playNext() dalam app.js) main chunk tu guna Web Audio API
-// sebaik terima — voice boleh mula bunyi jauh lebih awal drpd tunggu
-// seluruh audio siap.
+// PERUBAHAN (fix "AI is speaking..." stuck/Pending): Versi sebelum ni guna
+// streamGenerateContent?alt=sse sebab nak voice keluar lebih awal (chunk by
+// chunk). Tapi dokumentasi rasmi Gemini TTS terkini
+// (ai.google.dev/gemini-api/docs/speech-generation, updated 2026-05-18)
+// sebut dengan jelas: "TTS does not support streaming". Sebab tu request
+// streamGenerateContent kita hang — upstream Gemini tak reply headers pun,
+// jadi network tab tunjuk "Pending" selama-lamanya dan client stuck di
+// state "AI is speaking..." (audioQueue tak pernah resolve).
 //
-// Format raw PCM yang Gemini TTS pulangkan (sama macam versi lama):
-// 16-bit signed little-endian, mono, 24000 Hz — client kena tahu format
-// ni untuk decode (lihat playNext() dalam app.js — hardcode 24000/16-bit/mono).
+// Balik guna generateContent biasa (non-streaming): tunggu Gemini siap jana
+// SELURUH audio, decode base64 -> raw PCM bytes, return SATU response kepada
+// client. Client (playNext() dalam app.js) TAK PERLU diubah — dia baca
+// reader.read() dalam loop macam biasa, cuma sekarang dapat satu chunk besar
+// drpd byte-byte kecil. Hilang sikit "main awal sementara jana" feel, tapi
+// voice keluar balik (drpd stuck pending terus).
+//
+// Format raw PCM yang Gemini TTS pulangkan: 16-bit signed little-endian,
+// mono, 24000 Hz — client kena tahu format ni untuk decode (lihat
+// playNext() dalam app.js — hardcode 24000/16-bit/mono).
 
 import { requireAuth } from '../../../lib/requireAuth';
 import { rateLimit } from '../../../lib/rateLimit';
@@ -67,10 +66,13 @@ export async function POST(request) {
   let upstream;
   try {
     upstream = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:streamGenerateContent?alt=sse&key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey
+        },
         body: JSON.stringify({
           contents: [{ parts: [{ text: safeText }] }],
           generationConfig: {
@@ -85,57 +87,35 @@ export async function POST(request) {
       }
     );
   } catch (err) {
-    console.error('TTS stream proxy error (fetch):', err);
+    console.error('TTS proxy error (fetch):', err);
     return Response.json({ error: 'Ralat proxy TTS: ' + err.message }, { status: 500 });
   }
 
   if (!upstream.ok) {
     const errText = await upstream.text();
-    console.error('Gemini TTS stream error:', errText);
+    console.error('Gemini TTS error:', errText);
     return Response.json({ error: 'Gemini TTS error: ' + errText }, { status: upstream.status });
   }
-  if (!upstream.body) {
-    return Response.json({ error: 'Gemini TTS tiada response body untuk stream.' }, { status: 500 });
+
+  let json;
+  try {
+    json = await upstream.json();
+  } catch (err) {
+    console.error('Gagal parse response Gemini TTS:', err);
+    return Response.json({ error: 'Respons Gemini TTS tidak sah (bukan JSON).' }, { status: 500 });
   }
 
-  const reader = upstream.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
+  const b64 = json?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  if (!b64) {
+    // Limitation rasmi Gemini: model occasionally pulang text token instead
+    // of audio (random, kadar kecil) -> minta client retry.
+    console.error('Tiada audio dalam response Gemini TTS:', JSON.stringify(json).slice(0, 300));
+    return Response.json({ error: 'Gemini TTS tidak pulangkan audio — sila cuba lagi.' }, { status: 500 });
+  }
 
-  // Parse event SSE ("data: {...}\n\n") satu-satu dari upstream, extract
-  // base64 PCM chunk dari setiap event, decode, terus enqueue raw bytes ke
-  // client — TIDAK tunggu upstream habis dulu (itu yang buat streaming ni
-  // beza dari versi generateContent biasa).
-  const stream = new ReadableStream({
-    async pull(controller) {
-      const { done, value } = await reader.read();
-      if (value) buffer += decoder.decode(value, { stream: true });
+  const pcmBytes = Buffer.from(b64, 'base64');
 
-      const events = buffer.split('\n\n');
-      buffer = done ? '' : (events.pop() || '');
-
-      for (const evt of events) {
-        const line = evt.trim();
-        if (!line.startsWith('data:')) continue;
-        const jsonStr = line.slice(5).trim();
-        if (!jsonStr || jsonStr === '[DONE]') continue;
-        try {
-          const parsed = JSON.parse(jsonStr);
-          const b64 = parsed?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-          if (b64) controller.enqueue(new Uint8Array(Buffer.from(b64, 'base64')));
-        } catch (parseErr) {
-          console.error('Gagal parse SSE chunk Gemini TTS:', parseErr, jsonStr.slice(0, 200));
-        }
-      }
-
-      if (done) controller.close();
-    },
-    cancel() {
-      reader.cancel();
-    }
-  });
-
-  return new Response(stream, {
+  return new Response(pcmBytes, {
     status: 200,
     headers: {
       'Content-Type': 'application/octet-stream',
