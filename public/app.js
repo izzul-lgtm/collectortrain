@@ -1823,15 +1823,15 @@ function openAiScenarioBuilder(){
   <p style="font-size:12px;color:var(--text3);line-height:1.6;margin-bottom:10px">Paste real data from CRM/Volare below. The system will <b>auto-redact PII</b> (IC, phone no., account no., card no., name, address) in your browser before anything is sent to the AI, then the AI will suggest a draft scenario for you to review &amp; edit — not auto-published directly.</p>
 
   <div style="display:flex;gap:8px;margin-bottom:12px">
-    <button type="button" id="srcModeTranscript" onclick="setAiBuilderMode('transcript')" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:12px 8px;min-height:72px;border-radius:8px;cursor:pointer;border:1.5px solid var(--purple);background:var(--purple);color:#fff;text-align:center;font-family:inherit;transition:all .15s">
-      <span style="font-size:18px;line-height:1">💬</span>
-      <span style="font-size:12px;font-weight:600;line-height:1.3">Transkrip Call</span>
+    <button type="button" id="srcModeTranscript" onclick="setAiBuilderMode('transcript')" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:14px 10px;min-height:80px;border-radius:10px;cursor:pointer;border:2px solid #4F46E5;background:linear-gradient(135deg,#4F46E5,#6366F1);color:#fff;text-align:center;font-family:inherit;box-shadow:0 4px 12px rgba(79,70,229,0.35)">
+      <span style="font-size:20px;line-height:1">💬</span>
+      <span style="font-size:12px;font-weight:700;line-height:1.3;letter-spacing:.01em">Transkrip Call</span>
       <span style="font-size:10px;opacity:.85;font-weight:400;line-height:1.3">Paste dialog/perbualan sebenar</span>
     </button>
-    <button type="button" id="srcModeJobSheet" onclick="setAiBuilderMode('jobsheet')" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:12px 8px;min-height:72px;border-radius:8px;cursor:pointer;border:1.5px solid var(--border2);background:var(--surface);color:var(--text2);text-align:center;font-family:inherit;transition:all .15s">
-      <span style="font-size:18px;line-height:1">📄</span>
+    <button type="button" id="srcModeJobSheet" onclick="setAiBuilderMode('jobsheet')" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:14px 10px;min-height:80px;border-radius:10px;cursor:pointer;border:2px solid #D1D5DB;background:#fff;color:#4B5563;text-align:center;font-family:inherit;box-shadow:0 1px 4px rgba(0,0,0,0.06)">
+      <span style="font-size:20px;line-height:1">📄</span>
       <span style="font-size:12px;font-weight:600;line-height:1.3">Job Sheet CRM</span>
-      <span style="font-size:10px;opacity:.85;font-weight:400;line-height:1.3">Paste/import job sheet/case history</span>
+      <span style="font-size:10px;opacity:.7;font-weight:400;line-height:1.3">Paste/import job sheet/case history</span>
     </button>
   </div>
 
@@ -1860,9 +1860,8 @@ function setAiBuilderMode(mode){
   const tBtn=document.getElementById('srcModeTranscript');
   const jBtn=document.getElementById('srcModeJobSheet');
   // Active button — purple fill
-  const activeStyle='flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:12px 8px;min-height:72px;border-radius:8px;cursor:pointer;border:1.5px solid var(--purple);background:var(--purple);color:#fff;text-align:center;font-family:inherit;transition:all .15s';
-  // Inactive button — ghost
-  const inactiveStyle='flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:12px 8px;min-height:72px;border-radius:8px;cursor:pointer;border:1.5px solid var(--border2);background:var(--surface);color:var(--text2);text-align:center;font-family:inherit;transition:all .15s';
+  const activeStyle='flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:14px 10px;min-height:80px;border-radius:10px;cursor:pointer;border:2px solid #4F46E5;background:linear-gradient(135deg,#4F46E5,#6366F1);color:#fff;text-align:center;font-family:inherit;box-shadow:0 4px 12px rgba(79,70,229,0.35)';
+  const inactiveStyle='flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:14px 10px;min-height:80px;border-radius:10px;cursor:pointer;border:2px solid #D1D5DB;background:#fff;color:#4B5563;text-align:center;font-family:inherit;box-shadow:0 1px 4px rgba(0,0,0,0.06)';
   tBtn.style.cssText=isTranscript?activeStyle:inactiveStyle;
   jBtn.style.cssText=!isTranscript?activeStyle:inactiveStyle;
   document.getElementById('aiInputLabel').textContent=isTranscript?'Transkrip / Nota Call':'Job Sheet / Case History (export dari CRM)';
