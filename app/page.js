@@ -88,16 +88,8 @@ const BODY_HTML = `<!-- ═══════════ AUTH SCREEN ═══�
             <button class="pw-eye" onclick="togglePw('regPass2',this)">👁</button>
           </div>
         </div>
-        <div class="field">
-          <label>Register as</label>
-          <select id="regRole">
-            <option value="collector">Collector</option>
-            <option value="manager">Manager</option>
-            <option value="admin">Admin</option>
-          </select>
-        </div>
         <div style="background:#fff8e1;border:1px solid #f9a825;border-radius:8px;padding:10px 12px;font-size:12px;color:#e65100;margin-bottom:10px;line-height:1.6">
-          ⏳ <strong>Account requires approval.</strong> After registering, your account will be reviewed by a manager or admin before you can sign in.
+          ⏳ <strong>Account requires approval.</strong> This registers a Collector account. After registering, your account will be reviewed by a manager or admin before you can sign in. (Need a Manager/Admin account? Ask an existing admin to create one for you, or register here and ask an admin to upgrade your role afterwards.)
         </div>
         <button class="btn btn-primary btn-full" onclick="doRegister()">Register Account</button>
       </div>
