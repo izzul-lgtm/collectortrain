@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '../../../lib/supabaseAdmin';
-import { requireAuth } from '../../../lib/requireAuth';
+import { requireAuthWithUser } from '../../../lib/requireAuth';
 
 function toClientShape(row) {
   return {
@@ -13,8 +13,13 @@ function toClientShape(row) {
 }
 
 export async function GET(req) {
-  const authErr = await requireAuth(req, ['admin', 'manager']);
-  if (authErr) return authErr;
+  // BUG FIX: was `requireAuth(req, ['admin','manager'])` — requireAuth expects
+  // a second arg shaped { roles: [...] }, not a bare array. Destructuring
+  // `roles` out of an array gives undefined, which silently skipped the role
+  // check entirely — so ANY logged-in user (including collector) could call
+  // this. Switched to the correct { roles: [...] } shape below.
+  const { authError } = await requireAuthWithUser(req, { roles: ['admin', 'manager'] });
+  if (authError) return authError;
   try {
     const sb = supabaseAdmin();
     const { data, error } = await sb
@@ -29,8 +34,9 @@ export async function GET(req) {
 }
 
 export async function DELETE(req) {
-  const authErr = await requireAuth(req, ['admin', 'manager']);
-  if (authErr) return authErr;
+  // Same calling-convention bug as GET — fixed the same way.
+  const { authError } = await requireAuthWithUser(req, { roles: ['admin', 'manager'] });
+  if (authError) return authError;
   try {
     const { id } = await req.json();
     const sb = supabaseAdmin();
@@ -42,12 +48,13 @@ export async function DELETE(req) {
   }
 }
 
-// PATCH — approve/reject a user account, and/or set their daily session cap
+// PATCH — approve/reject a user, set their daily session cap, and/or change their role.
 export async function PATCH(req) {
-  const authErr = await requireAuth(req, ['admin', 'manager']);
-  if (authErr) return authErr;
+  // Same calling-convention bug as GET/DELETE — fixed the same way.
+  const { authError, authUser } = await requireAuthWithUser(req, { roles: ['admin', 'manager'] });
+  if (authError) return authError;
   try {
-    const { id, is_approved, max_sessions_per_day } = await req.json();
+    const { id, is_approved, max_sessions_per_day, role } = await req.json();
     if (!id) {
       return Response.json({ error: 'Invalid request.' }, { status: 400 });
     }
@@ -59,6 +66,23 @@ export async function PATCH(req) {
         return Response.json({ error: 'Daily session cap must be a positive whole number, or empty for unlimited.' }, { status: 400 });
       }
       update.max_sessions_per_day = max_sessions_per_day;
+    }
+    // Role change — granting manager/admin is sensitive, so ADMIN ONLY (manager
+    // can still approve/reject/set caps above, just not hand out elevated roles).
+    // This is the controlled replacement for self-registration ever being able
+    // to pick its own role (see app/api/auth/register/route.js fix).
+    if (role !== undefined) {
+      if (authUser.role !== 'admin') {
+        return Response.json({ error: 'Only an admin can change a user\'s role.' }, { status: 403 });
+      }
+      const VALID_ROLES = ['collector', 'manager', 'admin'];
+      if (!VALID_ROLES.includes(role)) {
+        return Response.json({ error: 'Invalid role.' }, { status: 400 });
+      }
+      if (id === authUser.id) {
+        return Response.json({ error: "You can't change your own role." }, { status: 400 });
+      }
+      update.role = role;
     }
     if (Object.keys(update).length === 0) {
       return Response.json({ error: 'Nothing to update.' }, { status: 400 });
