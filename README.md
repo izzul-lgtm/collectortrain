@@ -1,141 +1,141 @@
-# CollectorTrain — Next.js + Vercel
+# CollectorTrain
 
-## 🆕 Apa yang diperbaiki/upgrade (sesi ini)
+Platform latihan AI untuk debt collectors — simulasi panggilan dengan debtor AI, penilaian prestasi automatik, dan dashboard manager.
 
-**Bug fix #1 — suara collector "cut" sebelum habis cakap (Latihan Suara LIVE)**
-Punca sebenar: timer "senyap" untuk auto-hantar ke AI cuma reset bila Chrome
-dah confirm satu ayat sebagai "final". Tapi engine STT Chrome kadang lambat
-finalize ayat panjang/bercampur BM-Inggeris (kena round-trip ke server Google).
-Bila gap antara "final" jadi lebih lama dari 1.5 saat — walaupun collector
-masih aktif bercakap — sistem silap anggap dah senyap, terus stop dan hantar
-teks yang ada, jadi ada bahagian hujung ayat yang collector sempat cakap
-tapi tak masuk transcript langsung. Fix (`public/app.js`, fungsi `startRec`):
-- Timer senyap sekarang reset pada **setiap** hasil STT (final ATAU interim),
-  bukan final sahaja.
-- Tempoh senyap naik dari 1.5s → 2.2s, bagi lebih ruang utk pause natural.
-- Bila timer fire / recognition terhenti tiba-tiba, sistem hantar gabungan
-  final+interim yang ada — bukan final sahaja — supaya tiada perkataan
-  terakhir yang hilang.
-
-**Bug fix #2 — komen/cadangan penambahbaikan nampak kosong/generik**
-Punca: proxy `app/api/claude/route.js` cap `max_tokens` kat 500, tapi fungsi
-penilaian (`evalCall`) di `app.js` minta sampai 1300+ token untuk satu
-JSON penuh (markah 5 aspek + kekuatan + senarai kesilapan + fokus latihan +
-maklum balas). Bila kena cap, jawapan Claude terputus separuh jalan → JSON
-tak sah → sistem fallback ke mesej generik "Tidak dapat menganalisis sesi
-ini". Fix: naikkan cap server ke 1600 token.
-
-**Upgrade — coaching lebih mendalam, bukan sekadar simulasi nego**
-Struktur penilaian 5 aspek (tone / cara penyampaian / hujah counter /
-tindakan & pematuhan / strategi baki rendah-tinggi) + risiko harassment dah
-sedia ada dalam kod asal — tapi dua isu di atas menyebabkan ia tak
-berfungsi penuh. Tambahan baru:
-- `priorityFocus` — AI sekarang wajib bagi SATU aspek paling kritikal untuk
-  collector fokus pada sesi latihan akan datang, lengkap dengan tip
-  spesifik. Dipaparkan terus di skrin keputusan & rekod collector.
-- Senarai "Apa Yang Perlu Diperbaiki" (`missed[]`) sekarang **wajib** ada
-  3-6 item walaupun panggilan nampak baik — supaya AI sentiasa cari ruang
-  penambahbaikan, bukan bagi pujian generik kosong.
-- **Trend kesilapan berulang** — fungsi `tallyWeakness`/`topWeaknessLabel`
-  yang dulu wujud dalam kod tapi tak pernah digunakan, sekarang dipaparkan:
-  - Collector (Rekod Saya): "Aspek Paling Kerap Perlu Diperbaiki" merentas
-    semua sesi sendiri.
-  - Admin/Manager (Semua Collector): lajur "Aspek Lemah" + "Harassment"
-    setiap collector.
-  - Admin/Manager (Dashboard): breakdown aspek lemah seluruh pasukan +
-    panel "Isu Pematuhan/Harassment Terkini" untuk semakan compliance.
-- Badge harassment sekarang ada warna berbeza ikut tahap (amber utk
-  rendah/sederhana, merah utk tinggi) supaya lebih senang scan di dashboard.
-
-Struktur role (admin buat senario + tengok skor, manager akses penuh sama
-macam admin, collector hanya latihan + rekod sendiri) sudah wujud dalam kod
-asal (`buildNav()`) — tak perlu rombak, cuma manfaatkan data baru di atas.
+Dibina dengan **Next.js 14 (App Router)** · Deploy di **Vercel** · Database **Supabase**
 
 ---
 
+## Stack
 
-Port dari `collectortrain.html` ke struktur Next.js (App Router), dengan
-ElevenLabs + Claude key dipindah ke server-side proxy. Auth dan database
-buat masa ni KEKAL macam asal (localStorage, role-based, scenario/session
-data) — ini langkah migration Supabase yang seterusnya.
+| Layer | Service | Kegunaan |
+|---|---|---|
+| Frontend | Next.js / vanilla JS (`public/app.js`) | UI single-page |
+| Auth + DB | Supabase (Postgres) | Users, sessions, scenarios, assignments |
+| AI Roleplay + Eval | Anthropic Claude (`claude-sonnet-4-6`) | Debtor roleplay + marking collector |
+| TTS (suara debtor) | Google Gemini Flash TTS | Text-to-speech PCM → WAV |
+| STT (suara collector) | Groq Whisper | Speech-to-text, support BM |
+| Hosting | Vercel (region: `sin1` Singapore) | API routes + static |
 
-## Apa yang berubah dari fail asal
+---
 
-- **`/app/api/tts/route.js`** — proxy ke ElevenLabs. Terima `{text, voiceId}`,
-  panggil ElevenLabs guna `ELEVENLABS_API_KEY` dari env var, balas terus
-  dengan audio (`audio/mpeg`).
-- **`/app/api/claude/route.js`** — proxy ke Anthropic Messages API. Terima
-  `{system, messages, max_tokens}`, panggil Anthropic guna
-  `ANTHROPIC_API_KEY` dari env var, balas JSON yang sama format macam
-  Anthropic API asal (supaya `data.content[0].text` di frontend tak perlu
-  ubah).
-- **`/public/app.js`** — sama logic macam `<script>` asal, cuma fetch ke
-  `/api/tts` dan `/api/claude` (relative path, hosted sekali dengan app)
-  instead of terus ke `api.elevenlabs.io` / `api.anthropic.com`.
-- Field "ElevenLabs API Key" dah dibuang dari form daftar akaun dan dari
-  skrin Latihan Suara — sebab key tu sekarang shared, hosted di server,
-  collector tak perlu key sendiri lagi.
+## Environment Variables
 
-## Setup local
+Semua key kena set dalam **Vercel Dashboard → Project → Settings → Environment Variables** (production) atau `.env.local` (local dev).
+
+Salin `.env.local.example` → `.env.local` dan isi nilai sebenar:
+
+```
+SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY
+ANTHROPIC_API_KEY
+GEMINI_API_KEY
+GROQ_API_KEY
+```
+
+Tiada satu pun dari ni optional — app akan return error kalau mana-mana satu missing.
+
+---
+
+## Setup Local Dev
 
 ```bash
+git clone https://github.com/<your-org>/collectortrain.git
+cd collectortrain
 npm install
 cp .env.local.example .env.local
-# isi ANTHROPIC_API_KEY dan ELEVENLABS_API_KEY dalam .env.local
+# isi .env.local dengan keys sebenar
 npm run dev
 ```
 
-Buka http://localhost:3000 — login demo: `admin/admin123`,
-`manager/mgr123`, atau `collector/col123` (sama macam fail asal).
+Buka `http://localhost:3000`.
 
-## Deploy ke Vercel
+---
 
-1. Push folder ni ke satu GitHub repo.
-2. Di Vercel: **Add New Project** → import repo tu → Vercel auto-detect
-   Next.js, takyah ubah build settings.
-3. **Sebelum** deploy (atau lepas deploy pertama, redeploy lepas tu),
-   pergi **Project Settings → Environment Variables** dan tambah:
-   - `ANTHROPIC_API_KEY`
-   - `ELEVENLABS_API_KEY`
-4. Deploy. Setiap collector cuma buka URL Vercel tu, daftar/login, terus
-   boleh mula latihan suara — tak payah apa-apa key.
+## Database
 
-## ⚠️ Limitation penting (sebelum betul-betul "live" untuk ramai pengguna)
+Schema penuh ada dalam `supabase/schema.sql`. Run sekali dalam **Supabase Dashboard → SQL Editor** untuk setup tables.
 
-Proxy ni sembunyikan key dari browser, tapi dia **tak verify siapa yang
-call endpoint tu**. Sebab auth sekarang ni 100% client-side (localStorage),
-server takde cara nak tahu request ke `/api/tts` atau `/api/claude` datang
-dari collector yang sah login, atau dari sesiapa je yang jumpa URL app ni
-dan terus call endpoint tu sendiri (devtools/Postman/curl).
+Tables utama:
 
-Implikasi: kalau app ni public-facing, key shared korang boleh kena abuse
-oleh orang luar — bukan sebab key leak (key dah selamat), tapi sebab
-endpoint takde access control.
+- `users` — collectors, managers, admins (bcrypt password, role, approval status, session cap)
+- `scenarios` — senario roleplay (client, persona debtor, checklist disclosure)
+- `sessions` — rekod setiap sesi latihan + eval scores (tone, delivery, counter argument, action, balance strategy, harassment)
+- `assignments` — manager assign senario wajib kepada collector
 
-Mitigasi sementara yang dah ada dalam proxy ni:
-- `max_tokens` di-cap kat 500 setiap request.
-- Teks TTS di-cap kat 1000 aksara setiap request.
+---
 
-Ni cuma speed bump, bukan auth sebenar. Bila migrate ke Supabase
-(langkah seterusnya), setiap request ke `/api/tts` dan `/api/claude`
-patut verify session/JWT Supabase user tu dulu sebelum proxy teruskan
-ke ElevenLabs/Anthropic — supaya hanya collector yang login sah boleh
-guna shared key tu.
+## Roles
 
-## Struktur fail
+| Role | Akses |
+|---|---|
+| **Collector** | Latihan sahaja — rekod sesi sendiri, lihat skor sendiri |
+| **Manager** | Semua collector data, assign senario wajib, approve/reset akaun, **tidak boleh** promote ke admin |
+| **Admin** | Akses penuh termasuk manage roles, buat/edit/padam senario |
+
+Semua akaun baru register sebagai **collector + pending approval** — manager/admin perlu approve sebelum boleh login. Promote role buat dalam Manage Users (admin only).
+
+---
+
+## API Routes
 
 ```
-collectortrain-next/
-  app/
-    layout.js          root layout, import globals.css
-    globals.css         CSS asal (token warna, semua class) — unchanged
-    page.js              markup asal (auth screen, sidebar, modal) + load /app.js
-    api/
-      tts/route.js       proxy ElevenLabs
-      claude/route.js    proxy Anthropic
-  public/
-    app.js               logic asal (DB, render*, call flow) — fetch URL diubah
-  .env.local.example
-  package.json
-  next.config.mjs
+POST   /api/auth/login              — Sign in
+POST   /api/auth/register           — Register akaun baru (collector, pending)
+GET    /api/auth/session            — Verify sesi aktif
+POST   /api/auth/reset-password     — Admin/manager reset password user lain
+
+GET    /api/users                   — Senarai semua users (admin/manager)
+PATCH  /api/users                   — Approve, set limit, tukar role
+DELETE /api/users                   — Padam user
+
+GET    /api/scenarios               — Senarai senario
+POST   /api/scenarios               — Buat senario baru
+PATCH  /api/scenarios               — Edit senario
+DELETE /api/scenarios               — Padam senario
+
+POST   /api/claude                  — Roleplay debtor AI + eval scoring
+POST   /api/tts                     — Text-to-speech (Gemini)
+POST   /api/stt                     — Speech-to-text (Groq Whisper)
+
+GET    /api/sessions                — Rekod sesi latihan
+POST   /api/sessions                — Simpan sesi baru
+
+GET    /api/assignments             — Manager-assigned senario wajib
+POST   /api/assignments             — Assign senario
+DELETE /api/assignments             — Cancel assignment
+
+POST   /api/parse-document          — Parse PDF/TXT/CSV untuk scenario builder
 ```
+
+---
+
+## Eval Scoring
+
+Setiap sesi dinilai oleh Claude merentas 6 aspek (0–100 setiap satu):
+
+1. **Tone** — nada dan sikap semasa panggilan
+2. **Delivery** — cara penyampaian maklumat
+3. **Counter Argument** — respon kepada bantahan debtor
+4. **Action & Compliance** — follow-through dan pematuhan prosedur
+5. **Balance Strategy** — strategi untuk baki rendah vs tinggi
+6. **Harassment Risk** — flag kalau ada bahasa berisiko
+
+Plus `priorityFocus` — satu aspek kritikal untuk collector fokus sesi akan datang.
+
+---
+
+## Rate Limits
+
+| Route | Limit |
+|---|---|
+| `/api/claude` | 40 req/min |
+| `/api/tts` | 40 req/min |
+| `/api/stt` | 60 req/min |
+
+---
+
+## Deploy
+
+Push ke `main` branch → Vercel auto-deploy. Pastikan semua 5 env vars dah set dalam Vercel dashboard sebelum deploy pertama.
+
