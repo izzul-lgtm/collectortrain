@@ -165,8 +165,8 @@ const userApi = {
     if(!res.ok)throw new Error(data.error||'Failed to sign in.');
     return data.user;
   },
-  async register(id,name,pass,role){
-    const res=await fetch('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,name,pass,role})});
+  async register(id,name,pass){
+    const res=await fetch('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,name,pass})});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Failed to register user.');
     return data.user;
@@ -193,6 +193,12 @@ const userApi = {
     const res=await fetch('/api/users',{method:'PATCH',headers:authHeaders(),body:JSON.stringify({id,max_sessions_per_day:maxSessionsPerDay})});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Failed to update session limit.');
+    return data.user;
+  },
+  async setRole(id,role){
+    const res=await fetch('/api/users',{method:'PATCH',headers:authHeaders(),body:JSON.stringify({id,role})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to update role.');
     return data.user;
   }
 };
@@ -521,14 +527,13 @@ async function doRegister(){
   const id=document.getElementById('regId').value.trim().toUpperCase();
   const pass=document.getElementById('regPass').value;
   const pass2=document.getElementById('regPass2').value;
-  const role=document.getElementById('regRole').value;
   if(!name||!id||!pass){showAlert('regAlert','Please fill in all required fields.','err');return;}
   if(pass.length<6){showAlert('regAlert','Password must be at least 6 characters.','err');return;}
   if(pass!==pass2){showAlert('regAlert','Passwords do not match.','err');return;}
   const btn=document.querySelector('#registerForm .btn-primary');
   if(btn){btn.disabled=true;btn.textContent='Registering...';}
   try{
-    await userApi.register(id,name,pass,role);
+    await userApi.register(id,name,pass);
     showAlert('regAlert','Registration successful! Your account is pending approval. Contact your manager or admin to get access.','ok');
     setTimeout(()=>{switchAuthTab('login');document.getElementById('loginId').value=id;},1500);
   }catch(e){
@@ -2463,7 +2468,18 @@ async function renderUsers(){
       ${approved.map(u=>`<tr>
         <td><div style="font-weight:500">${u.name}</div></td>
         <td><span class="chip chip-purple">${u.id}</span></td>
-        <td><span class="user-role-badge badge-${u.role}">${u.role==='admin'?'Admin':u.role==='manager'?'Manager':'Collector'}</span></td>
+        <td>
+          ${currentUser.role==='admin'&&u.id!==currentUser.id?`
+          <div style="display:flex;align-items:center;gap:6px">
+            <select id="role-${u.id}" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text)">
+              <option value="collector" ${u.role==='collector'?'selected':''}>Collector</option>
+              <option value="manager" ${u.role==='manager'?'selected':''}>Manager</option>
+              <option value="admin" ${u.role==='admin'?'selected':''}>Admin</option>
+            </select>
+            <button class="btn btn-secondary" style="padding:4px 10px;font-size:11px" onclick="saveUserRole('${u.id}')">Save</button>
+          </div>
+          `:`<span class="user-role-badge badge-${u.role}">${u.role==='admin'?'Admin':u.role==='manager'?'Manager':'Collector'}</span>`}
+        </td>
         <td style="font-size:12px;color:var(--text3)">${u.registeredAt?new Date(u.registeredAt).toLocaleDateString('en-MY'):'-'}</td>
         <td>
           ${u.role==='collector'?`
@@ -2500,6 +2516,19 @@ async function saveSessionLimit(id){
     renderUsers();
   }catch(e){
     alert('Failed to update session limit: '+e.message);
+  }
+}
+async function saveUserRole(id){
+  const select=document.getElementById('role-'+id);
+  const role=select.value;
+  if(!confirm(`Change this user's role to "${role}"? They may need to sign out and back in for the change to fully apply.`))return;
+  try{
+    usersCache=null;
+    await userApi.setRole(id,role);
+    await loadUsers(true);
+    renderUsers();
+  }catch(e){
+    alert('Failed to update role: '+e.message);
   }
 }
 async function deleteUser(id){
