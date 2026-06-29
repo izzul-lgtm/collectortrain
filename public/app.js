@@ -200,6 +200,12 @@ const userApi = {
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Failed to update role.');
     return data.user;
+  },
+  async resetPassword(id,newPass){
+    const res=await fetch('/api/auth/reset-password',{method:'POST',headers:authHeaders(),body:JSON.stringify({id,newPass})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to reset password.');
+    return true;
   }
 };
 let usersCache=null;
@@ -2493,6 +2499,7 @@ async function renderUsers(){
         <td>
           <div class="action-row">
           ${u.id!==currentUser.id?`
+            <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="promptResetPassword('${u.id}','${u.name.replace(/'/g,"\\'")}','${u.role}')">🔑 Reset Pass</button>
             <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="revokeUser('${u.id}')">🚫 Revoke</button>
             <button class="btn btn-danger" style="padding:4px 10px;font-size:12px" onclick="deleteUser('${u.id}')">Delete</button>
           `:'-'}
@@ -2529,6 +2536,32 @@ async function saveUserRole(id){
     renderUsers();
   }catch(e){
     alert('Failed to update role: '+e.message);
+  }
+}
+async function promptResetPassword(id, name, role) {
+  // Manager hanya boleh reset collector — tapis kat sini pun (API enforce jugak)
+  if (currentUser.role === 'manager' && role !== 'collector') {
+    alert('Hanya Admin yang boleh reset password Manager atau Admin lain.');
+    return;
+  }
+  const newPass = prompt(`Reset password untuk ${name} (${id})\n\nMasukkan password baru (min 6 aksara):`);
+  if (newPass === null) return; // user cancel
+  if (newPass.length < 6) {
+    alert('Password mesti sekurang-kurangnya 6 aksara.');
+    return;
+  }
+  const confirm1 = prompt(`Confirm password baru untuk ${name}:`);
+  if (confirm1 === null) return;
+  if (newPass !== confirm1) {
+    alert('Password tidak sepadan. Cuba lagi.');
+    return;
+  }
+  if (!confirm(`Reset password ${name} (${id})?\n\nPastikan anda beritahu password baru kepada mereka.`)) return;
+  try {
+    await userApi.resetPassword(id, newPass);
+    alert(`✅ Password ${name} berjaya direset. Maklumkan password baru kepada mereka.`);
+  } catch (e) {
+    alert('Gagal reset password: ' + e.message);
   }
 }
 async function deleteUser(id){
