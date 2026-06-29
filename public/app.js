@@ -1704,7 +1704,7 @@ function clearScenarioDraft(){
 
 function applyScenarioDraft(draft){
   // Apply stored draft values back into the already-rendered form
-  const set=(id,val)=>{const el=document.getElementById(id);if(el&&val!==undefined&&val!=='')el.value=val;};
+  const set=(id,val)=>{const el=document.getElementById(id);if(el&&val!==undefined&&val!==null&&val!=='')el.value=val;};
   set('scEmoji',draft.emoji);
   set('scName',draft.name);
   set('scGender',draft.gender);
@@ -1971,6 +1971,8 @@ Hasilkan draf senario latihan dalam format JSON SAHAJA (tiada teks lain, tiada m
   "name": "(nama watak fiktif, BUKAN nama sebenar dari job sheet)",
   "title": "(tajuk pendek senario, cth 'Penghutang Serial Broken Promise - Alasan Komisen')",
   "description": "(1 ayat ringkas situasi & corak tingkah laku)",
+  "amount": "(EKSTRAK nilai sebenar field OUTSTANDING AMT/OUTSTANDING BALANCE dari job sheet jika ada, format 'RM' diikuti nombor & koma ribuan cth 'RM1,234.50' — JANGAN reka nilai, set null jika field ni tiada dalam job sheet)",
+  "days": "(EKSTRAK nilai sebenar field AGING DAYS/DAYS PAST DUE dari job sheet jika ada, sebagai integer — JANGAN reka nilai, set null jika field ni tiada dalam job sheet)",
   "level": "easy|med|hard",
   "balanceTier": "low|high",
   "objectionType": "cooperative|denial|hardship|aggressive|avoidance",
@@ -1979,6 +1981,7 @@ Hasilkan draf senario latihan dalam format JSON SAHAJA (tiada teks lain, tiada m
   "checklist": [{"cat":"tone|delivery|counter|action|balance","text":"(perkara spesifik collector patut buat, berdasarkan corak/kelemahan yang nampak dalam log remarks ni - cth kalau penghutang selalu broken promise, checklist patut sebut pasal cara nail down PTP yang lebih kukuh)"}],
   "disclosures": ["(jika ada disclosure/maklumat wajib yang patut diucapkan, kosongkan array jika tiada)"]
 }
+PENTING pasal "amount" dan "days": field ni mesti diekstrak dari NILAI SEBENAR dalam job sheet (cth label "OUTSTANDING AMT :" atau "AGING DAYS :"), BUKAN cuma disebut dalam "prompt"/personaliti — manager tak patut perlu taip balik manual nombor yang AI dah nampak dalam job sheet ni.
 Checklist kena ada 3-5 item, betul-betul berdasarkan CORAK SEBENAR yang berulang dalam log remarks ni — bukan generic template.`
     :`Anda pereka senario latihan untuk syarikat pemulihan hutang telco di Malaysia. Di bawah ialah transkrip call SEBENAR (PII dah di-redact — JANGAN cuba teka/isi balik IC/no.telefon/no.akaun sebenar):
 
@@ -1992,6 +1995,8 @@ Berdasarkan transkrip ni, hasilkan draf senario latihan dalam format JSON SAHAJA
   "name": "(nama watak fiktif, BUKAN nama sebenar dari transkrip)",
   "title": "(tajuk pendek senario, cth 'Penghutang Kesusahan Kewangan - Kena Retrenchment')",
   "description": "(1 ayat ringkas situasi)",
+  "amount": "(EKSTRAK jumlah hutang sebenar jika DISEBUT JELAS dalam transkrip, format 'RM' diikuti nombor & koma ribuan cth 'RM1,234.50' — JANGAN reka/anggar, set null jika tak disebut jelas)",
+  "days": "(EKSTRAK hari tertunggak/aging sebenar jika DISEBUT JELAS dalam transkrip, sebagai integer — JANGAN reka/anggar, set null jika tak disebut jelas)",
   "level": "easy|med|hard",
   "balanceTier": "low|high",
   "objectionType": "cooperative|denial|hardship|aggressive|avoidance",
@@ -2000,6 +2005,7 @@ Berdasarkan transkrip ni, hasilkan draf senario latihan dalam format JSON SAHAJA
   "checklist": [{"cat":"tone|delivery|counter|action|balance","text":"(perkara spesifik collector patut buat, berdasarkan apa yang BERLAKU/HILANG dalam transkrip sebenar ni)"}],
   "disclosures": ["(jika ada disclosure/maklumat wajib yang patut diucapkan, kosongkan array jika tiada)"]
 }
+PENTING pasal "amount" dan "days": isi je kalau disebut JELAS dalam transkrip — jika hanya tersirat dalam personaliti/prompt watak tapi tak ada nombor jelas, set null (manager akan isi sendiri), JANGAN agak-agak nombor.
 Checklist kena ada 3-5 item, betul-betul berdasarkan corak SEBENAR dalam transkrip (apa collector buat baik / apa yang patut diperbaiki) — bukan generic template.`;
     const res=await fetch('/api/claude',{method:'POST',headers:authHeaders(),
       body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:2000,messages:[{role:'user',content:prompt}]})});
@@ -2397,6 +2403,23 @@ async function approveUser(id,approve){
     alert('Failed: '+e.message);
   }
 }
+// BUG FIX: "Revoke" on an already-approved user used to call approveUser(id,false),
+// which internally DELETES the account (same path as Reject for pending users) —
+// so Revoke and Delete ended up doing the exact same thing. Revoke should only
+// SUSPEND access (is_approved=false, account + history kept), not delete it.
+// userApi.reject() already existed (PATCH is_approved:false) but was unused —
+// wire it up here instead of reusing approveUser(id,false).
+async function revokeUser(id){
+  if(!confirm('Revoke access for this user? They will not be able to sign in until re-approved. Their account and session history will be kept (use Delete to permanently remove instead).'))return;
+  try{
+    await userApi.reject(id);
+    usersCache=null;
+    await loadUsers(true);
+    renderUsers();
+  }catch(e){
+    alert('Failed to revoke user: '+e.message);
+  }
+}
 async function renderUsers(){
   if(currentUser.role==='collector')return;
   setContent('<div class="page-header"><div class="page-title">Manage Users</div></div><div class="card">Loading users...</div>');
@@ -2454,7 +2477,7 @@ async function renderUsers(){
         <td>
           <div class="action-row">
           ${u.id!==currentUser.id?`
-            <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="approveUser('${u.id}',false)">🚫 Revoke</button>
+            <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="revokeUser('${u.id}')">🚫 Revoke</button>
             <button class="btn btn-danger" style="padding:4px 10px;font-size:12px" onclick="deleteUser('${u.id}')">Delete</button>
           `:'-'}
           </div>
