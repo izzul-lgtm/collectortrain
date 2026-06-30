@@ -487,6 +487,17 @@ let scenario=null, callHistory=[], callFullTranscript=[], callSeconds=0, timerIn
 const HISTORY_WINDOW=20;
 let recognition=null, isRecording=false, callActive=false;
 let audioQueue=[], isPlayingAudio=false, currentAudio=null;
+
+// ─── TEMP PERF INSTRUMENTATION (buang lepas confirm bottleneck) ───────────────
+// Satu giliran (turn) = lepas user lepas mic sampai audio pertama betul2 main.
+// Setiap stage log elapsed ms drpd turnStart, supaya breakdown jelas kat console.
+let _perfTurnStart=0, _perfFirstAudio=false;
+function perfStart(){ _perfTurnStart=performance.now(); _perfFirstAudio=false; console.log('%c[PERF] ── turn start (mic released) ──','color:#888'); }
+function perfMark(label){
+  if(!_perfTurnStart)return;
+  const ms=Math.round(performance.now()-_perfTurnStart);
+  console.log(`%c[PERF] ${label}: +${ms}ms`,'color:#0a8;font-weight:bold');
+}
 // ─── TTS TOGGLE ────────────────────────────────────────────────────────────────
 // Set ke `true` bila budget ada dan Gemini TTS key aktif semula.
 // Bila `false`: suara AI dimatikan, teks tetap muncul, latihan jalan seperti biasa.
@@ -3018,6 +3029,7 @@ async function speakEl(text){
   const tag=tagMatch?tagMatch[0]:'';
   const bareText=tag?tagged.slice(tag.length):tagged;
   const chunks=splitIntoSpeechChunks(bareText).map(c=>tag+c);
+  _perfFirstAudio=false; // reset utk turn baru — chunk pertama speakEl ni belum diukur
   audioQueue.push(...chunks);
   if(!isPlayingAudio)playNext();
 }
@@ -3033,14 +3045,17 @@ function getTtsAudioCtx(){
 // Fetch SATU chunk PCM penuh dari /api/tts (Gemini TTS tak support streaming
 // — lihat app/api/tts/route.js — so request ni tunggu seluruh audio chunk
 // tu siap, then return raw PCM bytes sekali gus).
-async function fetchTtsPcm(text){
+async function fetchTtsPcm(text,_isFirstChunk){
+  if(_isFirstChunk)perfMark('TTS fetch start (1st chunk)');
   const res=await fetch('/api/tts',{
     method:'POST',
     headers:authHeaders(),
     body:JSON.stringify({text,gender:scenario?.gender||'male',geminiVoice:getGeminiVoice()})
   });
   if(!res.ok)throw new Error('TTS HTTP '+res.status);
-  return new Uint8Array(await res.arrayBuffer());
+  const bytes=new Uint8Array(await res.arrayBuffer());
+  if(_isFirstChunk)perfMark('TTS fetch done (1st chunk, PCM bytes received)');
+  return bytes;
 }
 
 // PREFETCH PIPELINE: chunk semasa main SAMBIL chunk seterusnya (dalam
@@ -3064,7 +3079,7 @@ async function playNext(){
   // sepadan dengan chunk semasa — elak tunggu fetch start dari kosong.
   let fetchPromise;
   if(_nextFetchFor===text&&_nextFetchPromise)fetchPromise=_nextFetchPromise;
-  else fetchPromise=fetchTtsPcm(text);
+  else{ const isFirst=!_perfFirstAudio; _perfFirstAudio=true; fetchPromise=fetchTtsPcm(text,isFirst); }
   _nextFetchPromise=null;_nextFetchFor=null;
 
   const ctx=getTtsAudioCtx();
@@ -3102,6 +3117,7 @@ async function playNext(){
   source.buffer=audioBuffer;
   source.connect(ctx.destination);
   source.start();
+  if(_perfTurnStart){perfMark('🔊 AUDIO STARTS PLAYING (user hears reply)');_perfTurnStart=0;}
   source.onended=()=>{playNext();};
 }
 
@@ -3556,6 +3572,7 @@ async function startRec() {
     // Hantar ke /api/stt (Deepgram) — retry SEKALI bila network blip (bukan bila
     // Deepgram sendiri reject request), sebab tanpa retry, satu request gagal =
     // collector kena ulang cakap balik dari awal = rasa "tak smooth".
+    perfStart(); // turn start: mic released, audio blob siap, pergi ke STT
     async function callSTT() {
       const res = await fetch('/api/stt', {
         method: 'POST',
@@ -3580,6 +3597,7 @@ async function startRec() {
 
       console.log('[STT debug] blob size:', audioBlob.size, 'bytes | transcript:', JSON.stringify(data.transcript),
         '| confidence:', data.confidence);
+      perfMark('STT done');
 
       const transcript = (data.transcript || '').trim();
       if (!transcript) {
@@ -3635,9 +3653,11 @@ async function processSpeech(rawText){
   // max_tokens: hard level bagi lebih ruang untuk respon emosi panjang
   const maxTok=(scenario&&scenario.level==='hard')?400:200;
   try{
+    perfMark('Claude fetch start');
     const res=await fetch('/api/claude',{method:'POST',headers:authHeaders(),
       body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:maxTok,system:getSysPrompt(),messages:callHistory})});
     const data=await res.json();
+    perfMark('Claude fetch done (full reply parsed)');
     const reply=data.content?.[0]?.text||'Hmm...';
     callFullTranscript.push({role:'assistant',content:reply});
     callHistory.push({role:'assistant',content:reply});addBubble('debtor',reply);
