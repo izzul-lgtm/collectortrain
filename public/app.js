@@ -501,7 +501,7 @@ function perfMark(label){
 // ─── TTS TOGGLE ────────────────────────────────────────────────────────────────
 // Set ke `true` bila budget ada dan Gemini TTS key aktif semula.
 // Bila `false`: suara AI dimatikan, teks tetap muncul, latihan jalan seperti biasa.
-const TTS_ENABLED = true;
+const TTS_ENABLED = false;
 // ───────────────────────────────────────────────────────────────────────────────
 let micStream=null, micAudioCtx=null, micAnalyser=null, micLevelRAF=null;
 let micPeakSinceStart=0; // peak bunyi dikesan sejak recognition.onstart turn semasa
