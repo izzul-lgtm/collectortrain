@@ -417,6 +417,36 @@ let dashboardPeriod='all';
 // string 'YYYY-MM-DD' (terus dari <input type=date>) supaya senang nak bind balik ke input.
 let dashboardCustomFrom='';
 let dashboardCustomTo='';
+// Row yang tengah expand kat "Weekly Trend Per Collector" — klik nama collector
+// untuk breakdown sesi minggu tu terus dalam dashboard (tak payah tukar page).
+let expandedTrendCollectorId=null;
+function toggleTrendRow(collectorId){
+  expandedTrendCollectorId=(expandedTrendCollectorId===collectorId)?null:collectorId;
+  renderDashboard();
+}
+function viewCollectorSessions(collectorId){
+  sessionsFilter={collectorId,scenario:'',objectionType:'',skor:'',dateFrom:'',dateTo:''};
+  sessionsPage=1;
+  navigate('sessions');
+}
+// Category yang tengah expand kat "Most Frequently Missed Aspects" — klik untuk
+// tengok collector mana yang paling banyak buat silap kategori tu ("siapa punya silap").
+let expandedWeaknessCat=null;
+function toggleWeaknessCat(cat){
+  expandedWeaknessCat=(expandedWeaknessCat===cat)?null:cat;
+  renderDashboard();
+}
+// Pecahan ikut collector untuk satu kategori weakness — untuk jawab "siapa yang
+// paling banyak buat silap ni" bila manager klik kat kategori tu.
+function weaknessByCollector(sessions,category,users){
+  const tally={};
+  sessions.forEach(s=>(s.missed||[]).forEach(m=>{
+    if(m.category===category)tally[s.collectorId]=(tally[s.collectorId]||0)+1;
+  }));
+  return Object.entries(tally).map(([id,count])=>({
+    id,name:(findUserById(users,id)||{}).name||id,count
+  })).sort((a,b)=>b.count-a.count);
+}
 function getPeriodRange(period){
   const now=new Date();
   if(period==='day'){
@@ -712,26 +742,21 @@ async function renderDashboard(){
     return{icon:'→',color:'var(--amber)',label:diff===0?'0':(diff>0?`+${diff}`:`${diff}`)};
   }
 
-  // Bar chart HTML untuk satu collector — skala relatif kepada max minggu tu
-  function weeklyBars(wData){
-    const maxVal=Math.max(...wData.filter(v=>v!==null),1);
-    return WEEKS.map((w,i)=>{
-      const v=wData[i];
-      if(v===null)return`
-        <div class="chart-bar-col" style="flex:1;min-width:0">
-          <div class="chart-bar-val" style="font-size:10px;color:var(--text3)">-</div>
-          <div style="height:6px;width:100%;background:var(--border);border-radius:3px;margin-bottom:4px"></div>
-          <div class="chart-bar-label" style="font-size:9px">${w.label}</div>
-        </div>`;
-      const h=Math.max(10,Math.round(v/maxVal*70));
-      const col=v>=70?'#5CB85C':v>=50?'#F0AD4E':'#E24B4A';
-      return`
-        <div class="chart-bar-col" style="flex:1;min-width:0">
-          <div class="chart-bar-val" style="font-size:10px">${v}</div>
-          <div class="chart-bar" style="height:${h}px;background:${col}"></div>
-          <div class="chart-bar-label" style="font-size:9px">${w.label}</div>
-        </div>`;
-    }).join('');
+  // Satu <td> untuk satu minggu — mini horizontal bar (lebar = score%, 0-100
+  // skala tetap) + nombor. Guna table sebenar (bukan nested flex div) supaya
+  // semua lajur align kemas macam table lain dalam app ni.
+  function weekCell(v,isCurrent){
+    const bg=isCurrent?'var(--purple-light)':'transparent';
+    if(v===null)return`<td style="text-align:center;background:${bg}"><span style="font-size:12px;color:var(--text3)">–</span></td>`;
+    const col=v>=70?'var(--green)':v>=50?'var(--amber)':'var(--red)';
+    return`<td style="text-align:center;background:${bg}">
+      <div style="display:inline-flex;flex-direction:column;align-items:center;gap:4px">
+        <span style="font-size:12px;font-weight:700;color:${col}">${v}</span>
+        <div style="width:44px;height:5px;background:var(--border);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${v}%;background:${col};border-radius:3px"></div>
+        </div>
+      </div>
+    </td>`;
   }
 
   // Stat card: minggu ini vs last week (semua collector)
@@ -740,6 +765,8 @@ async function renderDashboard(){
   const thisWeekAvg=thisWeekSessions.length?Math.round(thisWeekSessions.reduce((a,s)=>a+s.totalScore,0)/thisWeekSessions.length):null;
   const lastWeekAvg=lastWeekSessions.length?Math.round(lastWeekSessions.reduce((a,s)=>a+s.totalScore,0)/lastWeekSessions.length):null;
   const weekDiff=(thisWeekAvg!==null&&lastWeekAvg!==null)?thisWeekAvg-lastWeekAvg:null;
+
+  const sectionLabel=(icon,title)=>`<div style="display:flex;align-items:center;gap:8px;margin:28px 0 12px"><span style="font-size:13px">${icon}</span><span style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em">${title}</span><div style="flex:1;height:1px;background:var(--border)"></div></div>`;
 
   setContent(`
   <div class="page-header"><div class="page-title">Dashboard</div><div class="page-sub">Collector performance overview</div></div>
@@ -759,6 +786,7 @@ async function renderDashboard(){
       </span>`:''}
   </div>
 
+  ${sectionLabel('📊','Overview')}
   <div class="stats-grid">
     <div class="stat-card"><div class="stat-label">Total Sessions</div><div class="stat-val">${periodSessions.length}</div><div class="stat-sub">${periodLabel(dashboardPeriod)}</div></div>
     <div class="stat-card"><div class="stat-label">Average Score</div><div class="stat-val">${periodAvg}</div><div class="stat-sub">${periodDiff!==null?`<span style="color:${periodDiff>=0?'var(--green)':'var(--red)'}">${periodDiff>=0?'▲ +':'▼ '}${periodDiff} vs previous period</span>`:'/ 100'}</div></div>
@@ -767,44 +795,73 @@ async function renderDashboard(){
     <div class="stat-card"><div class="stat-label">Compliance Issues</div><div class="stat-val" style="color:${periodFlagged.length?'var(--red)':'inherit'}">${periodFlagged.length}</div><div class="stat-sub">Risky sessions · ${periodLabel(dashboardPeriod)}</div></div>
   </div>
 
-  <div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <div class="card-title" style="margin-bottom:0">📅 Weekly Trend Per Collector (4 Weeks)</div>
-      <div style="font-size:11px;color:var(--text3)">Average score · Mon–Sun</div>
+  ${sectionLabel('📈','Team Trend')}
+  <div class="card" style="padding:0;overflow:hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;padding:18px 20px 4px">
+      <div class="card-title" style="margin-bottom:0">📅 Weekly Trend Per Collector</div>
+      <div style="font-size:11px;color:var(--text3)">Score 0–100 · week = Mon–Sun</div>
     </div>
-    <div style="display:grid;grid-template-columns:160px 1fr;gap:12px;align-items:center;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border)">
-      <div style="font-size:11px;color:var(--text3)">Name · Trend</div>
-      <div style="display:flex;gap:6px">
-        ${WEEKS.map((w,i)=>`<div style="flex:1;text-align:center;font-size:11px;font-weight:600;color:${i===3?'var(--purple)':'var(--text3)'}">${w.label}${i===3?' ★':''}</div>`).join('')}
-      </div>
-    </div>
-    ${collectors.length===0?`<div class="empty-state"><div class="es-icon">👥</div><p>No collectors registered yet.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Register a collector account from the <strong>Manage Users</strong> menu.</p></div>`:''}
-    ${collectors.map(c=>{
-      const wData=weeklyData(c.id);
-      const arrow=trendArrow(wData);
-      const cs=sessions.filter(s=>s.collectorId===c.id);
-      const overallAvg=cs.length?Math.round(cs.reduce((a,s)=>a+s.totalScore,0)/cs.length):0;
-      return`
-      <div style="display:grid;grid-template-columns:160px 1fr;gap:12px;align-items:center;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
-        <div>
-          <div style="font-size:13px;font-weight:500;margin-bottom:4px">${c.name}</div>
-          <div style="display:flex;align-items:center;gap:6px">
-            <span class="score-pill ${overallAvg>=70?'score-high':overallAvg>=50?'score-mid':'score-low'}" style="font-size:11px">${overallAvg}</span>
+    <div style="font-size:11px;color:var(--text3);padding:0 20px 14px">Klik nama collector untuk breakdown sesi minggu ini.</div>
+    ${collectors.length===0?`<div class="empty-state" style="padding:20px"><div class="es-icon">👥</div><p>No collectors registered yet.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Register a collector account from the <strong>Manage Users</strong> menu.</p></div>`:`
+    <div class="table-wrap"><table>
+      <tr>
+        <th style="min-width:170px">Collector</th>
+        ${WEEKS.map((w,i)=>`<th style="text-align:center;${i===3?'color:var(--purple);background:var(--purple-light)':''}">${w.label}${i===3?' ★':''}</th>`).join('')}
+        <th style="text-align:center">Trend</th>
+      </tr>
+      ${collectors.map(c=>{
+        const wData=weeklyData(c.id);
+        const arrow=trendArrow(wData);
+        const cs=sessions.filter(s=>s.collectorId===c.id);
+        const overallAvg=cs.length?Math.round(cs.reduce((a,s)=>a+s.totalScore,0)/cs.length):0;
+        const isExpanded=expandedTrendCollectorId===c.id;
+        const thisWeekCs=cs.filter(s=>{const d=new Date(s.date);return d>=thisWeek.start&&d<thisWeek.end;}).slice().reverse();
+        const weakLabel=cs.length?topWeaknessLabel(cs):null;
+        const row=`<tr style="cursor:pointer;${isExpanded?'background:var(--surface2)':''}" onclick="toggleTrendRow('${c.id}')">
+          <td>
+            <div style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px">
+              <span style="font-size:9px;color:var(--text3);display:inline-block;transition:transform .15s;transform:rotate(${isExpanded?90:0}deg)">▶</span>
+              ${c.name}
+            </div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px;margin-left:15px">${cs.length} sessions · overall <span class="score-pill ${overallAvg>=70?'score-high':overallAvg>=50?'score-mid':'score-low'}" style="font-size:10px;padding:1px 7px">${overallAvg}</span></div>
+          </td>
+          ${WEEKS.map((w,i)=>weekCell(wData[i],i===3)).join('')}
+          <td style="text-align:center">
             <span style="font-size:14px;color:${arrow.color};font-weight:700">${arrow.icon}</span>
-            ${arrow.label?`<span style="font-size:11px;color:${arrow.color};font-weight:600">${arrow.label}</span>`:''}
+            ${arrow.label?`<span style="font-size:11px;color:${arrow.color};font-weight:600;margin-left:3px">${arrow.label}</span>`:''}
+          </td>
+        </tr>`;
+        const detail=isExpanded?`<tr style="background:var(--surface2)"><td colspan="6" style="padding:0 16px 18px">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;animation:fadeIn .15s ease">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px">
+              <div style="font-size:12px;font-weight:700">Breakdown — ${thisWeek.label} minggu ini (${thisWeekCs.length} sesi)</div>
+              <div style="display:flex;align-items:center;gap:8px">
+                ${weakLabel&&weakLabel!=='-'?`<span class="chip chip-amber" style="font-size:10px">🎯 Lemah: ${weakLabel}</span>`:''}
+                <button class="btn btn-secondary" style="padding:4px 10px;font-size:11px" onclick="event.stopPropagation();viewCollectorSessions('${c.id}')">View all sessions →</button>
+              </div>
+            </div>
+            ${thisWeekCs.length===0?`<div style="font-size:12px;color:var(--text3);padding:6px 0">Tiada sesi latihan untuk collector ini minggu ini.</div>`:`
+            <div class="table-wrap"><table>
+              <tr><th>Date</th><th>Scenario</th><th>Duration</th><th>Score</th><th>Harassment</th></tr>
+              ${thisWeekCs.map(s=>`<tr>
+                <td style="font-size:12px;color:var(--text3)">${fmtDateTime(s.date)}</td>
+                <td style="font-size:12px">${s.scenarioName}</td>
+                <td style="font-size:12px">${s.duration}</td>
+                <td><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span></td>
+                <td>${s.harassmentRisk&&s.harassmentRisk!=='none'?`<span class="chip chip-red" style="font-size:10px">⚠ ${s.harassmentRisk}</span>`:'<span style="color:var(--text3);font-size:11px">-</span>'}</td>
+              </tr>`).join('')}
+            </table></div>`}
           </div>
-          <div style="font-size:10px;color:var(--text3);margin-top:3px">${cs.length} total sessions</div>
-        </div>
-        <div style="display:flex;align-items:flex-end;gap:6px;height:80px">
-          ${weeklyBars(wData)}
-        </div>
-      </div>`;
-    }).join('')}
-    <div style="font-size:11px;color:var(--text3);padding-top:4px">
-      ▲ naik ≥5 · ▼ turun ≥5 · → stabil ±4 · — tiada data minggu itu · ★ minggu semasa
+        </td></tr>`:'';
+        return row+detail;
+      }).join('')}
+    </table></div>`}
+    <div style="font-size:11px;color:var(--text3);padding:12px 20px">
+      ▲ naik ≥5 · ▼ turun ≥5 · → stabil ±4 · – tiada sesi minggu itu · ★ minggu semasa
     </div>
   </div>
 
+  ${sectionLabel('👤','Individual Performance')}
   <div class="two-col">
     <div class="card">
       <div class="card-title">Performance Per Collector — ${periodLabel(dashboardPeriod)}</div>
@@ -843,20 +900,42 @@ async function renderDashboard(){
     </div>
   </div>
 
+  ${sectionLabel('🧭','Coaching Insights & Compliance')}
   <div class="two-col">
     <div class="card">
       <div class="card-title">🎯 Most Frequently Missed Aspects (Whole Team)</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:-8px;margin-bottom:12px">Klik kategori untuk tengok siapa paling kerap silap.</div>
       ${weakness.length===0?`<div class="empty-state"><div class="es-icon">📊</div><p>Not enough data for analysis yet.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Requires at least 3 training sessions.</p></div>`:
       weakness.slice(0,5).map(([cat,count])=>{
         const pct=weaknessTotal?Math.round(count/weaknessTotal*100):0;
-        return`<div style="margin-bottom:12px">
-          <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-            <span style="font-size:13px">${catIcon(cat)} ${catLabel(cat)}</span>
-            <span style="font-size:12px;color:var(--text3)">${count}x detected</span>
+        const isOpen=expandedWeaknessCat===cat;
+        const byCollector=isOpen?weaknessByCollector(sessions,cat,users):[];
+        const topCount=byCollector.length?byCollector[0].count:1;
+        return`<div style="margin-bottom:6px;${isOpen?'background:var(--surface2);border-radius:8px;padding:8px 10px;margin-left:-10px;margin-right:-10px':''}">
+          <div style="cursor:pointer" onclick="toggleWeaknessCat('${cat}')">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+              <span style="font-size:13px;display:flex;align-items:center;gap:5px">
+                <span style="font-size:9px;color:var(--text3);display:inline-block;transition:transform .15s;transform:rotate(${isOpen?90:0}deg)">▶</span>
+                ${catIcon(cat)} ${catLabel(cat)}
+              </span>
+              <span style="font-size:12px;color:var(--text3)">${count}x detected · ${pct}%</span>
+            </div>
+            <div style="background:var(--bg);border-radius:3px;height:6px;overflow:hidden;margin-left:15px">
+              <div style="height:100%;width:${pct}%;background:var(--amber);border-radius:3px"></div>
+            </div>
           </div>
-          <div style="background:var(--bg);border-radius:3px;height:6px;overflow:hidden">
-            <div style="height:100%;width:${pct}%;background:var(--amber);border-radius:3px"></div>
-          </div>
+          ${isOpen?`
+          <div style="margin-top:10px;margin-left:15px;padding-top:10px;border-top:1px solid var(--border);animation:fadeIn .15s ease">
+            <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.03em;margin-bottom:8px">Siapa paling kerap silap — ${catLabel(cat)}</div>
+            ${byCollector.length===0?`<div style="font-size:12px;color:var(--text3)">Tiada data collector untuk kategori ini.</div>`:
+            byCollector.map(b=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer" onclick="event.stopPropagation();viewCollectorSessions('${b.id}')">
+              <span style="font-size:12px;flex:0 0 130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${b.name}</span>
+              <div style="flex:1;background:var(--bg);border-radius:3px;height:6px;overflow:hidden">
+                <div style="height:100%;width:${Math.round(b.count/topCount*100)}%;background:var(--red);border-radius:3px"></div>
+              </div>
+              <span style="font-size:11px;color:var(--text3);flex:0 0 20px;text-align:right">${b.count}x</span>
+            </div>`).join('')}
+          </div>`:''}
         </div>`;
       }).join('')}
     </div>
@@ -876,6 +955,7 @@ async function renderDashboard(){
     </div>
   </div>
 
+  ${sectionLabel('🔬','Deep-Dive Analysis')}
   <div class="card">
     <div class="card-title">🎯 Performance By Debtor Type (Objection Type)</div>
     <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Cross-tab: average score & most frequently missed skill, by debtor behavior pattern — not just a global weak skill. Trend compares the period selected above (${periodLabel(dashboardPeriod)}) vs the previous period.</div>

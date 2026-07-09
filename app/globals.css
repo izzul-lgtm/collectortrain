@@ -11,6 +11,7 @@
   --green:#16A34A; --green-light:#F0FDF4; --green-border:#BBF7D0;
   --amber:#D97706; --amber-light:#FFFBEB; --amber-border:#FDE68A;
   --blue:#2563EB; --blue-light:#EFF6FF; --blue-border:#BFDBFE;
+  --purple:#7C3AED; --purple-light:#F5F3FF; --purple-border:#DDD6FE;
 
   /* Surfaces */
   --bg:#F5F6FA; --surface:#FFFFFF; --surface2:#F9FAFB;
@@ -955,3 +956,6 @@ hr.divider { border:none; border-top:1px solid var(--border); margin:1rem 0; }
   .sc-preview-card { max-height:none; }
   .training-left .card { max-height:400px; }
 }
+
+/* Fade-in for expandable dashboard breakdown panels */
+@keyframes fadeIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
