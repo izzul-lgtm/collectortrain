@@ -391,6 +391,25 @@ function paginationBar(currentPage,totalItems,pageSize,onPageChange){
 function goSessionsPage(p){sessionsPage=p;renderSessions();}
 function goMyHistoryPage(p){myHistoryPage=p;renderMyHistory();}
 
+// BUGFIX (dashboard/weekly date lari): jangan guna `Date.toISOString().slice(0,10)`
+// untuk dapatkan "tarikh hari ini" — toISOString() bagi tarikh dalam UTC, bukan
+// waktu tempatan (Malaysia = UTC+8). Sesi yang dibuat lepas tengah malam tapi
+// sebelum pukul 8 pagi (waktu Malaysia) akan tersilap kira sebagai "semalam"
+// sebab tarikh UTC dia masih hari sebelumnya. Guna localISODate() sebagai ganti
+// — ambil Y/M/D dari waktu tempatan browser, bukan UTC.
+function localISODate(d){
+  d=d||new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+// Semak sama ada satu ISO timestamp (cth dari s.date, yang disimpan dalam UTC)
+// jatuh pada tarikh tempatan yang sama macam `localDateStr` (default hari ini).
+// Guna ni gantikan corak lama `s.date.startsWith(todayStr)` yang silap banding
+// tarikh UTC dengan tarikh UTC — sepatutnya banding tarikh TEMPATAN dgn tempatan.
+function isLocalDate(isoString,localDateStr){
+  if(!isoString)return false;
+  return localISODate(new Date(isoString))===(localDateStr||localISODate());
+}
+
 // Filter dashboard "Hari Ini / Bulan Ini / Tahun Ini / Semua" — supaya admin/manager
 // senang nak tengok prestasi ikut tempoh tertentu tanpa kira manual dari senarai penuh.
 let dashboardPeriod='all';
@@ -637,7 +656,7 @@ async function renderDashboard(){
   const collectors=users.filter(u=>u.role==='collector');
   const totalSessions=sessions.length;
   const avgScore=sessions.length?Math.round(sessions.reduce((a,s)=>a+s.totalScore,0)/sessions.length):0;
-  const todaySessions=sessions.filter(s=>s.date&&s.date.startsWith(new Date().toISOString().slice(0,10))).length;
+  const todaySessions=sessions.filter(s=>isLocalDate(s.date)).length;
   const recentSessions=sessions.slice(-10).reverse();
   const flaggedSessions=sessions.filter(s=>s.harassmentRisk&&s.harassmentRisk!=='none');
   const recentFlagged=flaggedSessions.slice(-6).reverse();
@@ -964,8 +983,8 @@ async function renderTraining(){
   // ── Daily session cap (FASA 4) — kira sesi HARI NI je, enforce client-side
   // (untuk UX — block awal sebelum buang masa pilih scenario) DAN server-side
   // (app/api/sessions POST, sumber kebenaran sebenar — client ni cuma UX).
-  const todayStr=new Date().toISOString().slice(0,10);
-  const todaySessionCount=mySessions.filter(s=>s.date&&s.date.startsWith(todayStr)).length;
+  const todayStr=localISODate();
+  const todaySessionCount=mySessions.filter(s=>isLocalDate(s.date,todayStr)).length;
   const dailyCap=currentUser.maxSessionsPerDay;
   const dailyCapReached=dailyCap!=null&&todaySessionCount>=dailyCap;
 
@@ -2598,7 +2617,7 @@ async function renderAssignments(){
     return;
   }
   const collectors=users.filter(u=>u.role==='collector');
-  const todayStr=new Date().toISOString().slice(0,10);
+  const todayStr=localISODate();
   const statusBadge=(a)=>{
     if(a.status==='completed')return`<span class="chip" style="background:#e8f5e9;color:#2e7d32;font-size:11px">✓ Completed</span>`;
     const overdue=a.dueDate&&a.dueDate<todayStr;
@@ -2888,8 +2907,8 @@ async function startCall(){
   if(currentUser.maxSessionsPerDay!=null){
     try{
       const mySessions=await loadSessions(true);
-      const todayStr=new Date().toISOString().slice(0,10);
-      const todayCount=mySessions.filter(s=>s.date&&s.date.startsWith(todayStr)).length;
+      const todayStr=localISODate();
+      const todayCount=mySessions.filter(s=>isLocalDate(s.date,todayStr)).length;
       if(todayCount>=currentUser.maxSessionsPerDay){
         alert(`Daily session limit reached (${currentUser.maxSessionsPerDay} sessions/day). Please try again tomorrow.`);
         renderTraining();

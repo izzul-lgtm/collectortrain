@@ -104,7 +104,16 @@ export async function POST(req) {
       if (userErr) throw userErr;
       const cap = userRow?.max_sessions_per_day;
       if (cap != null) {
-        const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+        // BUGFIX: server (Vercel) run dalam UTC, BUKAN waktu Malaysia — `new
+        // Date().setHours(0,0,0,0)` di server bagi tengah malam UTC, jadi had
+        // sesi harian collector akan reset pukul 8 PAGI waktu Malaysia,
+        // bukan tengah malam macam sepatutnya. Malaysia (Asia/Kuala_Lumpur)
+        // tetap UTC+8 sepanjang tahun (tiada DST), jadi guna offset tetap ni
+        // untuk kira tengah malam waktu Malaysia, convert balik ke UTC instant.
+        const MY_OFFSET_MS = 8 * 60 * 60 * 1000;
+        const nowMY = new Date(Date.now() + MY_OFFSET_MS);
+        const todayStartMY_asUTC = Date.UTC(nowMY.getUTCFullYear(), nowMY.getUTCMonth(), nowMY.getUTCDate(), 0, 0, 0);
+        const todayStart = new Date(todayStartMY_asUTC - MY_OFFSET_MS);
         const { count, error: countErr } = await sb
           .from('sessions')
           .select('id', { count: 'exact', head: true })
