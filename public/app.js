@@ -418,14 +418,42 @@ let dashboardPeriod='all';
 let dashboardCustomFrom='';
 let dashboardCustomTo='';
 // Row yang tengah expand kat "Weekly Trend Per Collector" — klik nama collector
-// untuk breakdown sesi minggu tu terus dalam dashboard (tak payah tukar page).
+// untuk breakdown ikut minggu (dalam bulan yang dipilih), lepas tu ikut hari.
 let expandedTrendCollectorId=null;
+// Bulan yang tengah dipapar kat Weekly Trend — supaya trend ikut bulan kalendar
+// (bukan "4 minggu bergolek" yang boleh merentas 2 bulan & jadi mengelirukan
+// bila tukar bulan, cth Jun→Julai atau lagi teruk bila sampai Disember).
+let dashboardTrendMonth=null; // Date (1hb bulan tu) — di-set ke bulan semasa kali pertama render
+// Minggu (dalam bulan yang dipilih) yang tengah expand untuk satu collector —
+// key: `${collectorId}__${weekIndex}` — untuk breakdown hari dalam minggu tu.
+let expandedTrendWeekKey=null;
 function toggleTrendRow(collectorId){
   expandedTrendCollectorId=(expandedTrendCollectorId===collectorId)?null:collectorId;
+  expandedTrendWeekKey=null;
   renderDashboard();
 }
-function viewCollectorSessions(collectorId){
-  sessionsFilter={collectorId,scenario:'',objectionType:'',skor:'',dateFrom:'',dateTo:''};
+function toggleTrendWeek(collectorId,weekIdx){
+  const key=`${collectorId}__${weekIdx}`;
+  expandedTrendWeekKey=(expandedTrendWeekKey===key)?null:key;
+  renderDashboard();
+}
+function shiftTrendMonth(delta){
+  const d=new Date(dashboardTrendMonth);
+  d.setMonth(d.getMonth()+delta);
+  dashboardTrendMonth=new Date(d.getFullYear(),d.getMonth(),1);
+  expandedTrendCollectorId=null;
+  expandedTrendWeekKey=null;
+  renderDashboard();
+}
+function resetTrendMonth(){
+  const now=new Date();
+  dashboardTrendMonth=new Date(now.getFullYear(),now.getMonth(),1);
+  expandedTrendCollectorId=null;
+  expandedTrendWeekKey=null;
+  renderDashboard();
+}
+function viewCollectorSessions(collectorId,dateFrom,dateTo){
+  sessionsFilter={collectorId,scenario:'',objectionType:'',skor:'',dateFrom:dateFrom||'',dateTo:dateTo||''};
   sessionsPage=1;
   navigate('sessions');
 }
@@ -706,23 +734,36 @@ async function renderDashboard(){
   const periodFlagged=periodSessions.filter(s=>s.harassmentRisk&&s.harassmentRisk!=='none');
   const periodBtn=(p,label)=>`<button class="btn ${dashboardPeriod===p?'btn-primary':'btn-secondary'}" style="padding:6px 14px;font-size:12px" onclick="setDashboardPeriod('${p}')">${label}</button>`;
 
-  // ── Weekly aggregation ─────────────────────────────────────────────────
-  // 4 minggu terkini, setiap minggu Isnin-Ahad
-  function getWeeks(n){
+  // ── Weekly aggregation (Trend widget) ───────────────────────────────────
+  // Ikut BULAN KALENDAR yang dipilih (bukan "4 minggu bergolek" macam dulu —
+  // tu yang buat lajur boleh merentas 2 bulan skaligus (cth Jun→Julai) dan jadi
+  // makin mengelirukan bila sampai penghujung tahun/Disember). Sekarang: pilih
+  // 1 bulan → tengok minggu² dalam bulan tu → klik minggu → breakdown harian.
+  if(!dashboardTrendMonth){
     const now=new Date();
-    const day=now.getDay()||7;
-    const monday=new Date(now); monday.setHours(0,0,0,0); monday.setDate(now.getDate()-(day-1));
+    dashboardTrendMonth=new Date(now.getFullYear(),now.getMonth(),1);
+  }
+  function pad2(n){return String(n).padStart(2,'0');}
+  function getWeeksInMonth(monthDate){
+    const y=monthDate.getFullYear(), m=monthDate.getMonth();
+    const monthStart=new Date(y,m,1);
+    const monthEnd=new Date(y,m+1,1); // exclusive
+    const firstDow=monthStart.getDay()||7; // 1=Isnin..7=Ahad
+    let cur=new Date(monthStart); cur.setDate(monthStart.getDate()-(firstDow-1)); // Isnin minggu pertama
     const weeks=[];
-    for(let i=n-1;i>=0;i--){
-      const start=new Date(monday); start.setDate(monday.getDate()-i*7);
+    while(cur<monthEnd){
+      const start=new Date(cur);
       const end=new Date(start); end.setDate(start.getDate()+7);
-      const d=start.getDate(), m=start.getMonth()+1;
-      weeks.push({label:`${String(d).padStart(2,'0')}/${String(m).padStart(2,'0')}`,start,end});
+      weeks.push({label:`${pad2(start.getDate())}/${pad2(start.getMonth()+1)}`,start,end});
+      cur=end;
     }
     return weeks;
   }
-  const WEEKS=getWeeks(4);
-  const thisWeek=WEEKS[3]; const lastWeek=WEEKS[2];
+  const WEEKS=getWeeksInMonth(dashboardTrendMonth);
+  const monthLabel=dashboardTrendMonth.toLocaleDateString('en-GB',{month:'long',year:'numeric'});
+  const now_=new Date();
+  const isCurrentMonth=dashboardTrendMonth.getFullYear()===now_.getFullYear()&&dashboardTrendMonth.getMonth()===now_.getMonth();
+  const currentWeekIdx=isCurrentMonth?WEEKS.findIndex(w=>now_>=w.start&&now_<w.end):-1;
 
   function weeklyData(collectorId){
     const cs=sessions.filter(s=>s.collectorId===collectorId);
@@ -732,7 +773,27 @@ async function renderDashboard(){
     });
   }
 
-  // Arrow trend: bandingkan 2 minggu terkini yang ada data
+  // Breakdown harian (Isnin-Ahad) untuk satu collector, dalam satu minggu tertentu
+  function dailyData(collectorId,week){
+    const cs=sessions.filter(s=>s.collectorId===collectorId);
+    const days=[];
+    for(let i=0;i<7;i++){
+      const dStart=new Date(week.start); dStart.setDate(week.start.getDate()+i);
+      const dEnd=new Date(dStart); dEnd.setDate(dStart.getDate()+1);
+      const ds=cs.filter(s=>{const d=new Date(s.date);return d>=dStart&&d<dEnd;});
+      days.push({
+        date:dStart,
+        dayName:dStart.toLocaleDateString('en-GB',{weekday:'short'}),
+        label:`${pad2(dStart.getDate())}/${pad2(dStart.getMonth()+1)}`,
+        count:ds.length,
+        avg:ds.length?Math.round(ds.reduce((a,s)=>a+s.totalScore,0)/ds.length):null,
+        sessions:ds.slice().reverse()
+      });
+    }
+    return days;
+  }
+
+  // Arrow trend: bandingkan 2 minggu terkini (dalam bulan dipilih) yang ada data
   function trendArrow(wData){
     const filled=wData.filter(v=>v!==null);
     if(filled.length<2)return{icon:'—',color:'var(--text3)',label:''};
@@ -759,7 +820,16 @@ async function renderDashboard(){
     </td>`;
   }
 
-  // Stat card: minggu ini vs last week (semua collector)
+  // Stat card "Score This Week" — SENTIASA ikut minggu kalendar sebenar (hari
+  // ini), berasingan daripada bulan yang dipilih kat Trend widget di atas.
+  function currentCalendarWeek(){
+    const n=new Date(); const day=n.getDay()||7;
+    const start=new Date(n); start.setHours(0,0,0,0); start.setDate(n.getDate()-(day-1));
+    const end=new Date(start); end.setDate(start.getDate()+7);
+    return{start,end};
+  }
+  const thisWeek=currentCalendarWeek();
+  const lastWeek=(()=>{const s=new Date(thisWeek.start);s.setDate(s.getDate()-7);const e=new Date(thisWeek.end);e.setDate(e.getDate()-7);return{start:s,end:e};})();
   const thisWeekSessions=sessions.filter(s=>{const d=new Date(s.date);return d>=thisWeek.start&&d<thisWeek.end;});
   const lastWeekSessions=sessions.filter(s=>{const d=new Date(s.date);return d>=lastWeek.start&&d<lastWeek.end;});
   const thisWeekAvg=thisWeekSessions.length?Math.round(thisWeekSessions.reduce((a,s)=>a+s.totalScore,0)/thisWeekSessions.length):null;
@@ -797,16 +867,21 @@ async function renderDashboard(){
 
   ${sectionLabel('📈','Team Trend')}
   <div class="card" style="padding:0;overflow:hidden">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;padding:18px 20px 4px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;padding:18px 20px 4px">
       <div class="card-title" style="margin-bottom:0">📅 Weekly Trend Per Collector</div>
-      <div style="font-size:11px;color:var(--text3)">Score 0–100 · week = Mon–Sun</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="shiftTrendMonth(-1)">◀</button>
+        <span style="font-size:13px;font-weight:700;min-width:130px;text-align:center">${monthLabel}</span>
+        <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="shiftTrendMonth(1)">▶</button>
+        ${!isCurrentMonth?`<button class="btn btn-secondary" style="padding:4px 10px;font-size:11px" onclick="resetTrendMonth()">This Month</button>`:''}
+      </div>
     </div>
-    <div style="font-size:11px;color:var(--text3);padding:0 20px 14px">Klik nama collector untuk breakdown sesi minggu ini.</div>
+    <div style="font-size:11px;color:var(--text3);padding:0 20px 14px">Minggu Isnin–Ahad dalam ${monthLabel}. Klik nama collector → pilih minggu → breakdown harian.</div>
     ${collectors.length===0?`<div class="empty-state" style="padding:20px"><div class="es-icon">👥</div><p>No collectors registered yet.</p><p style="font-size:12px;color:var(--text3);margin-top:4px">Register a collector account from the <strong>Manage Users</strong> menu.</p></div>`:`
     <div class="table-wrap"><table>
       <tr>
         <th style="min-width:170px">Collector</th>
-        ${WEEKS.map((w,i)=>`<th style="text-align:center;${i===3?'color:var(--purple);background:var(--purple-light)':''}">${w.label}${i===3?' ★':''}</th>`).join('')}
+        ${WEEKS.map((w,i)=>`<th style="text-align:center;${i===currentWeekIdx?'color:var(--purple);background:var(--purple-light)':''}">${w.label}${i===currentWeekIdx?' ★':''}</th>`).join('')}
         <th style="text-align:center">Trend</th>
       </tr>
       ${collectors.map(c=>{
@@ -815,7 +890,6 @@ async function renderDashboard(){
         const cs=sessions.filter(s=>s.collectorId===c.id);
         const overallAvg=cs.length?Math.round(cs.reduce((a,s)=>a+s.totalScore,0)/cs.length):0;
         const isExpanded=expandedTrendCollectorId===c.id;
-        const thisWeekCs=cs.filter(s=>{const d=new Date(s.date);return d>=thisWeek.start&&d<thisWeek.end;}).slice().reverse();
         const weakLabel=cs.length?topWeaknessLabel(cs):null;
         const row=`<tr style="cursor:pointer;${isExpanded?'background:var(--surface2)':''}" onclick="toggleTrendRow('${c.id}')">
           <td>
@@ -825,32 +899,70 @@ async function renderDashboard(){
             </div>
             <div style="font-size:11px;color:var(--text3);margin-top:2px;margin-left:15px">${cs.length} sessions · overall <span class="score-pill ${overallAvg>=70?'score-high':overallAvg>=50?'score-mid':'score-low'}" style="font-size:10px;padding:1px 7px">${overallAvg}</span></div>
           </td>
-          ${WEEKS.map((w,i)=>weekCell(wData[i],i===3)).join('')}
+          ${WEEKS.map((w,i)=>weekCell(wData[i],i===currentWeekIdx)).join('')}
           <td style="text-align:center">
             <span style="font-size:14px;color:${arrow.color};font-weight:700">${arrow.icon}</span>
             ${arrow.label?`<span style="font-size:11px;color:${arrow.color};font-weight:600;margin-left:3px">${arrow.label}</span>`:''}
           </td>
         </tr>`;
-        const detail=isExpanded?`<tr style="background:var(--surface2)"><td colspan="6" style="padding:0 16px 18px">
+        const detail=isExpanded?`<tr style="background:var(--surface2)"><td colspan="${WEEKS.length+2}" style="padding:0 16px 18px">
           <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;animation:fadeIn .15s ease">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px">
-              <div style="font-size:12px;font-weight:700">Breakdown — ${thisWeek.label} minggu ini (${thisWeekCs.length} sesi)</div>
+              <div style="font-size:12px;font-weight:700">Pilih minggu untuk breakdown harian — ${monthLabel}</div>
               <div style="display:flex;align-items:center;gap:8px">
-                ${weakLabel&&weakLabel!=='-'?`<span class="chip chip-amber" style="font-size:10px">🎯 Lemah: ${weakLabel}</span>`:''}
+                ${weakLabel&&weakLabel!=='-'?`<span class="chip chip-amber" style="font-size:10px">🎯 Lemah keseluruhan: ${weakLabel}</span>`:''}
                 <button class="btn btn-secondary" style="padding:4px 10px;font-size:11px" onclick="event.stopPropagation();viewCollectorSessions('${c.id}')">View all sessions →</button>
               </div>
             </div>
-            ${thisWeekCs.length===0?`<div style="font-size:12px;color:var(--text3);padding:6px 0">Tiada sesi latihan untuk collector ini minggu ini.</div>`:`
-            <div class="table-wrap"><table>
-              <tr><th>Date</th><th>Scenario</th><th>Duration</th><th>Score</th><th>Harassment</th></tr>
-              ${thisWeekCs.map(s=>`<tr>
-                <td style="font-size:12px;color:var(--text3)">${fmtDateTime(s.date)}</td>
-                <td style="font-size:12px">${s.scenarioName}</td>
-                <td style="font-size:12px">${s.duration}</td>
-                <td><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span></td>
-                <td>${s.harassmentRisk&&s.harassmentRisk!=='none'?`<span class="chip chip-red" style="font-size:10px">⚠ ${s.harassmentRisk}</span>`:'<span style="color:var(--text3);font-size:11px">-</span>'}</td>
-              </tr>`).join('')}
-            </table></div>`}
+            ${WEEKS.map((w,i)=>{
+              const v=wData[i];
+              const weekCount=cs.filter(s=>{const d=new Date(s.date);return d>=w.start&&d<w.end;}).length;
+              const wKey=`${c.id}__${i}`;
+              const isWeekOpen=expandedTrendWeekKey===wKey;
+              const barCol=v===null?'var(--border)':(v>=70?'var(--green)':v>=50?'var(--amber)':'var(--red)');
+              const weekDetail=isWeekOpen?(()=>{
+                const days=dailyData(c.id,w);
+                const weekEndIncl=new Date(w.end); weekEndIncl.setDate(weekEndIncl.getDate()-1);
+                const allSessions=days.flatMap(d=>d.sessions);
+                return`<div style="padding:8px 0 14px 24px;animation:fadeIn .15s ease">
+                  <div class="table-wrap"><table>
+                    <tr><th>Day</th><th>Date</th><th style="text-align:center">Sessions</th><th style="text-align:center">Avg Score</th></tr>
+                    ${days.map(d=>`<tr>
+                      <td style="font-size:12px">${d.dayName}</td>
+                      <td style="font-size:12px;color:var(--text3)">${d.label}</td>
+                      <td style="font-size:12px;text-align:center">${d.count}</td>
+                      <td style="text-align:center">${d.avg!==null?`<span class="score-pill ${d.avg>=70?'score-high':d.avg>=50?'score-mid':'score-low'}">${d.avg}</span>`:'<span style="color:var(--text3);font-size:11px">-</span>'}</td>
+                    </tr>`).join('')}
+                  </table></div>
+                  ${allSessions.length?`
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin:10px 0 6px">
+                    <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.03em">Sesi minggu ini</div>
+                    <button class="btn btn-secondary" style="padding:3px 9px;font-size:10px" onclick="event.stopPropagation();viewCollectorSessions('${c.id}','${localISODate(w.start)}','${localISODate(weekEndIncl)}')">View in Sessions →</button>
+                  </div>
+                  <div class="table-wrap"><table>
+                    <tr><th>Date</th><th>Scenario</th><th>Duration</th><th>Score</th><th>Harassment</th></tr>
+                    ${allSessions.map(s=>`<tr>
+                      <td style="font-size:12px;color:var(--text3)">${fmtDateTime(s.date)}</td>
+                      <td style="font-size:12px">${s.scenarioName}</td>
+                      <td style="font-size:12px">${s.duration}</td>
+                      <td><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span></td>
+                      <td>${s.harassmentRisk&&s.harassmentRisk!=='none'?`<span class="chip chip-red" style="font-size:10px">⚠ ${s.harassmentRisk}</span>`:'<span style="color:var(--text3);font-size:11px">-</span>'}</td>
+                    </tr>`).join('')}
+                  </table></div>`:`<div style="font-size:12px;color:var(--text3);padding:6px 0">Tiada sesi latihan minggu ini.</div>`}
+                </div>`;
+              })():'';
+              return`<div style="border-bottom:1px solid var(--border)">
+                <div style="display:flex;align-items:center;gap:10px;padding:8px 4px;cursor:pointer" onclick="event.stopPropagation();toggleTrendWeek('${c.id}',${i})">
+                  <span style="font-size:9px;color:var(--text3);display:inline-block;transition:transform .15s;transform:rotate(${isWeekOpen?90:0}deg)">▶</span>
+                  <span style="font-size:12px;font-weight:600;flex:0 0 90px">${w.label}${i===currentWeekIdx?' ★':''}</span>
+                  <div style="flex:1;background:var(--bg);border-radius:3px;height:6px;overflow:hidden">
+                    <div style="height:100%;width:${v||0}%;background:${barCol};border-radius:3px"></div>
+                  </div>
+                  <span style="font-size:11px;color:var(--text3);flex:0 0 100px;text-align:right">${v!==null?v+' avg · ':''}${weekCount} sesi</span>
+                </div>
+                ${weekDetail}
+              </div>`;
+            }).join('')}
           </div>
         </td></tr>`:'';
         return row+detail;
