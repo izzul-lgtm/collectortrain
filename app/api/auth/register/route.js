@@ -1,12 +1,21 @@
 import bcrypt from 'bcryptjs';
 import { supabaseAdmin } from '../../../../lib/supabaseAdmin';
+import { rateLimit } from '../../../../lib/rateLimit';
 
 function toClientShape(row) {
   return { id: row.id, name: row.name, role: row.role, registeredAt: row.registered_at, isApproved: row.is_approved };
 }
 
+function clientIp(req) {
+  return (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || req.headers.get('x-real-ip') || 'unknown';
+}
+
 export async function POST(req) {
   try {
+    // SECURITY: had pendaftaran ikut IP — elak spam fake account (endpoint
+    // ni public, tiada auth, sengaja untuk self-registration).
+    const limitError = rateLimit(req, 'register', { max: 6, windowMs: 60_000, key: clientIp(req) });
+    if (limitError) return limitError;
     const { id, name, pass } = await req.json();
     if (!id || !name || !pass) {
       return Response.json({ error: 'Please fill in all fields.' }, { status: 400 });

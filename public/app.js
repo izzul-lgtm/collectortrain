@@ -1,4 +1,18 @@
 // ═══════════ DATABASE (localStorage — kosong sekarang, semua dah pindah ke Supabase) ═══════════
+// SECURITY: escape user-controlled text sebelum masuk dalam innerHTML —
+// elak stored XSS (cth nama collector/scenario yang mengandungi HTML/script
+// akan ter-execute bila dashboard render). Guna kat semua free-text field
+// yang datang dari input manusia (nama, tajuk scenario, feedback, quote).
+function esc(str){
+  if(str===null||str===undefined)return'';
+  return String(str)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
+}
+
 // Helper: inject x-user-id header untuk semua API calls yang perlu auth.
 // /api/auth/* (login, register, session) dikecualikan — tu memang pre-login.
 function authHeaders(extra) {
@@ -61,6 +75,16 @@ const sessionApi = {
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Failed to load training sessions.');
     return data.sessions||[];
+  },
+  // PERFORMANCE: list() sengaja tak bawa `transcript` (boleh besar per sesi).
+  // getById() tarik SATU sesi sahaja, penuh dengan transcript — dipanggil
+  // bila user betul-betul buka detail sesi tu (viewSession), bukan setiap
+  // kali dashboard/list di-load.
+  async getById(id){
+    const res=await fetch('/api/sessions?id='+encodeURIComponent(id),{headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load session detail.');
+    return data.session;
   },
   async create(sessionData){
     const res=await fetch('/api/sessions',{method:'POST',headers:authHeaders(),body:JSON.stringify(sessionData)});
@@ -313,6 +337,35 @@ function weaknessByObjectionType(sessions){
     };
   }).sort((a,b)=>a.avgScore-b.avgScore); // lemah (avg score rendah) dahulu
 }
+
+// Cross-tab Compliance Risk × Debtor Type — untuk kenal pasti jenis penghutang
+// (cth "aggressive", "denial") mana yang paling kerap trigger isu compliance/
+// harassment, supaya coaching boleh fokus situasi yang berisiko, bukan cuma
+// skor am. Juga pecahkan ikut collector untuk setiap jenis (siapa punya isu).
+function complianceByObjectionType(sessions){
+  const groups={};
+  sessions.forEach(s=>{
+    const ot=s.objectionType||'unknown';
+    if(!groups[ot])groups[ot]={count:0,flagged:0,high:0,medium:0,low:0,byCollector:{}};
+    groups[ot].count++;
+    if(s.harassmentRisk&&s.harassmentRisk!=='none'){
+      groups[ot].flagged++;
+      groups[ot][s.harassmentRisk]=(groups[ot][s.harassmentRisk]||0)+1;
+      groups[ot].byCollector[s.collectorId]=(groups[ot].byCollector[s.collectorId]||0)+1;
+    }
+  });
+  return Object.entries(groups)
+    .map(([ot,g])=>({
+      objectionType:ot,
+      count:g.count,
+      flagged:g.flagged,
+      high:g.high,medium:g.medium,low:g.low,
+      pct:g.count?Math.round(g.flagged/g.count*100):0,
+      topCollectors:Object.entries(g.byCollector).sort((a,b)=>b[1]-a[1])
+    }))
+    .filter(g=>g.flagged>0)
+    .sort((a,b)=>b.pct-a.pct); // paling berisiko dahulu
+}
 // Scenario effectiveness: banding avg score tempoh SEMASA vs tempoh SEBELUM
 // (guna periodSessions/prevPeriodSessions yang sama dengan filter "Hari Ini/
 // Bulan Ini/Tahun Ini" kat atas dashboard) — jawapan kepada "training jenis
@@ -452,6 +505,74 @@ function resetTrendMonth(){
   expandedTrendWeekKey=null;
   renderDashboard();
 }
+// ── Export Coaching Memo ────────────────────────────────────────────────
+// Jana memo HTML yang kemas (boleh dibuka terus, atau print → Save as PDF
+// dari browser) merangkumi prestasi keseluruhan, aspek paling kerap silap,
+// dan sesi terkini seorang collector. Tak guna library luar (PDF generator)
+// sebab app ni single-file — HTML print-friendly cukup untuk kegunaan
+// coaching 1-on-1 dan senang share/print.
+async function exportCoachingMemo(collectorId){
+  const [users,allSessions]=await Promise.all([loadUsers(),loadSessions()]);
+  const c=findUserById(users,collectorId);
+  if(!c){alert('Collector tidak dijumpai.');return;}
+  const cs=allSessions.filter(s=>s.collectorId===collectorId);
+  if(!cs.length){alert('Tiada data sesi untuk collector ini — belum boleh jana memo.');return;}
+
+  const overallAvg=Math.round(cs.reduce((a,s)=>a+s.totalScore,0)/cs.length);
+  const weakTally=tallyWeakness(cs);
+  const top3=weakTally.slice(0,3);
+  const recent=cs.slice().sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,5);
+  const generatedAt=new Date().toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+  const pillClass=v=>v>=70?'high':v>=50?'mid':'low';
+  const eh=str=>String(str??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Coaching Memo — ${eh(c.name)}</title>
+<style>
+  body{font-family:Arial,Helvetica,sans-serif;max-width:720px;margin:40px auto;color:#1a1a1a;line-height:1.6;padding:0 20px}
+  h1{font-size:22px;border-bottom:3px solid #7C3AED;padding-bottom:12px;margin-bottom:4px}
+  h2{font-size:14px;color:#7C3AED;margin-top:28px;text-transform:uppercase;letter-spacing:0.04em}
+  .meta{color:#666;font-size:13px;margin-bottom:8px}
+  table{width:100%;border-collapse:collapse;margin-top:8px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #e5e5e5;font-size:13px}
+  th{background:#f5f6fa;font-size:11px;text-transform:uppercase;color:#666}
+  .pill{display:inline-block;padding:3px 12px;border-radius:20px;font-size:13px;font-weight:700}
+  .high{background:#DCFCE7;color:#166534}.mid{background:#FEF3C7;color:#92400E}.low{background:#FEE2E2;color:#991B1B}
+  .note{margin-top:36px;color:#999;font-size:11px;border-top:1px solid #eee;padding-top:12px}
+  @media print{body{margin:10px}.note{display:none}}
+</style></head><body>
+  <h1>📋 Coaching Memo — ${eh(c.name)}</h1>
+  <div class="meta">Dijana: ${generatedAt} · Employee ID: ${eh(c.id)} · Berdasarkan ${cs.length} sesi latihan keseluruhan</div>
+
+  <h2>Ringkasan Prestasi</h2>
+  <p>Skor purata keseluruhan: <span class="pill ${pillClass(overallAvg)}">${overallAvg}/100</span></p>
+
+  <h2>Aspek Paling Kerap Tersilap</h2>
+  ${top3.length?`<table><tr><th>Aspek</th><th>Bilangan Dikesan</th></tr>
+  ${top3.map(([cat,count])=>`<tr><td>${eh(catIcon(cat))} ${eh(catLabel(cat))}</td><td>${count}x</td></tr>`).join('')}
+  </table>`:`<p style="color:#666;font-size:13px">Tiada isu ketara dikesan setakat ini.</p>`}
+
+  <h2>Sesi Terkini (5 terakhir)</h2>
+  <table><tr><th>Tarikh</th><th>Scenario</th><th>Skor</th></tr>
+  ${recent.map(s=>`<tr><td>${eh(fmtDateTime(s.date))}</td><td>${eh(s.scenarioName)}</td><td><span class="pill ${pillClass(s.totalScore)}">${s.totalScore}</span></td></tr>`).join('')}
+  </table>
+
+  <h2>Cadangan Coaching</h2>
+  <p style="font-size:13px">${top3.length?`Fokuskan sesi coaching akan datang pada aspek <strong>${eh(catLabel(top3[0][0]))}</strong> — ini yang paling kerap tersilap (${top3[0][1]}x dikesan).`:'Prestasi stabil, tiada isu ketara — teruskan latihan berkala untuk kekalkan konsistensi.'}</p>
+
+  <div class="note">Dijana secara automatik oleh CollectorTrain. Untuk simpan sebagai PDF: buka fail ni dalam browser → Ctrl+P (atau Cmd+P) → "Save as PDF".</div>
+</body></html>`;
+
+  const blob=new Blob([html],{type:'text/html'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`coaching-memo-${c.name.replace(/[^a-z0-9]+/gi,'-').toLowerCase()}-${localISODate()}.html`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 function viewCollectorSessions(collectorId,dateFrom,dateTo){
   sessionsFilter={collectorId,scenario:'',objectionType:'',skor:'',dateFrom:dateFrom||'',dateTo:dateTo||''};
   sessionsPage=1;
@@ -474,6 +595,13 @@ function weaknessByCollector(sessions,category,users){
   return Object.entries(tally).map(([id,count])=>({
     id,name:(findUserById(users,id)||{}).name||id,count
   })).sort((a,b)=>b.count-a.count);
+}
+// Row yang tengah expand kat "Compliance Risk × Debtor Type" — klik untuk
+// tengok collector mana yang paling banyak isu compliance untuk jenis tu.
+let expandedComplianceOT=null;
+function toggleComplianceOT(ot){
+  expandedComplianceOT=(expandedComplianceOT===ot)?null:ot;
+  renderDashboard();
 }
 function getPeriodRange(period){
   const now=new Date();
@@ -895,7 +1023,7 @@ async function renderDashboard(){
           <td>
             <div style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px">
               <span style="font-size:9px;color:var(--text3);display:inline-block;transition:transform .15s;transform:rotate(${isExpanded?90:0}deg)">▶</span>
-              ${c.name}
+              ${esc(c.name)}
             </div>
             <div style="font-size:11px;color:var(--text3);margin-top:2px;margin-left:15px">${cs.length} sessions · overall <span class="score-pill ${overallAvg>=70?'score-high':overallAvg>=50?'score-mid':'score-low'}" style="font-size:10px;padding:1px 7px">${overallAvg}</span></div>
           </td>
@@ -911,6 +1039,7 @@ async function renderDashboard(){
               <div style="font-size:12px;font-weight:700">Pilih minggu untuk breakdown harian — ${monthLabel}</div>
               <div style="display:flex;align-items:center;gap:8px">
                 ${weakLabel&&weakLabel!=='-'?`<span class="chip chip-amber" style="font-size:10px">🎯 Lemah keseluruhan: ${weakLabel}</span>`:''}
+                <button class="btn btn-secondary" style="padding:4px 10px;font-size:11px" onclick="event.stopPropagation();exportCoachingMemo('${c.id}')">📄 Export Coaching Memo</button>
                 <button class="btn btn-secondary" style="padding:4px 10px;font-size:11px" onclick="event.stopPropagation();viewCollectorSessions('${c.id}')">View all sessions →</button>
               </div>
             </div>
@@ -943,7 +1072,7 @@ async function renderDashboard(){
                     <tr><th>Date</th><th>Scenario</th><th>Duration</th><th>Score</th><th>Harassment</th></tr>
                     ${allSessions.map(s=>`<tr>
                       <td style="font-size:12px;color:var(--text3)">${fmtDateTime(s.date)}</td>
-                      <td style="font-size:12px">${s.scenarioName}</td>
+                      <td style="font-size:12px">${esc(s.scenarioName)}</td>
                       <td style="font-size:12px">${s.duration}</td>
                       <td><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span></td>
                       <td>${s.harassmentRisk&&s.harassmentRisk!=='none'?`<span class="chip chip-red" style="font-size:10px">⚠ ${s.harassmentRisk}</span>`:'<span style="color:var(--text3);font-size:11px">-</span>'}</td>
@@ -986,7 +1115,7 @@ async function renderDashboard(){
         const diff=(dashboardPeriod!=='all'&&prevAvg!==null)?avg-prevAvg:null;
         return`<div style="margin-bottom:14px">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-            <span style="font-size:13px;font-weight:500">${c.name}</span>
+            <span style="font-size:13px;font-weight:500">${esc(c.name)}</span>
             <div style="display:flex;align-items:center;gap:6px">
               ${diff!==null?`<span style="font-size:11px;color:${diff>=0?'var(--green)':'var(--red)'}">${diff>=0?'▲ +':'▼ '}${diff}</span>`:''}
               <span class="score-pill ${avg>=70?'score-high':avg>=50?'score-mid':'score-low'}">${cs.length?avg:'—'}</span>
@@ -1005,7 +1134,7 @@ async function renderDashboard(){
       ${recentSessions.map(s=>{
         const u=findUserById(users,s.collectorId);
         return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div><div style="font-size:13px;font-weight:500">${u?u.name:'—'}</div><div style="font-size:11px;color:var(--text3)">${s.scenarioName} · ${s.duration}</div></div>
+          <div><div style="font-size:13px;font-weight:500">${u?u.name:'—'}</div><div style="font-size:11px;color:var(--text3)">${esc(s.scenarioName)} · ${s.duration}</div></div>
           <span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span>
         </div>`;
       }).join('')}
@@ -1041,7 +1170,7 @@ async function renderDashboard(){
             <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.03em;margin-bottom:8px">Siapa paling kerap silap — ${catLabel(cat)}</div>
             ${byCollector.length===0?`<div style="font-size:12px;color:var(--text3)">Tiada data collector untuk kategori ini.</div>`:
             byCollector.map(b=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer" onclick="event.stopPropagation();viewCollectorSessions('${b.id}')">
-              <span style="font-size:12px;flex:0 0 130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${b.name}</span>
+              <span style="font-size:12px;flex:0 0 130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(b.name)}</span>
               <div style="flex:1;background:var(--bg);border-radius:3px;height:6px;overflow:hidden">
                 <div style="height:100%;width:${Math.round(b.count/topCount*100)}%;background:var(--red);border-radius:3px"></div>
               </div>
@@ -1057,7 +1186,7 @@ async function renderDashboard(){
       recentFlagged.map(s=>{
         const u=findUserById(users,s.collectorId);
         return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div><div style="font-size:13px;font-weight:500">${u?u.name:'—'}</div><div style="font-size:11px;color:var(--text3)">${s.scenarioName}</div></div>
+          <div><div style="font-size:13px;font-weight:500">${u?u.name:'—'}</div><div style="font-size:11px;color:var(--text3)">${esc(s.scenarioName)}</div></div>
           <div style="display:flex;align-items:center;gap:6px">
             <span class="chip ${s.harassmentRisk==='high'?'chip-red':'chip-amber'}">⚠ ${s.harassmentRisk}</span>
             <button class="btn btn-secondary" style="padding:3px 8px;font-size:11px" onclick="viewSession('${s.id}')">View</button>
@@ -1084,6 +1213,52 @@ async function renderDashboard(){
         <td><span style="color:${t.color};font-size:12px">${t.icon} ${t.label}</span></td>
       </tr>`;}).join('')}
     </table></div>`}
+  </div>
+
+  <div class="card">
+    <div class="card-title">⚠ Compliance Risk × Debtor Type</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Jenis penghutang mana yang paling kerap trigger isu compliance/harassment. Klik baris untuk tengok collector mana yang paling banyak terlibat.</div>
+    ${(()=>{
+      const compliance=complianceByObjectionType(sessions);
+      if(compliance.length===0)return`<div class="empty-state"><div class="es-icon">✅</div><p>Tiada isu compliance/harassment dikesan setakat ini.</p></div>`;
+      return`<div class="table-wrap"><table>
+        <tr><th>Debtor Type</th><th style="text-align:center">Sessions</th><th style="text-align:center">Flagged</th><th style="text-align:center">% Berisiko</th><th>Severity</th></tr>
+        ${compliance.map(g=>{
+          const isOpen=expandedComplianceOT===g.objectionType;
+          const row=`<tr style="cursor:pointer;${isOpen?'background:var(--surface2)':''}" onclick="toggleComplianceOT('${g.objectionType}')">
+            <td style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:9px;color:var(--text3);display:inline-block;transition:transform .15s;transform:rotate(${isOpen?90:0}deg)">▶</span>
+              ${objectionTypeIcon(g.objectionType)} ${objectionTypeLabel(g.objectionType)}
+            </td>
+            <td style="text-align:center">${g.count}</td>
+            <td style="text-align:center">${g.flagged}</td>
+            <td style="text-align:center"><span class="chip ${g.pct>=30?'chip-red':'chip-amber'}" style="font-size:11px">${g.pct}%</span></td>
+            <td>
+              ${g.high?`<span class="chip chip-red" style="font-size:10px;margin-right:3px">high ×${g.high}</span>`:''}
+              ${g.medium?`<span class="chip chip-amber" style="font-size:10px;margin-right:3px">medium ×${g.medium}</span>`:''}
+              ${g.low?`<span class="chip" style="font-size:10px">low ×${g.low}</span>`:''}
+            </td>
+          </tr>`;
+          const detail=isOpen?`<tr style="background:var(--surface2)"><td colspan="5" style="padding:0 16px 16px">
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;animation:fadeIn .15s ease">
+              <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.03em;margin-bottom:8px">Collector terlibat — ${objectionTypeLabel(g.objectionType)}</div>
+              ${g.topCollectors.map(([id,count])=>{
+                const u=findUserById(users,id);
+                const topCount=g.topCollectors[0][1];
+                return`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer" onclick="event.stopPropagation();viewCollectorSessions('${id}')">
+                  <span style="font-size:12px;flex:0 0 130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(u?u.name:id)}</span>
+                  <div style="flex:1;background:var(--bg);border-radius:3px;height:6px;overflow:hidden">
+                    <div style="height:100%;width:${Math.round(count/topCount*100)}%;background:var(--red);border-radius:3px"></div>
+                  </div>
+                  <span style="font-size:11px;color:var(--text3);flex:0 0 50px;text-align:right">${count}x</span>
+                </div>`;
+              }).join('')}
+            </div>
+          </td></tr>`:'';
+          return row+detail;
+        }).join('')}
+      </table></div>`;
+    })()}
   </div>
 
   <div class="card">
@@ -1219,13 +1394,13 @@ async function renderTraining(){
       <div class="sc-preview-header">
         <div style="font-size:32px">${s.emoji}</div>
         <div style="flex:1;min-width:0">
-          <div class="sc-preview-title">${s.title}</div>
+          <div class="sc-preview-title">${esc(s.title)}</div>
           <div class="sc-preview-sub">${s.description||s.desc||''}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
             <span class="level-badge level-${s.level}">${lvlLabel}</span>
             <span class="preview-badge-neutral">${accentLabel} · ${genderLabel}</span>
             <span class="chip chip-amber" style="font-size:11px">${objectionTypeIcon(s.objectionType)} ${objectionTypeLabel(s.objectionType)}</span>
-            ${s.client?`<span class="preview-badge-client">${s.client}</span>`:''}
+            ${s.client?`<span class="preview-badge-client">${esc(s.client)}</span>`:''}
           </div>
         </div>
       </div>
@@ -1302,11 +1477,11 @@ async function renderTraining(){
           <div class="sc-card ${scenario&&scenario.id===s.id?'selected':''}" onclick="selectScenario('${s.id}')">
             <div class="sc-emoji">${s.emoji}</div>
             <div class="sc-body">
-              <div class="sc-name">${s.title}${assignedScenarioIds.has(s.id)?' <span style="font-size:10px;color:var(--purple);font-weight:600">📌 Assigned</span>':recommendedScenario&&recommendedScenario.id===s.id?' <span style="font-size:10px;color:var(--amber);font-weight:600">⭐ Recommended</span>':''}</div>
+              <div class="sc-name">${esc(s.title)}${assignedScenarioIds.has(s.id)?' <span style="font-size:10px;color:var(--purple);font-weight:600">📌 Assigned</span>':recommendedScenario&&recommendedScenario.id===s.id?' <span style="font-size:10px;color:var(--amber);font-weight:600">⭐ Recommended</span>':''}</div>
               <div class="sc-desc">${s.description||s.desc||''}</div>
               <div class="sc-meta">
                 <span class="level-badge level-${s.level}">${s.level==='easy'?'Easy':s.level==='med'?'Medium':'Hard'}</span>
-                ${s.client?`<span class="preview-badge-client" style="font-size:10px">${s.client}</span>`:''}
+                ${s.client?`<span class="preview-badge-client" style="font-size:10px">${esc(s.client)}</span>`:''}
               </div>
             </div>
             <div class="sc-check">${scenario&&scenario.id===s.id?'✓':''}</div>
@@ -1364,13 +1539,13 @@ function selectScenario(id){
       <div class="sc-preview-header">
         <div style="font-size:32px">${scenario.emoji}</div>
         <div style="flex:1;min-width:0">
-          <div class="sc-preview-title">${scenario.title}</div>
+          <div class="sc-preview-title">${esc(scenario.title)}</div>
           <div class="sc-preview-sub">${scenario.description||scenario.desc||''}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
             <span class="level-badge level-${scenario.level}">${lvlLabel}</span>
             <span class="preview-badge-neutral">${accentLabel} · ${genderLabel}</span>
             <span class="chip chip-amber" style="font-size:11px">${objectionTypeIcon(scenario.objectionType)} ${objectionTypeLabel(scenario.objectionType)}</span>
-            ${scenario.client?`<span class="preview-badge-client">${scenario.client}</span>`:''}
+            ${scenario.client?`<span class="preview-badge-client">${esc(scenario.client)}</span>`:''}
           </div>
         </div>
       </div>
@@ -1405,7 +1580,7 @@ function renderCallScreen(){
         <div class="call-header">
           <div class="debtor-info">
             <div class="debtor-ava">${ini}</div>
-            <div><div class="debtor-name">${scenario.name}</div><div class="debtor-sub">${scenario.title}</div></div>
+            <div><div class="debtor-name">${esc(scenario.name)}</div><div class="debtor-sub">${esc(scenario.title)}</div></div>
           </div>
           <div class="call-timer" id="callTimer">00:00</div>
         </div>
@@ -1440,7 +1615,7 @@ function renderScoreScreen(){
   const s=window._lastScore;
   setContent(`
   <div style="max-width:640px;margin:0 auto">
-    <div class="page-header"><div class="page-title">Training Results</div><div class="page-sub">${s.scenarioName} · ${s.duration}</div></div>
+    <div class="page-header"><div class="page-title">Training Results</div><div class="page-sub">${esc(s.scenarioName)} · ${s.duration}</div></div>
     <div class="card">
       <div class="score-hero">
         <div class="score-circle"><div class="score-big">${s.totalScore}</div><div class="score-of">/ 100</div></div>
@@ -1464,12 +1639,12 @@ function renderScoreScreen(){
     </div>
     <div class="card">
       <div class="card-title">💬 Maklum Balas AI</div>
-      <p style="font-size:13px;color:var(--text2);line-height:1.7">${s.feedback}</p>
+      <p style="font-size:13px;color:var(--text2);line-height:1.7">${esc(s.feedback)}</p>
     </div>
     ${(s.strengths&&s.strengths.length)?`
     <div class="card">
       <div class="card-title">✅ Apa Yang Anda Sudah Buat Dengan Baik</div>
-      ${s.strengths.map(t=>`<div style="display:flex;gap:8px;padding:6px 0;font-size:13px;color:var(--text2)"><span style="color:var(--green)">●</span><span>${t}</span></div>`).join('')}
+      ${s.strengths.map(t=>`<div style="display:flex;gap:8px;padding:6px 0;font-size:13px;color:var(--text2)"><span style="color:var(--green)">●</span><span>${esc(t)}</span></div>`).join('')}
     </div>`:''}
     ${(s.missed&&s.missed.length)?`
     <div class="card">
@@ -1479,9 +1654,9 @@ function renderScoreScreen(){
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
           <span class="chip chip-red">${catIcon(m.category)} ${catLabel(m.category)}</span>
         </div>
-        <div style="font-size:13px;color:var(--text);margin-bottom:3px"><strong>Isu:</strong> ${m.issue||''}</div>
-        ${m.quote?`<div style="font-size:12px;color:var(--text3);font-style:italic;margin-bottom:3px">"${m.quote}"</div>`:''}
-        <div style="font-size:13px;color:var(--brand)"><strong>Cadangan:</strong> ${m.suggestion||''}</div>
+        <div style="font-size:13px;color:var(--text);margin-bottom:3px"><strong>Isu:</strong> ${esc(m.issue)}</div>
+        ${m.quote?`<div style="font-size:12px;color:var(--text3);font-style:italic;margin-bottom:3px">"${esc(m.quote)}"</div>`:''}
+        <div style="font-size:13px;color:var(--brand)"><strong>Cadangan:</strong> ${esc(m.suggestion)}</div>
       </div>`).join('')}
     </div>`:''}
     ${s.priorityFocus?`
@@ -1493,8 +1668,8 @@ function renderScoreScreen(){
     <div class="card">
       <div class="card-title">📝 Transcript Perbualan</div>
       <div style="max-height:300px;overflow-y:auto">
-        ${(s.transcript||[]).map(m=>`<div style="margin-bottom:10px"><div style="font-size:11px;color:var(--text3);margin-bottom:2px">${m.role==='user'?currentUser.name:scenario?scenario.name:'Debtor'}</div>
-        <div style="padding:8px 12px;border-radius:8px;font-size:13px;background:${m.role==='user'?'var(--purple-light)':'var(--bg)'};color:${m.role==='user'?'var(--purple)':'var(--text)'}">${m.content}</div></div>`).join('')}
+        ${(s.transcript||[]).map(m=>`<div style="margin-bottom:10px"><div style="font-size:11px;color:var(--text3);margin-bottom:2px">${esc(m.role==='user'?currentUser.name:scenario?scenario.name:'Debtor')}</div>
+        <div style="padding:8px 12px;border-radius:8px;font-size:13px;background:${m.role==='user'?'var(--purple-light)':'var(--bg)'};color:${m.role==='user'?'var(--purple)':'var(--text)'}">${esc(m.content)}</div></div>`).join('')}
       </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -1620,7 +1795,7 @@ async function renderMyHistory(){
       <tr><th>#</th><th>Scenario</th><th>Duration</th><th>Score</th><th>Date</th><th></th></tr>
       ${pageSessions.map((s,i)=>`<tr>
         <td>${sessions.length-pageStart-i}</td>
-        <td>${s.scenarioName}</td>
+        <td>${esc(s.scenarioName)}</td>
         <td>${s.duration}</td>
         <td><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span></td>
         <td style="font-size:12px">${fmtDateTime(s.date)}</td>
@@ -1641,7 +1816,7 @@ async function renderCollectors(){
   <div class="page-header"><div class="page-title">All Collectors</div><div class="page-sub">${collectors.length} collectors registered</div></div>
   <div class="card">
     <div class="table-wrap"><table>
-      <tr><th>Name</th><th>ID</th><th>Sessions</th><th>Average</th><th>Highest</th><th>Weak Aspect</th><th>Weakest Debtor Type</th><th>Recommended Scenario</th><th>Harassment</th><th>Last Session</th></tr>
+      <tr><th>Name</th><th>ID</th><th>Sessions</th><th>Average</th><th>Highest</th><th>Weak Aspect</th><th>Weakest Debtor Type</th><th>Recommended Scenario</th><th>Harassment</th><th>Last Session</th><th>Actions</th></tr>
       ${collectors.map(c=>{
         const cs=sessions.filter(s=>s.collectorId===c.id);
         const avg=cs.length?Math.round(cs.reduce((a,s)=>a+s.totalScore,0)/cs.length):'-';
@@ -1666,7 +1841,7 @@ async function renderCollectors(){
         }
         const harassCount=cs.filter(s=>s.harassmentRisk&&s.harassmentRisk!=='none').length;
         return`<tr>
-          <td><div style="font-weight:500">${c.name}</div></td>
+          <td><div style="font-weight:500">${esc(c.name)}</div></td>
           <td><span class="chip chip-purple">${c.id}</span></td>
           <td>${cs.length}</td>
           <td>${typeof avg==='number'?`<span class="score-pill ${avg>=70?'score-high':avg>=50?'score-mid':'score-low'}">${avg}</span>`:'-'}</td>
@@ -1676,6 +1851,7 @@ async function renderCollectors(){
           <td>${recoScenario?`<span style="font-size:12px">${recoScenario.emoji} ${recoScenario.title}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
           <td>${harassCount>0?`<span class="chip chip-red">⚠ ${harassCount}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
           <td style="font-size:12px;color:var(--text3)">${last?fmtDateTime(last.date):'-'}</td>
+          <td>${cs.length?`<button class="btn btn-secondary" style="padding:4px 9px;font-size:11px" onclick="exportCoachingMemo('${c.id}')">📄 Memo</button>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
         </tr>`;
       }).join('')}
     </table></div>
@@ -1699,7 +1875,7 @@ async function renderSessions(){
   <div class="card filter-bar">
     <select id="filtSessionsCollector" onchange="sessionsFilter.collectorId=this.value;sessionsPage=1;renderSessions();">
       <option value="">All Collectors</option>
-      ${collectors.map(c=>`<option value="${c.id}" ${sessionsFilter.collectorId===c.id?'selected':''}>${c.name}</option>`).join('')}
+      ${collectors.map(c=>`<option value="${c.id}" ${sessionsFilter.collectorId===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}
     </select>
     <select id="filtSessionsScenario" onchange="sessionsFilter.scenario=this.value;sessionsPage=1;renderSessions();">
       <option value="">All Scenarios</option>
@@ -1727,7 +1903,7 @@ async function renderSessions(){
         const u=findUserById(users,s.collectorId);
         return`<tr>
           <td><div style="font-weight:500">${u?u.name:'—'}</div><div style="font-size:11px;color:var(--text3)">${s.collectorId}</div></td>
-          <td>${s.scenarioName}</td>
+          <td>${esc(s.scenarioName)}</td>
           <td>${s.objectionType?`<span class="chip chip-amber" style="font-size:11px">${objectionTypeIcon(s.objectionType)} ${objectionTypeLabel(s.objectionType)}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
           <td>${s.duration}</td>
           <td><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span></td>
@@ -1744,22 +1920,34 @@ async function renderSessions(){
 
 async function viewSession(id){
   const all=await loadSessions();
-  const s=all.find(s=>s.id===id);
-  if(!s)return;
+  const light=all.find(s=>s.id===id);
+  if(!light)return;
   // Collector tengok rekod sendiri = tak payah call /api/users (route tu
   // admin/manager-only, collector akan dapat 403). currentUser dah cukup.
-  const u=currentUser.role==='collector'?currentUser:findUserById(await loadUsers(),s.collectorId);
-  openModal(`
+  const u=currentUser.role==='collector'?currentUser:findUserById(await loadUsers(),light.collectorId);
+  // Papar modal dengan data ringkas dulu (segera), transcript "loading..."
+  // sementara — elak modal terperap kosong semasa tunggu fetch detail penuh.
+  openModal(sessionDetailHTML(light,u,'loading'));
+  let s=light;
+  try{
+    s=await sessionApi.getById(id);
+  }catch(e){
+    // Gagal tarik detail penuh (transcript) — papar apa yang ada je, dengan notis.
+  }
+  openModal(sessionDetailHTML(s,u,s.transcript?'ready':'error'));
+}
+function sessionDetailHTML(s,u,transcriptState){
+  return`
   <div class="modal-title">📋 Training Session Detail</div>
   <div style="display:flex;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:8px">
-    <div><div style="font-size:12px;color:var(--text3)">Collector</div><div style="font-weight:500">${u?u.name:'—'}</div></div>
-    <div><div style="font-size:12px;color:var(--text3)">Scenario</div><div style="font-weight:500">${s.scenarioName}</div></div>
+    <div><div style="font-size:12px;color:var(--text3)">Collector</div><div style="font-weight:500">${esc(u?u.name:'—')}</div></div>
+    <div><div style="font-size:12px;color:var(--text3)">Scenario</div><div style="font-weight:500">${esc(s.scenarioName)}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Debtor Type</div><div style="font-weight:500">${s.objectionType?`${objectionTypeIcon(s.objectionType)} ${objectionTypeLabel(s.objectionType)}`:'-'}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Masa</div><div style="font-weight:500">${s.duration}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Date & Waktu</div><div style="font-weight:500">${fmtDateTime(s.date)}</div></div>
     <div><div style="font-size:12px;color:var(--text3)">Score</div><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}/100</span></div>
   </div>
-  ${s.harassmentRisk&&s.harassmentRisk!=='none'?`<div class="alert alert-err" style="display:block">⚠ <strong>Isu Pematuhan/Harassment (${s.harassmentRisk}):</strong> ${s.harassmentNote||''}</div>`:''}
+  ${s.harassmentRisk&&s.harassmentRisk!=='none'?`<div class="alert alert-err" style="display:block">⚠ <strong>Isu Pematuhan/Harassment (${s.harassmentRisk}):</strong> ${esc(s.harassmentNote)}</div>`:''}
   <hr class="divider"/>
   <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:1rem">
     ${scoreRows(s).map(([l,v,m,cat,reason])=>`
@@ -1778,19 +1966,19 @@ async function viewSession(id){
   </div>
   <hr class="divider"/>
   <div style="font-size:13px;font-weight:500;margin-bottom:8px">💬 Maklum Balas AI</div>
-  <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:1rem">${s.feedback||''}</p>
+  <p style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:1rem">${esc(s.feedback)}</p>
   ${(s.strengths&&s.strengths.length)?`
   <div style="font-size:13px;font-weight:500;margin-bottom:8px">✅ Strengths</div>
-  ${s.strengths.map(t=>`<div style="font-size:12px;color:var(--text2);margin-bottom:4px">• ${t}</div>`).join('')}
+  ${s.strengths.map(t=>`<div style="font-size:12px;color:var(--text2);margin-bottom:4px">• ${esc(t)}</div>`).join('')}
   <hr class="divider"/>`:''}
   ${(s.missed&&s.missed.length)?`
   <div style="font-size:13px;font-weight:500;margin-bottom:8px">🛠 Perlu Diperbaiki (untuk coaching)</div>
   ${s.missed.map(m=>`
   <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border)">
     <span class="chip chip-red" style="font-size:11px">${catIcon(m.category)} ${catLabel(m.category)}</span>
-    <div style="font-size:12px;color:var(--text);margin-top:4px"><strong>Isu:</strong> ${m.issue||''}</div>
-    ${m.quote?`<div style="font-size:11px;color:var(--text3);font-style:italic;margin:2px 0">"${m.quote}"</div>`:''}
-    <div style="font-size:12px;color:var(--brand)"><strong>Cadangan:</strong> ${m.suggestion||''}</div>
+    <div style="font-size:12px;color:var(--text);margin-top:4px"><strong>Isu:</strong> ${esc(m.issue)}</div>
+    ${m.quote?`<div style="font-size:11px;color:var(--text3);font-style:italic;margin:2px 0">"${esc(m.quote)}"</div>`:''}
+    <div style="font-size:12px;color:var(--brand)"><strong>Cadangan:</strong> ${esc(m.suggestion)}</div>
   </div>`).join('')}
   <hr class="divider"/>`:''}
   ${s.priorityFocus?`
@@ -1802,13 +1990,15 @@ async function viewSession(id){
   <hr class="divider"/>`:''}
   <div style="font-size:13px;font-weight:500;margin-bottom:8px">📝 Transcript Penuh</div>
   <div style="background:var(--bg);border-radius:6px;padding:10px">
-    ${(s.transcript||[]).map(m=>`<div style="margin-bottom:10px">
-      <div style="font-size:10px;color:var(--text3);margin-bottom:2px">${m.role==='user'?(u?u.name:'Collector'):'Debtor'}</div>
+    ${transcriptState==='loading'?`<div style="font-size:12px;color:var(--text3);padding:8px 0">⏳ Loading transcript...</div>`:
+      transcriptState==='error'?`<div style="font-size:12px;color:var(--red);padding:8px 0">⚠ Gagal load transcript. Cuba tutup dan buka semula.</div>`:
+      (s.transcript||[]).map(m=>`<div style="margin-bottom:10px">
+      <div style="font-size:10px;color:var(--text3);margin-bottom:2px">${esc(m.role==='user'?(u?u.name:'Collector'):'Debtor')}</div>
       <div style="padding:6px 10px;border-radius:6px;font-size:12px;line-height:1.6;background:${m.role==='user'?'var(--purple-light)':'var(--surface)'};color:${m.role==='user'?'var(--purple)':'var(--text)'}">
-        ${m.content}
+        ${esc(m.content)}
       </div></div>`).join('')}
   </div>
-  <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Tutup</button></div>`);
+  <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Tutup</button></div>`;
 }
 
 async function renderScenarios(){
@@ -1847,9 +2037,9 @@ async function renderScenarios(){
       <tr><th>Emoji</th><th>Name</th><th>Client</th><th>Title</th><th>Objection</th><th>Customer Type</th><th>Debt</th><th>Balance</th><th>Level</th><th>Checklist</th><th>Actions</th></tr>
       ${scenarios.map(s=>`<tr>
         <td style="font-size:20px">${s.emoji}</td>
-        <td><div style="font-weight:500">${s.name}</div></td>
-        <td>${s.client?`<span class="chip chip-purple">${s.client}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
-        <td>${s.title}</td>
+        <td><div style="font-weight:500">${esc(s.name)}</div></td>
+        <td>${s.client?`<span class="chip chip-purple">${esc(s.client)}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
+        <td>${esc(s.title)}</td>
         <td><span class="chip chip-amber" style="font-size:11px">${objectionTypeIcon(s.objectionType)} ${objectionTypeLabel(s.objectionType)}</span></td>
         <td><span style="font-size:12px;color:var(--text2)">${customerTypeLabel(s.customerType)}</span></td>
         <td>${s.amount}</td>
@@ -2675,7 +2865,7 @@ async function renderUsers(){
     <div class="table-wrap"><table>
       <tr><th>Name</th><th>ID</th><th>Role</th><th>Registered At</th><th>Actions</th></tr>
       ${pending.map(u=>`<tr style="background:#fffbea">
-        <td><div style="font-weight:500">${u.name}</div></td>
+        <td><div style="font-weight:500">${esc(u.name)}</div></td>
         <td><span class="chip chip-amber">${u.id}</span></td>
         <td><span class="user-role-badge badge-${u.role}">${u.role==='admin'?'Admin':u.role==='manager'?'Manager':'Collector'}</span></td>
         <td style="font-size:12px;color:var(--text3)">${u.registeredAt?new Date(u.registeredAt).toLocaleDateString('en-MY'):'-'}</td>
@@ -2694,7 +2884,7 @@ async function renderUsers(){
     <div class="table-wrap"><table>
       <tr><th>Name</th><th>ID</th><th>Role</th><th>Registered At</th><th>Daily Session Limit</th><th>Actions</th></tr>
       ${approved.map(u=>`<tr>
-        <td><div style="font-weight:500">${u.name}</div></td>
+        <td><div style="font-weight:500">${esc(u.name)}</div></td>
         <td><span class="chip chip-purple">${u.id}</span></td>
         <td>
           ${currentUser.role==='admin'&&u.id!==currentUser.id?`
@@ -2826,13 +3016,13 @@ async function renderAssignments(){
       <div style="flex:1;min-width:160px">
         <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">Collector</label>
         <select id="asgCollector" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px">
-          ${collectors.map(c=>`<option value="${c.id}">${c.name} (${c.id})</option>`).join('')}
+          ${collectors.map(c=>`<option value="${c.id}">${esc(c.name)} (${c.id})</option>`).join('')}
         </select>
       </div>
       <div style="flex:1;min-width:200px">
         <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">Scenario</label>
         <select id="asgScenario" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px">
-          ${scenarios.map(s=>`<option value="${s.id}">${s.emoji} ${s.title}</option>`).join('')}
+          ${scenarios.map(s=>`<option value="${s.id}">${s.emoji} ${esc(s.title)}</option>`).join('')}
         </select>
       </div>
       <div style="min-width:150px">

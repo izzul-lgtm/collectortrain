@@ -1,8 +1,13 @@
 import bcrypt from 'bcryptjs';
 import { supabaseAdmin } from '../../../../lib/supabaseAdmin';
+import { rateLimit } from '../../../../lib/rateLimit';
 
 function toClientShape(row) {
   return { id: row.id, name: row.name, role: row.role, registeredAt: row.registered_at, isApproved: row.is_approved, maxSessionsPerDay: row.max_sessions_per_day ?? null };
+}
+
+function clientIp(req) {
+  return (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || req.headers.get('x-real-ip') || 'unknown';
 }
 
 export async function POST(req) {
@@ -11,6 +16,11 @@ export async function POST(req) {
     if (!id || !pass) {
       return Response.json({ error: 'Please fill in all fields.' }, { status: 400 });
     }
+    // SECURITY: takde had cubaan login sebelum ni — sesiapa boleh brute-force
+    // teka password employee ID tanpa lockout. Had kepada 8 cubaan/minit,
+    // key gabungan IP + ID yang dicuba (bukan x-user-id sebab belum login lagi).
+    const limitError = rateLimit(req, 'login', { max: 8, windowMs: 60_000, key: `${clientIp(req)}:${id.toUpperCase()}` });
+    if (limitError) return limitError;
     const sb = supabaseAdmin();
     const { data, error } = await sb
       .from('users')

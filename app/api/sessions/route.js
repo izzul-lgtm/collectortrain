@@ -1,8 +1,8 @@
 import { supabaseAdmin } from '../../../lib/supabaseAdmin';
 import { requireAuthWithUser } from '../../../lib/requireAuth';
 
-function toClientShape(row) {
-  return {
+function toClientShape(row, { includeTranscript = true } = {}) {
+  const base = {
     id: row.id,
     collectorId: row.collector_id,
     scenarioId: row.scenario_id,
@@ -18,11 +18,17 @@ function toClientShape(row) {
     harassmentRisk: row.harassment_risk,
     harassmentNote: row.harassment_note,
     feedback: row.feedback,
-    transcript: row.transcript || [],
     date: row.created_at,
     customerType: row.customer_type || '',
     objectionType: row.objection_type || '',
   };
+  // PERFORMANCE: `transcript` boleh jadi besar (perbualan penuh setiap sesi).
+  // List view (dashboard, table sessions) tak perlukan ni langsung — cuma
+  // detail modal (viewSession) yang perlu. Makin banyak sesi terkumpul
+  // (contoh menjelang Disember, volume tinggi), makin besar beza saiz
+  // payload kalau transcript disertakan dalam SETIAP request list.
+  if (includeTranscript) base.transcript = row.transcript || [];
+  return base;
 }
 
 function toDbShape(data) {
@@ -54,6 +60,26 @@ export async function GET(request) {
 
   try {
     const sb = supabaseAdmin();
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+    const from = searchParams.get('from'); // 'YYYY-MM-DD'
+    const to = searchParams.get('to');     // 'YYYY-MM-DD'
+
+    // Detail mode — satu sesi sahaja, TERMASUK transcript penuh. Dipanggil
+    // bila collector/manager buka modal "View Session" untuk satu rekod.
+    if (id) {
+      let dq = sb.from('sessions').select('*').eq('id', id).maybeSingle();
+      const { data, error } = await dq;
+      if (error) throw error;
+      if (!data) return Response.json({ error: 'Session not found.' }, { status: 404 });
+      if (authUser.role === 'collector' && data.collector_id !== authUser.id) {
+        return Response.json({ error: 'Access denied.' }, { status: 403 });
+      }
+      return Response.json({ session: toClientShape(data, { includeTranscript: true }) });
+    }
+
+    // List mode — TANPA transcript (lightweight, ini yang dipakai dashboard
+    // & table sessions untuk agregat/senarai, bukan untuk baca perbualan).
     let query = sb
       .from('sessions')
       .select('*')
@@ -66,10 +92,14 @@ export async function GET(request) {
     if (authUser.role === 'collector') {
       query = query.eq('collector_id', authUser.id);
     }
+    // Optional date range — untuk masa depan bila UI perlu had bulan/tempoh
+    // tertentu tanpa tarik SEMUA sesi dari awal syarikat beroperasi.
+    if (from) query = query.gte('created_at', `${from}T00:00:00`);
+    if (to) query = query.lte('created_at', `${to}T23:59:59`);
 
     const { data, error } = await query;
     if (error) throw error;
-    return Response.json({ sessions: (data || []).map(toClientShape) });
+    return Response.json({ sessions: (data || []).map(r => toClientShape(r, { includeTranscript: false })) });
   } catch (e) {
     return Response.json({ error: e.message || 'Gagal ambil sesi latihan.' }, { status: 500 });
   }
@@ -144,7 +174,7 @@ export async function POST(req) {
         .eq('status', 'pending');
     }
 
-    return Response.json({ session: toClientShape(data) });
+    return Response.json({ session: toClientShape(data, { includeTranscript: true }) });
   } catch (e) {
     return Response.json({ error: e.message || 'Gagal simpan sesi latihan.' }, { status: 500 });
   }
