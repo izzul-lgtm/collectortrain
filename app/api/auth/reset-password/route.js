@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import { supabaseAdmin } from '../../../../lib/supabaseAdmin';
 import { requireAuthWithUser } from '../../../../lib/requireAuth';
+import { logAudit } from '../../../../lib/auditLog';
 
 export async function POST(req) {
   // Admin & manager boleh reset password. Manager ONLY boleh reset collector.
@@ -23,7 +24,7 @@ export async function POST(req) {
     // Fetch target user untuk semak role dia
     const { data: target, error: fetchErr } = await sb
       .from('users')
-      .select('id, role')
+      .select('id, name, role')
       .eq('id', id.trim().toUpperCase())
       .maybeSingle();
 
@@ -52,6 +53,15 @@ export async function POST(req) {
       .eq('id', target.id);
 
     if (updateErr) throw updateErr;
+
+    const { data: actor } = await sb.from('users').select('name').eq('id', authUser.id).maybeSingle();
+    await logAudit(sb, {
+      actorId: authUser.id,
+      actorName: actor?.name || '',
+      action: 'reset_password',
+      targetId: target.id,
+      targetName: target.name || '',
+    });
 
     return Response.json({ ok: true });
   } catch (e) {

@@ -13,11 +13,14 @@ function esc(str){
     .replace(/'/g,'&#39;');
 }
 
-// Helper: inject x-user-id header untuk semua API calls yang perlu auth.
+// Helper: inject x-session-token header untuk semua API calls yang perlu auth.
 // /api/auth/* (login, register, session) dikecualikan — tu memang pre-login.
+// SEKURITI: ni signed token (dari login response), BUKAN employee ID mentah —
+// lihat lib/session.js untuk sebab. localStorage key pun dah tukar nama
+// (ct_session_token, dulu ct_session_id) supaya senang nampak beza dia.
 function authHeaders(extra) {
-  const id = localStorage.getItem('ct_session_id') || '';
-  return { 'Content-Type': 'application/json', 'x-user-id': id, ...extra };
+  const token = localStorage.getItem('ct_session_token') || '';
+  return { 'Content-Type': 'application/json', 'x-session-token': token, ...extra };
 }
 
 const DB = {
@@ -187,7 +190,7 @@ const userApi = {
     const res=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,pass})});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Failed to sign in.');
-    return data.user;
+    return data; // { user, token }
   },
   async register(id,name,pass){
     const res=await fetch('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,name,pass})});
@@ -195,8 +198,8 @@ const userApi = {
     if(!res.ok)throw new Error(data.error||'Failed to register user.');
     return data.user;
   },
-  async session(id){
-    const res=await fetch('/api/auth/session?id='+encodeURIComponent(id));
+  async session(token){
+    const res=await fetch('/api/auth/session?token='+encodeURIComponent(token));
     const data=await res.json();
     if(!res.ok)return null;
     return data.user;
@@ -511,6 +514,78 @@ function resetTrendMonth(){
 // dan sesi terkini seorang collector. Tak guna library luar (PDF generator)
 // sebab app ni single-file — HTML print-friendly cukup untuk kegunaan
 // coaching 1-on-1 dan senang share/print.
+// ── Export Sessions CSV (bulk) ──────────────────────────────────────────
+// Export SEMUA sesi yang match filter semasa kat halaman Sessions (bukan
+// cuma satu muka surat) — untuk reporting bulanan ke management/luar sistem
+// tanpa perlu salin manual dari table.
+function toCSVField(v){
+  const s=String(v??'');
+  if(/[",\n\r]/.test(s))return'"'+s.replace(/"/g,'""')+'"';
+  return s;
+}
+async function exportCurrentSessionsCSV(){
+  const allSessions=(await loadSessions()).slice().reverse();
+  const users=await loadUsers();
+  const sessions=applySessionFilters(allSessions,sessionsFilter);
+  if(!sessions.length){alert('Tiada data untuk export — cuba longgarkan filter.');return;}
+  const headers=['Date','Collector ID','Collector Name','Scenario','Debtor Type','Duration','Score','Harassment Risk','Compliance Note'];
+  const rows=sessions.map(s=>{
+    const u=findUserById(users,s.collectorId);
+    return[
+      fmtDateTime(s.date),
+      s.collectorId,
+      u?u.name:'',
+      s.scenarioName,
+      s.objectionType?objectionTypeLabel(s.objectionType):'',
+      s.duration,
+      s.totalScore,
+      s.harassmentRisk&&s.harassmentRisk!=='none'?s.harassmentRisk:'',
+      s.harassmentNote||''
+    ].map(toCSVField).join(',');
+  });
+  // \uFEFF (BOM) — supaya Excel baca UTF-8 betul (elak nama/emoji jadi ????)
+  const csv='\uFEFF'+[headers.join(','),...rows].join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`sessions-export-${localISODate()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function exportCollectorsSummaryCSV(){
+  const users=await loadUsers();
+  const sessions=await loadSessions();
+  const collectors=users.filter(u=>u.role==='collector');
+  if(!collectors.length){alert('Tiada collector untuk export.');return;}
+  const headers=['Name','Employee ID','Total Sessions','Average Score','Highest Score','Weak Aspect','Weakest Debtor Type','Harassment Flags','Last Session'];
+  const rows=collectors.map(c=>{
+    const cs=sessions.filter(s=>s.collectorId===c.id);
+    const avg=cs.length?Math.round(cs.reduce((a,s)=>a+s.totalScore,0)/cs.length):'';
+    const best=cs.length?Math.max(...cs.map(s=>s.totalScore)):'';
+    const last=cs.length?cs[cs.length-1]:null;
+    const weakLabel=cs.length?topWeaknessLabel(cs):'';
+    const csWeakTypes=weaknessByObjectionType(cs).filter(g=>g.count>=2);
+    const weakType=csWeakTypes.length?objectionTypeLabel(csWeakTypes[0].objectionType):'';
+    const harassCount=cs.filter(s=>s.harassmentRisk&&s.harassmentRisk!=='none').length;
+    return[c.name,c.id,cs.length,avg,best,weakLabel==='-'?'':weakLabel,weakType,harassCount,last?fmtDateTime(last.date):'']
+      .map(toCSVField).join(',');
+  });
+  const csv='\uFEFF'+[headers.join(','),...rows].join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`collectors-summary-${localISODate()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 async function exportCoachingMemo(collectorId){
   const [users,allSessions]=await Promise.all([loadUsers(),loadSessions()]);
   const c=findUserById(users,collectorId);
@@ -729,9 +804,9 @@ async function doLogin(){
   const btn=document.querySelector('#loginForm .btn-primary');
   if(btn){btn.disabled=true;btn.textContent='Signing in...';}
   try{
-    const user=await userApi.login(id,pass);
+    const {user,token}=await userApi.login(id,pass);
     currentUser=user;
-    localStorage.setItem('ct_session_id',user.id); // supaya refresh page tak terus logout
+    localStorage.setItem('ct_session_token',token); // signed token — supaya refresh page tak terus logout
     // Cache maklumat asas user — guna sebagai fallback kalau Supabase tak boleh reach masa restore sesi
     localStorage.setItem('ct_cached_user',JSON.stringify({id:user.id,name:user.name,role:user.role}));
     document.getElementById('authScreen').classList.remove('active');
@@ -768,7 +843,7 @@ async function doRegister(){
 function doLogout(){
   currentUser=null;
   usersCache=null; // elak data pengguna sebelum ni terbawa kalau orang lain login di device sama
-  localStorage.removeItem('ct_session_id');
+  localStorage.removeItem('ct_session_token');
   localStorage.removeItem('ct_cached_user'); // buang cached user semasa logout
   stopCall();
   document.getElementById('mainApp').classList.remove('active');
@@ -801,6 +876,7 @@ function buildNav(){
     {page:'assignments',icon:'📌',label:'Assignments'},
     {page:'scenarios',icon:'🎭',label:'Manage Scenarios'},
     {page:'users',icon:'👤',label:'Manage Users'},
+    {page:'audit-log',icon:'🕵️',label:'Audit Log'},
   ];
   const items={
     collector:[
@@ -828,6 +904,7 @@ function navigate(page){
     'sessions':renderSessions,
     'scenarios':renderScenarios,
     'users':renderUsers,
+    'audit-log':renderAuditLog,
     'assignments':renderAssignments,
     'call':renderCallScreen,
     'score':renderScoreScreen
@@ -1814,6 +1891,11 @@ async function renderCollectors(){
   const collectors=users.filter(u=>u.role==='collector');
   setContent(`
   <div class="page-header"><div class="page-title">All Collectors</div><div class="page-sub">${collectors.length} collectors registered</div></div>
+  <div class="card" style="padding-bottom:0">
+    <div style="display:flex;justify-content:flex-end;padding:0 0 12px">
+      <button class="btn btn-secondary" onclick="exportCollectorsSummaryCSV()">📊 Export Summary CSV</button>
+    </div>
+  </div>
   <div class="card">
     <div class="table-wrap"><table>
       <tr><th>Name</th><th>ID</th><th>Sessions</th><th>Average</th><th>Highest</th><th>Weak Aspect</th><th>Weakest Debtor Type</th><th>Recommended Scenario</th><th>Harassment</th><th>Last Session</th><th>Actions</th></tr>
@@ -1894,6 +1976,7 @@ async function renderSessions(){
     <input type="date" id="filtSessionsFrom" value="${sessionsFilter.dateFrom}" onchange="sessionsFilter.dateFrom=this.value;sessionsPage=1;renderSessions();" title="From date"/>
     <input type="date" id="filtSessionsTo" value="${sessionsFilter.dateTo}" onchange="sessionsFilter.dateTo=this.value;sessionsPage=1;renderSessions();" title="To date"/>
     <button class="btn btn-secondary" onclick="sessionsFilter={collectorId:'',scenario:'',objectionType:'',skor:'',dateFrom:'',dateTo:''};sessionsPage=1;renderSessions();">Reset</button>
+    <button class="btn btn-secondary" onclick="exportCurrentSessionsCSV()">📊 Export CSV (${sessions.length})</button>
   </div>
   ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📋</div><p>No training sessions match the filter.</p></div></div>`:''}
   ${sessions.length>0?`<div class="card">
@@ -1902,7 +1985,7 @@ async function renderSessions(){
       ${pageSessions.map(s=>{
         const u=findUserById(users,s.collectorId);
         return`<tr>
-          <td><div style="font-weight:500">${u?u.name:'—'}</div><div style="font-size:11px;color:var(--text3)">${s.collectorId}</div></td>
+          <td><div style="font-weight:500">${esc(u?u.name:'—')}</div><div style="font-size:11px;color:var(--text3)">${esc(s.collectorId)}</div></td>
           <td>${esc(s.scenarioName)}</td>
           <td>${s.objectionType?`<span class="chip chip-amber" style="font-size:11px">${objectionTypeIcon(s.objectionType)} ${objectionTypeLabel(s.objectionType)}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
           <td>${s.duration}</td>
@@ -2329,8 +2412,8 @@ async function importAiFile(file){
   try{
     const fd=new FormData();
     fd.append('file',file);
-    const id=localStorage.getItem('ct_session_id')||'';
-    const res=await fetch('/api/parse-document',{method:'POST',headers:{'x-user-id':id},body:fd});
+    const token=localStorage.getItem('ct_session_token')||'';
+    const res=await fetch('/api/parse-document',{method:'POST',headers:{'x-session-token':token},body:fd});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Failed to read file.');
     document.getElementById('aiTranscriptInput').value=data.text;
@@ -2843,6 +2926,58 @@ async function revokeUser(id){
     alert('Failed to revoke user: '+e.message);
   }
 }
+// Label & chip-class mesra-manusia untuk setiap jenis tindakan audit
+function auditActionInfo(action){
+  const map={
+    reset_password:{icon:'🔑',label:'Reset Password',chip:'chip-amber'},
+    delete_user:{icon:'🗑️',label:'Delete User',chip:'chip-red'},
+    change_role:{icon:'🎚️',label:'Change Role',chip:'chip-purple'},
+    approve_user:{icon:'✅',label:'Approve Account',chip:'chip-green'},
+    reject_user:{icon:'⛔',label:'Reject/Revoke Account',chip:'chip-red'},
+    set_session_limit:{icon:'🎯',label:'Set Session Limit',chip:'chip-purple'},
+  };
+  return map[action]||{icon:'📝',label:action,chip:''};
+}
+function auditDetailsText(e){
+  const d=e.details||{};
+  if(e.action==='change_role')return`${d.oldRole||'-'} → ${d.newRole||'-'}`;
+  if(e.action==='set_session_limit')return`${d.oldLimit??'unlimited'} → ${d.newLimit??'unlimited'} sesi/hari`;
+  if(e.action==='delete_user')return d.deletedRole?`(role: ${d.deletedRole})`:'';
+  return'';
+}
+async function renderAuditLog(){
+  if(currentUser.role==='collector')return;
+  setContent('<div class="page-header"><div class="page-title">Audit Log</div></div><div class="card">Loading...</div>');
+  let entries;
+  try{
+    const res=await fetch('/api/audit-log?limit=300',{headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load audit log.');
+    entries=data.entries||[];
+  }catch(e){
+    setContent(`<div class="page-header"><div class="page-title">Audit Log</div></div><div class="card">⚠ ${esc(e.message)}</div>`);
+    return;
+  }
+  setContent(`
+  <div class="page-header"><div class="page-title">Audit Log</div><div class="page-sub">Rekod tindakan sensitif admin/manager — reset password, delete user, tukar role, dsb. ${entries.length} rekod terkini.</div></div>
+  <div class="card">
+    ${entries.length===0?`<div class="empty-state"><div class="es-icon">🕵️</div><p>Tiada tindakan direkod setakat ini.</p></div>`:
+    `<div class="table-wrap"><table>
+      <tr><th>Bila</th><th>Siapa Buat</th><th>Tindakan</th><th>Kepada</th><th>Detail</th></tr>
+      ${entries.map(e=>{
+        const info=auditActionInfo(e.action);
+        return`<tr>
+          <td style="font-size:12px;color:var(--text3);white-space:nowrap">${fmtDateTime(e.date)}</td>
+          <td><div style="font-weight:500">${esc(e.actorName||e.actorId)}</div><div style="font-size:11px;color:var(--text3)">${esc(e.actorId)}</div></td>
+          <td><span class="chip" style="background:color-mix(in srgb, ${info.color} 15%, transparent);color:${info.color}">${info.icon} ${info.label}</span></td>
+          <td>${e.targetId?`<div style="font-weight:500">${esc(e.targetName||e.targetId)}</div><div style="font-size:11px;color:var(--text3)">${esc(e.targetId)}</div>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
+          <td style="font-size:12px;color:var(--text2)">${esc(auditDetailsText(e))}</td>
+        </tr>`;
+      }).join('')}
+    </table></div>`}
+  </div>`);
+}
+
 async function renderUsers(){
   if(currentUser.role==='collector')return;
   setContent('<div class="page-header"><div class="page-title">Manage Users</div></div><div class="card">Loading users...</div>');
@@ -3977,7 +4112,7 @@ async function startRec() {
     async function callSTT() {
       const res = await fetch('/api/stt', {
         method: 'POST',
-        headers: { 'Content-Type': mimeType || 'audio/webm', 'x-user-id': localStorage.getItem('ct_session_id')||'' },
+        headers: { 'Content-Type': mimeType || 'audio/webm', 'x-session-token': localStorage.getItem('ct_session_token')||'' },
         body: audioBlob,
       });
       const data = await res.json();
@@ -4261,9 +4396,10 @@ function setContent(html){document.getElementById('mainContent').innerHTML=html;
 // JavaScript dalam memori — bila page refresh, semua variable JS reset ke
 // kosong, dan HTML #authScreen sentiasa "active" secara default (tengok
 // app/page.js) — jadi user SENTIASA terbaling balik ke skrin login bila
-// refresh, walaupun baru je login. Fix: simpan ID pengguna (BUKAN
-// password) dalam localStorage semasa login, dan cuba restore sesi tu
-// secara automatik setiap kali app.js load.
+// refresh, walaupun baru je login. Fix: simpan SIGNED TOKEN (BUKAN
+// password, dan bukan ID mentah — lihat lib/session.js) dalam localStorage
+// semasa login, dan cuba restore sesi tu secara automatik setiap kali
+// app.js load.
 //
 // OFFLINE FALLBACK: Kalau Supabase tak boleh reach masa restore (timeout /
 // maintenance), guna maklumat user yang di-cache dalam localStorage semasa
@@ -4271,15 +4407,15 @@ function setContent(html){document.getElementById('mainContent').innerHTML=html;
 // Banner kecil akan tunjuk "⚠ Offline mode" supaya user sedar ada isu.
 // Bila Supabase balik online, sesi akan verify semula pada request API seterusnya.
 (async function restoreSession(){
-  const savedId=localStorage.getItem('ct_session_id');
-  if(!savedId)return;
+  const savedToken=localStorage.getItem('ct_session_token');
+  if(!savedToken)return;
 
   // Cuba verify dengan Supabase dulu (normal flow)
   try{
-    const u=await userApi.session(savedId);
+    const u=await userApi.session(savedToken);
     if(!u){
-      // ID tak wujud (akaun dipadam) — kekal di skrin login, buang cache lama
-      localStorage.removeItem('ct_session_id');
+      // Token tak sah/expired/akaun dipadam — kekal di skrin login, buang cache lama
+      localStorage.removeItem('ct_session_token');
       localStorage.removeItem('ct_cached_user');
       return;
     }

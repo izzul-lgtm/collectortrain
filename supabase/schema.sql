@@ -318,3 +318,35 @@ alter table assignments enable row level security;
 drop policy if exists "assignments_read_all" on assignments;
 create policy "assignments_read_all" on assignments
   for select using (true);
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Audit log — rekod tindakan sensitif admin/manager
+-- ═══════════════════════════════════════════════════════════════════
+-- PUNCA: reset password, delete user, tukar role, approve/reject akaun,
+-- set daily session limit — semua tindakan ni tiada rekod "siapa buat,
+-- bila, kat siapa". Kalau ada dispute/isu compliance internal kemudian
+-- hari, tiada cara nak trace balik. Jadual ni rekod setiap tindakan
+-- sensitif secara automatik (insert-only, tiada UPDATE/DELETE dari app).
+create table if not exists audit_log (
+  id            text primary key,
+  actor_id      text not null,               -- siapa buat tindakan (employee ID)
+  actor_name    text not null default '',     -- denormalized — kekal walau actor account dipadam lepas tu
+  action        text not null,                -- cth 'reset_password' | 'delete_user' | 'change_role' | 'approve_user' | 'reject_user' | 'set_session_limit'
+  target_id     text,                         -- siapa/apa yang kena bagi tindakan ni (cth ID user yang di-reset)
+  target_name   text not null default '',     -- denormalized — sama sebab
+  details       jsonb not null default '{}',  -- konteks tambahan (cth {"oldRole":"collector","newRole":"manager"})
+  created_at    timestamptz not null default now()
+);
+
+create index if not exists idx_audit_log_created_at on audit_log(created_at desc);
+create index if not exists idx_audit_log_actor on audit_log(actor_id);
+create index if not exists idx_audit_log_target on audit_log(target_id);
+
+alter table audit_log enable row level security;
+
+-- Baca sahaja untuk semua role authenticated melalui service role key (app
+-- kita guna supabaseAdmin — bypass RLS sepenuhnya di server); policy ni
+-- sekadar defence-in-depth kalau ada akses terus ke Supabase kemudian hari.
+drop policy if exists "audit_log_read_all" on audit_log;
+create policy "audit_log_read_all" on audit_log
+  for select using (true);

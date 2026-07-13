@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import { supabaseAdmin } from '../../../../lib/supabaseAdmin';
 import { rateLimit } from '../../../../lib/rateLimit';
+import { createSessionToken } from '../../../../lib/session';
 
 function toClientShape(row) {
   return { id: row.id, name: row.name, role: row.role, registeredAt: row.registered_at, isApproved: row.is_approved, maxSessionsPerDay: row.max_sessions_per_day ?? null };
@@ -39,7 +40,11 @@ export async function POST(req) {
     if (!data.is_approved) {
       return Response.json({ error: 'Your account is pending approval. Please contact your manager or admin.' }, { status: 403 });
     }
-    return Response.json({ user: toClientShape(data) });
+    // SEKURITI: jana signed token di sini (lepas password disahkan betul) —
+    // ni yang client simpan & hantar balik pada setiap API call seterusnya,
+    // BUKAN employee ID mentah. Lihat lib/session.js untuk sebab penuh.
+    const token = createSessionToken({ id: data.id, role: data.role });
+    return Response.json({ user: toClientShape(data), token });
   } catch (e) {
     return Response.json({ error: e.message || 'Failed to sign in.' }, { status: 500 });
   }

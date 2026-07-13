@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '../../../lib/supabaseAdmin';
 import { requireAuthWithUser } from '../../../lib/requireAuth';
+import { logAudit } from '../../../lib/auditLog';
 
 function toClientShape(row) {
   return {
@@ -35,13 +36,23 @@ export async function GET(req) {
 
 export async function DELETE(req) {
   // Same calling-convention bug as GET — fixed the same way.
-  const { authError } = await requireAuthWithUser(req, { roles: ['admin', 'manager'] });
+  const { authError, authUser } = await requireAuthWithUser(req, { roles: ['admin', 'manager'] });
   if (authError) return authError;
   try {
     const { id } = await req.json();
     const sb = supabaseAdmin();
+    const { data: target } = await sb.from('users').select('id, name, role').eq('id', id).maybeSingle();
     const { error } = await sb.from('users').delete().eq('id', id);
     if (error) throw error;
+    const { data: actor } = await sb.from('users').select('name').eq('id', authUser.id).maybeSingle();
+    await logAudit(sb, {
+      actorId: authUser.id,
+      actorName: actor?.name || '',
+      action: 'delete_user',
+      targetId: id,
+      targetName: target?.name || '',
+      details: { deletedRole: target?.role || null },
+    });
     return Response.json({ ok: true });
   } catch (e) {
     return Response.json({ error: e.message || 'Failed to delete user.' }, { status: 500 });
@@ -88,6 +99,7 @@ export async function PATCH(req) {
       return Response.json({ error: 'Nothing to update.' }, { status: 400 });
     }
     const sb = supabaseAdmin();
+    const { data: before } = await sb.from('users').select('id, name, role, is_approved, max_sessions_per_day').eq('id', id).maybeSingle();
     const { data, error } = await sb
       .from('users')
       .update(update)
@@ -95,6 +107,22 @@ export async function PATCH(req) {
       .select('id, name, role, registered_at, is_approved, max_sessions_per_day')
       .single();
     if (error) throw error;
+
+    // Audit — log setiap jenis perubahan sebagai action berasingan supaya
+    // senang scan/filter kemudian ("siapa reject siapa", "siapa naikkan role
+    // siapa jadi admin", dsb), bukan satu "update_user" generic yang kabur.
+    const { data: actor } = await sb.from('users').select('name').eq('id', authUser.id).maybeSingle();
+    const actorInfo = { actorId: authUser.id, actorName: actor?.name || '', targetId: id, targetName: before?.name || data.name || '' };
+    if (typeof is_approved === 'boolean' && before && before.is_approved !== is_approved) {
+      await logAudit(sb, { ...actorInfo, action: is_approved ? 'approve_user' : 'reject_user' });
+    }
+    if (role !== undefined && before && before.role !== role) {
+      await logAudit(sb, { ...actorInfo, action: 'change_role', details: { oldRole: before.role, newRole: role } });
+    }
+    if (max_sessions_per_day !== undefined && before && before.max_sessions_per_day !== max_sessions_per_day) {
+      await logAudit(sb, { ...actorInfo, action: 'set_session_limit', details: { oldLimit: before.max_sessions_per_day, newLimit: max_sessions_per_day } });
+    }
+
     return Response.json({ user: toClientShape(data) });
   } catch (e) {
     return Response.json({ error: e.message || 'Failed to update user.' }, { status: 500 });
