@@ -678,6 +678,13 @@ function toggleComplianceOT(ot){
   expandedComplianceOT=(expandedComplianceOT===ot)?null:ot;
   renderDashboard();
 }
+// Row yang tengah expand kat "All Collectors" — klik nama untuk preview
+// sesi terkini collector tu terus dalam table, tak payah pindah page.
+let expandedCollectorRow=null;
+function toggleCollectorRow(id){
+  expandedCollectorRow=(expandedCollectorRow===id)?null:id;
+  renderCollectors();
+}
 function getPeriodRange(period){
   const now=new Date();
   if(period==='day'){
@@ -1922,19 +1929,46 @@ async function renderCollectors(){
           }
         }
         const harassCount=cs.filter(s=>s.harassmentRisk&&s.harassmentRisk!=='none').length;
-        return`<tr>
-          <td><div style="font-weight:500">${esc(c.name)}</div></td>
+        const isOpen=expandedCollectorRow===c.id;
+        const row=`<tr style="cursor:pointer;${isOpen?'background:var(--surface2)':''}" onclick="toggleCollectorRow('${c.id}')">
+          <td><div style="font-weight:500;display:flex;align-items:center;gap:6px">
+            <span style="font-size:9px;color:var(--text3);display:inline-block;transition:transform .15s;transform:rotate(${isOpen?90:0}deg)">▶</span>
+            ${esc(c.name)}
+          </div></td>
           <td><span class="chip chip-purple">${c.id}</span></td>
           <td>${cs.length}</td>
           <td>${typeof avg==='number'?`<span class="score-pill ${avg>=70?'score-high':avg>=50?'score-mid':'score-low'}">${avg}</span>`:'-'}</td>
           <td>${typeof best==='number'?`<span class="score-pill score-high">${best}</span>`:'-'}</td>
           <td>${weakLabel!=='-'?`<span class="chip chip-amber">${weakLabel}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
           <td>${weakType?`<span class="chip chip-red" style="font-size:11px">${objectionTypeIcon(weakType.objectionType)} ${objectionTypeLabel(weakType.objectionType)} (${weakType.avgScore})</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
-          <td>${recoScenario?`<span style="font-size:12px">${recoScenario.emoji} ${recoScenario.title}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
+          <td>${recoScenario?`<span style="font-size:12px">${recoScenario.emoji} ${esc(recoScenario.title)}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
           <td>${harassCount>0?`<span class="chip chip-red">⚠ ${harassCount}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
           <td style="font-size:12px;color:var(--text3)">${last?fmtDateTime(last.date):'-'}</td>
-          <td>${cs.length?`<button class="btn btn-secondary" style="padding:4px 9px;font-size:11px" onclick="exportCoachingMemo('${c.id}')">📄 Memo</button>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
+          <td>${cs.length?`<button class="btn btn-secondary" style="padding:4px 9px;font-size:11px" onclick="event.stopPropagation();exportCoachingMemo('${c.id}')">📄 Memo</button>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
         </tr>`;
+        const recentCs=cs.slice().reverse().slice(0,10);
+        const detail=isOpen?`<tr style="background:var(--surface2)"><td colspan="11" style="padding:0 16px 18px">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;animation:fadeIn .15s ease">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px">
+              <div style="font-size:12px;font-weight:700">Sesi terkini — ${esc(c.name)} (${recentCs.length} dari ${cs.length} jumlah)</div>
+              <button class="btn btn-secondary" style="padding:4px 10px;font-size:11px" onclick="event.stopPropagation();viewCollectorSessions('${c.id}')">View all in Sessions →</button>
+            </div>
+            ${recentCs.length===0?`<div style="font-size:12px;color:var(--text3);padding:6px 0">Belum ada sesi latihan untuk collector ini.</div>`:`
+            <div class="table-wrap"><table>
+              <tr><th>Date</th><th>Scenario</th><th>Objection</th><th>Duration</th><th>Score</th><th>Harassment</th><th></th></tr>
+              ${recentCs.map(s=>`<tr>
+                <td style="font-size:12px;color:var(--text3)">${fmtDateTime(s.date)}</td>
+                <td style="font-size:12px">${esc(s.scenarioName)}</td>
+                <td>${s.objectionType?`<span class="chip chip-amber" style="font-size:10px">${objectionTypeIcon(s.objectionType)} ${objectionTypeLabel(s.objectionType)}</span>`:'<span style="color:var(--text3);font-size:11px">-</span>'}</td>
+                <td style="font-size:12px">${s.duration}</td>
+                <td><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}</span></td>
+                <td>${s.harassmentRisk&&s.harassmentRisk!=='none'?`<span class="chip chip-red" style="font-size:10px">⚠ ${s.harassmentRisk}</span>`:'<span style="color:var(--text3);font-size:11px">-</span>'}</td>
+                <td><button class="btn btn-secondary" style="padding:3px 9px;font-size:11px" onclick="event.stopPropagation();viewSession('${s.id}')">View</button></td>
+              </tr>`).join('')}
+            </table></div>`}
+          </div>
+        </td></tr>`:'';
+        return row+detail;
       }).join('')}
     </table></div>
   </div>`);
