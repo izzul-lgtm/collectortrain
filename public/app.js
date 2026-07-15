@@ -882,6 +882,8 @@ function buildNav(){
     {page:'sessions',icon:'📋',label:'Training Sessions'},
     {page:'assignments',icon:'📌',label:'Assignments'},
     {page:'leaderboard',icon:'🏆',label:'Leaderboard'},
+    {page:'announcements',icon:'📢',label:'Announcements'},
+    {page:'discussion',icon:'💬',label:'Discussion'},
     {page:'scenarios',icon:'🎭',label:'Manage Scenarios'},
     {page:'users',icon:'👤',label:'Manage Users'},
     {page:'audit-log',icon:'🕵️',label:'Audit Log'},
@@ -891,6 +893,8 @@ function buildNav(){
       {page:'training',icon:'🎯',label:'Voice Training'},
       {page:'leaderboard',icon:'🏆',label:'Leaderboard'},
       {page:'my-history',icon:'📊',label:'My Records'},
+      {page:'announcements',icon:'📢',label:'Announcements'},
+      {page:'discussion',icon:'💬',label:'Discussion'},
     ],
     // Manager: akses penuh sama macam admin ("manager support can access all")
     manager:adminItems,
@@ -918,6 +922,8 @@ function navigate(page){
     'leaderboard':renderLeaderboard,
     'call':renderCallScreen,
     'score':renderScoreScreen
+    'announcements':renderAnnouncements,
+    'discussion':renderDiscussion,
   };
   if(pages[page])pages[page]();
 }
@@ -3308,6 +3314,157 @@ async function renderLeaderboard(){
       ${rows}
     </table></div>`}
   </div>`);
+}
+
+// ═══════════ ANNOUNCEMENTS (sehala — manager/admin post, semua baca) ═══════════
+async function renderAnnouncements(){
+  setContent('<div class="page-header"><div class="page-title">Announcements</div></div><div class="card">Loading...</div>');
+  let announcements;
+  try{
+    const res=await fetch('/api/announcements',{headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load announcements.');
+    announcements=data.announcements||[];
+  }catch(e){
+    setContent(`<div class="page-header"><div class="page-title">Announcements</div></div><div class="card">⚠ ${esc(e.message)}</div>`);
+    return;
+  }
+  const canPost=currentUser.role==='admin'||currentUser.role==='manager';
+  setContent(`
+  <div class="page-header"><div class="page-title">📢 Announcements</div><div class="page-sub">Notis rasmi daripada pengurusan</div></div>
+  ${canPost?`
+  <div class="card">
+    <div class="card-title">➕ New Announcement</div>
+    <div class="form-row"><label>Title</label><input id="annTitle" placeholder="Tajuk pengumuman..." /></div>
+    <div class="form-row"><label>Message</label><textarea id="annBody" rows="3" placeholder="Kandungan pengumuman..."></textarea></div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text3);margin-bottom:10px">
+      <input type="checkbox" id="annPinned" style="margin:0" /> 📌 Pin di atas
+    </label>
+    <button class="btn btn-primary" onclick="postAnnouncement()">Post Announcement</button>
+  </div>`:''}
+  <div class="card">
+    ${announcements.length===0?`<div class="empty-state"><div class="es-icon">📢</div><p>Tiada pengumuman lagi.</p></div>`:
+    announcements.map(a=>`
+      <div style="padding:14px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+          <div style="font-weight:700;font-size:14px">${a.pinned?'📌 ':''}${esc(a.title)}</div>
+          ${canPost?`<button class="btn btn-danger" style="padding:3px 9px;font-size:11px;flex-shrink:0" onclick="deleteAnnouncement('${a.id}')">Delete</button>`:''}
+        </div>
+        <div style="font-size:13px;color:var(--text2);margin-top:6px;white-space:pre-wrap;line-height:1.6">${esc(a.body)}</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:8px">${esc(a.postedByName)} · ${fmtDateTime(a.createdAt)}</div>
+      </div>`).join('')}
+  </div>`);
+}
+async function postAnnouncement(){
+  const title=(document.getElementById('annTitle')||{}).value||'';
+  const body=(document.getElementById('annBody')||{}).value||'';
+  const pinned=(document.getElementById('annPinned')||{}).checked||false;
+  if(!title.trim()||!body.trim()){alert('Sila isi tajuk dan kandungan.');return;}
+  try{
+    const res=await fetch('/api/announcements',{method:'POST',headers:authHeaders(),body:JSON.stringify({title,body,pinned})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to post.');
+    renderAnnouncements();
+  }catch(e){alert('Gagal post: '+e.message);}
+}
+async function deleteAnnouncement(id){
+  if(!confirm('Padam pengumuman ini?'))return;
+  try{
+    const res=await fetch('/api/announcements',{method:'DELETE',headers:authHeaders(),body:JSON.stringify({id})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to delete.');
+    renderAnnouncements();
+  }catch(e){alert('Gagal padam: '+e.message);}
+}
+
+// ═══════════ DISCUSSION (dua-hala — semua boleh post & reply) ═══════════
+async function renderDiscussion(){
+  setContent('<div class="page-header"><div class="page-title">Discussion</div></div><div class="card">Loading...</div>');
+  let posts,users;
+  try{
+    const [postsRes,usersArr]=await Promise.all([
+      fetch('/api/discussion',{headers:authHeaders()}).then(r=>r.json()),
+      loadUsers()
+    ]);
+    if(postsRes.error)throw new Error(postsRes.error);
+    posts=postsRes.posts||[];
+    users=usersArr;
+  }catch(e){
+    setContent(`<div class="page-header"><div class="page-title">Discussion</div></div><div class="card">⚠ ${esc(e.message)}</div>`);
+    return;
+  }
+  const authorName=id=>{const u=findUserById(users,id);return u?u.name:id;};
+  const topLevel=posts.filter(p=>!p.parentId);
+  const repliesOf=pid=>posts.filter(p=>p.parentId===pid);
+  const canModerate=currentUser.role==='admin'||currentUser.role==='manager';
+
+  function postHTML(p,isReply){
+    const isOwner=p.authorId===currentUser.id;
+    return`
+    <div style="padding:${isReply?'10px 0 10px 24px':'14px 0'};${isReply?'border-left:2px solid var(--border);margin-left:8px':'border-bottom:1px solid var(--border)'}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div style="font-weight:600;font-size:13px">${esc(authorName(p.authorId))}</div>
+        ${(isOwner||canModerate)?`<button class="btn btn-danger" style="padding:2px 8px;font-size:10px" onclick="deleteDiscussionPost('${p.id}')">Delete</button>`:''}
+      </div>
+      <div style="font-size:13px;color:var(--text2);margin-top:4px;white-space:pre-wrap;line-height:1.5">${esc(p.body)}</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px;display:flex;align-items:center;gap:10px">
+        <span>${fmtDateTime(p.createdAt)}</span>
+        ${!isReply?`<a href="#" onclick="event.preventDefault();toggleReplyBox('${p.id}')" style="color:var(--purple);font-weight:600">Reply</a>`:''}
+      </div>
+      ${!isReply?`<div id="replyBox-${p.id}" style="display:none;margin-top:8px;margin-left:8px">
+        <textarea id="replyText-${p.id}" rows="2" placeholder="Tulis balasan..." style="width:100%;margin-bottom:6px"></textarea>
+        <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="postDiscussionReply('${p.id}')">Send Reply</button>
+      </div>`:''}
+      ${!isReply?repliesOf(p.id).map(r=>postHTML(r,true)).join(''):''}
+    </div>`;
+  }
+
+  setContent(`
+  <div class="page-header"><div class="page-title">💬 Discussion</div><div class="page-sub">Ruang perbincangan terbuka untuk semua</div></div>
+  <div class="card">
+    <div class="card-title">✍️ New Post</div>
+    <textarea id="discNewPost" rows="3" placeholder="Kongsi sesuatu dengan pasukan..."></textarea>
+    <button class="btn btn-primary" style="margin-top:8px" onclick="postDiscussion()">Post</button>
+  </div>
+  <div class="card">
+    ${topLevel.length===0?`<div class="empty-state"><div class="es-icon">💬</div><p>Belum ada perbincangan lagi. Mulakan yang pertama!</p></div>`:
+    topLevel.slice().reverse().map(p=>postHTML(p,false)).join('')}
+  </div>`);
+}
+function toggleReplyBox(id){
+  const box=document.getElementById('replyBox-'+id);
+  if(box)box.style.display=box.style.display==='none'?'block':'none';
+}
+async function postDiscussion(){
+  const el=document.getElementById('discNewPost');
+  const body=(el||{}).value||'';
+  if(!body.trim()){alert('Sila tulis sesuatu dulu.');return;}
+  try{
+    const res=await fetch('/api/discussion',{method:'POST',headers:authHeaders(),body:JSON.stringify({body})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to post.');
+    renderDiscussion();
+  }catch(e){alert('Gagal post: '+e.message);}
+}
+async function postDiscussionReply(parentId){
+  const el=document.getElementById('replyText-'+parentId);
+  const body=(el||{}).value||'';
+  if(!body.trim()){alert('Sila tulis balasan dulu.');return;}
+  try{
+    const res=await fetch('/api/discussion',{method:'POST',headers:authHeaders(),body:JSON.stringify({body,parentId})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to post.');
+    renderDiscussion();
+  }catch(e){alert('Gagal post: '+e.message);}
+}
+async function deleteDiscussionPost(id){
+  if(!confirm('Padam post ini?'))return;
+  try{
+    const res=await fetch('/api/discussion',{method:'DELETE',headers:authHeaders(),body:JSON.stringify({id})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to delete.');
+    renderDiscussion();
+  }catch(e){alert('Gagal padam: '+e.message);}
 }
 
 // ═══════════ CALL LOGIC ═══════════
