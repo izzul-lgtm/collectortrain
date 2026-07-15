@@ -1797,6 +1797,18 @@ function copyScoreSummary(){
 }
 
 async function renderMyHistory(){
+  // ── KPI Sendiri (Fasa 3) — collection rate diri sendiri + rank, dari telcodashboard ──
+  let myKpi=null;
+  try{
+    const kpiRes=await fetch('/api/leaderboard',{headers:authHeaders()});
+    const kpiData=await kpiRes.json();
+    if(kpiRes.ok&&kpiData.collectors){
+      const sorted=kpiData.collectors; // dah sorted rate tertinggi dulu
+      const idx=sorted.findIndex(c=>c.name.trim().toUpperCase()===currentUser.name.trim().toUpperCase());
+      if(idx!==-1)myKpi={...sorted[idx],rank:idx+1,total:sorted.length,periodLabel:kpiData.periodLabel,targetRate:kpiData.targetRate,warnRate:kpiData.warnRate};
+    }
+  }catch(e){/* KPI bukan critical untuk page ni — kalau gagal, papar training records je macam biasa */}
+
   const all=await loadSessions();
   const mine=all.filter(s=>s.collectorId===currentUser.id).reverse();
   const scenarioNames=[...new Set(mine.map(s=>s.scenarioName))].sort();
@@ -1831,6 +1843,15 @@ async function renderMyHistory(){
   </div>`;
   setContent(`
   <div class="page-header"><div class="page-title">My Training Records</div><div class="page-sub">${sessions.length} of ${mine.length} training sessions</div></div>
+  ${myKpi?`
+  <div class="card" style="border-left:4px solid ${myKpi.status==='ok'?'var(--green)':myKpi.status==='warn'?'var(--amber)':'var(--red)'}">
+    <div class="card-title">📊 KPI Anda — ${esc(myKpi.periodLabel||'Bulan Ini')}</div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-label">Collection Rate</div><div class="stat-val">${myKpi.rate.toFixed(1)}%</div><div class="stat-sub">Target ${myKpi.targetRate}%</div></div>
+      <div class="stat-card"><div class="stat-label">Jumlah Dikutip</div><div class="stat-val" style="font-size:20px">RM ${Number(myKpi.paid||0).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
+      <div class="stat-card"><div class="stat-label">Ranking Pasukan</div><div class="stat-val">#${myKpi.rank}</div><div class="stat-sub">dari ${myKpi.total} collector</div></div>
+    </div>
+  </div>`:''}
   ${mine.length>0?filterBar:''}
   ${sessions.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📊</div><p>${mine.length===0?'No training sessions yet. Start your first session!':'No sessions match the filter.'}</p></div></div>`:''}
   ${sessions.length>0?`
