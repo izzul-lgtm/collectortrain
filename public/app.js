@@ -3380,20 +3380,16 @@ async function deleteAnnouncement(id){
 // ═══════════ DISCUSSION (dua-hala — semua boleh post & reply) ═══════════
 async function renderDiscussion(){
   setContent('<div class="page-header"><div class="page-title">Discussion</div></div><div class="card">Loading...</div>');
-  let posts,users;
+  let posts;
   try{
-    const [postsRes,usersArr]=await Promise.all([
-      fetch('/api/discussion',{headers:authHeaders()}).then(r=>r.json()),
-      loadUsers()
-    ]);
+    const postsRes=await fetch('/api/discussion',{headers:authHeaders()}).then(r=>r.json());
     if(postsRes.error)throw new Error(postsRes.error);
     posts=postsRes.posts||[];
-    users=usersArr;
   }catch(e){
     setContent(`<div class="page-header"><div class="page-title">Discussion</div></div><div class="card">⚠ ${esc(e.message)}</div>`);
     return;
   }
-  const authorName=id=>{const u=findUserById(users,id);return u?u.name:id;};
+  const authorName=id=>{const p=posts.find(x=>x.authorId===id);return p?p.authorName:id;};
   const topLevel=posts.filter(p=>!p.parentId);
   const repliesOf=pid=>posts.filter(p=>p.parentId===pid);
   const canModerate=currentUser.role==='admin'||currentUser.role==='manager';
