@@ -921,7 +921,7 @@ function navigate(page){
     'assignments':renderAssignments,
     'leaderboard':renderLeaderboard,
     'call':renderCallScreen,
-    'score':renderScoreScreen
+    'score':renderScoreScreen,
     'announcements':renderAnnouncements,
     'discussion':renderDiscussion,
   };
