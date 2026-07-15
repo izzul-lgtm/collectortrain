@@ -881,6 +881,7 @@ function buildNav(){
     {page:'collectors',icon:'👥',label:'All Collectors'},
     {page:'sessions',icon:'📋',label:'Training Sessions'},
     {page:'assignments',icon:'📌',label:'Assignments'},
+    {page:'leaderboard',icon:'🏆',label:'Leaderboard'},
     {page:'scenarios',icon:'🎭',label:'Manage Scenarios'},
     {page:'users',icon:'👤',label:'Manage Users'},
     {page:'audit-log',icon:'🕵️',label:'Audit Log'},
@@ -888,6 +889,7 @@ function buildNav(){
   const items={
     collector:[
       {page:'training',icon:'🎯',label:'Voice Training'},
+      {page:'leaderboard',icon:'🏆',label:'Leaderboard'},
       {page:'my-history',icon:'📊',label:'My Records'},
     ],
     // Manager: akses penuh sama macam admin ("manager support can access all")
@@ -913,6 +915,7 @@ function navigate(page){
     'users':renderUsers,
     'audit-log':renderAuditLog,
     'assignments':renderAssignments,
+    'leaderboard':renderLeaderboard,
     'call':renderCallScreen,
     'score':renderScoreScreen
   };
@@ -3245,6 +3248,45 @@ async function cancelAssignment(id){
   }catch(e){
     alert('Failed to cancel assignment: '+e.message);
   }
+}
+
+// ═══════════ LEADERBOARD (collection rate — semua collector, full transparency) ═══════════
+async function renderLeaderboard(){
+  setContent('<div class="page-header"><div class="page-title">Leaderboard</div></div><div class="card">Loading...</div>');
+  let data;
+  try{
+    const res=await fetch('/api/leaderboard',{headers:authHeaders()});
+    data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load leaderboard.');
+  }catch(e){
+    setContent(`<div class="page-header"><div class="page-title">Leaderboard</div></div><div class="card">⚠ Failed to load: ${esc(e.message)}</div>`);
+    return;
+  }
+
+  const collectors=data.collectors||[];
+  const rows=collectors.map((c,i)=>{
+    const rank=i+1;
+    const medal=rank===1?'🥇':rank===2?'🥈':rank===3?'🥉':('#'+rank);
+    const isMe=currentUser&&currentUser.name&&c.name.trim().toUpperCase()===currentUser.name.trim().toUpperCase();
+    const pillClass=c.status==='ok'?'score-high':c.status==='warn'?'score-mid':'score-low';
+    const paidFmt='RM '+Number(c.paid||0).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
+    return`<tr style="${isMe?'background:var(--surface2);font-weight:600':''}">
+      <td style="width:44px;text-align:center;font-size:15px">${medal}</td>
+      <td>${esc(c.name)}${isMe?' <span class="chip chip-purple" style="font-size:10px">Anda</span>':''}</td>
+      <td style="font-size:13px;color:var(--text3)">${paidFmt}</td>
+      <td><span class="score-pill ${pillClass}">${c.rate.toFixed(1)}%</span></td>
+    </tr>`;
+  }).join('');
+
+  setContent(`
+  <div class="page-header"><div class="page-title">🏆 Leaderboard</div><div class="page-sub">Collection rate semua collector — target ${data.targetRate}%, amaran bawah ${data.warnRate}%</div></div>
+  <div class="card">
+    ${collectors.length===0?`<div class="empty-state"><div class="es-icon">🏆</div><p>Tiada data collector dijumpai.</p></div>`:`
+    <div class="table-wrap"><table>
+      <tr><th></th><th>Collector</th><th>Collected</th><th>Rate</th></tr>
+      ${rows}
+    </table></div>`}
+  </div>`);
 }
 
 // ═══════════ CALL LOGIC ═══════════
