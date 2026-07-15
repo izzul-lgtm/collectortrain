@@ -3279,11 +3279,11 @@ async function renderLeaderboard(){
   }).join('');
 
   setContent(`
-  <div class="page-header"><div class="page-title">🏆 Leaderboard</div><div class="page-sub">Collection rate semua collector — target ${data.targetRate}%, amaran bawah ${data.warnRate}%</div></div>
+  <div class="page-header"><div class="page-title">🏆 Leaderboard</div><div class="page-sub">📅 ${esc(data.periodLabel||'Bulan Ini')} · target ${data.targetRate}%, amaran bawah ${data.warnRate}%</div></div>
   <div class="card">
     ${collectors.length===0?`<div class="empty-state"><div class="es-icon">🏆</div><p>Tiada data collector dijumpai.</p></div>`:`
     <div class="table-wrap"><table>
-      <tr><th></th><th>Collector</th><th>Collected</th><th>Rate</th></tr>
+      <tr><th></th><th>Collector</th><th>Collected (${esc(data.periodLabel||'Bulan Ini')})</th><th>Rate</th></tr>
       ${rows}
     </table></div>`}
   </div>`);
