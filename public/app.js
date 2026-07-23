@@ -850,6 +850,7 @@ async function doRegister(){
 function doLogout(){
   currentUser=null;
   usersCache=null; // elak data pengguna sebelum ni terbawa kalau orang lain login di device sama
+  lastNotifiedUnreadTotal=null; // reset baseline — user lain mungkin login di device sama
   localStorage.removeItem('ct_session_token');
   localStorage.removeItem('ct_cached_user'); // buang cached user semasa logout
   stopCall();
@@ -3484,7 +3485,10 @@ async function renderMessages(){
   setContent(`
   <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
     <div><div class="page-title">✉️ Messages</div><div class="page-sub">Mesej peribadi antara staf</div></div>
-    <button class="btn btn-primary" onclick="openNewMessagePicker()">+ New Message</button>
+    <div style="display:flex;gap:8px;align-items:center">
+      ${notifStatusButton()}
+      <button class="btn btn-primary" onclick="openNewMessagePicker()">+ New Message</button>
+    </div>
   </div>
   <div class="card">
     ${convos.length===0?`<div class="empty-state"><div class="es-icon">✉️</div><p>Tiada mesej lagi. Klik "+ New Message" untuk mula.</p></div>`:
@@ -3597,6 +3601,88 @@ async function sendNewMessage(){
   }catch(e){alert('Gagal hantar: '+e.message);}
 }
 
+// ═══════════ Browser Notifications + Sound untuk mesej baru ═══════════
+// SEBAB INI WUJUD: badge dalam nav (navMsgBadge) cuma DOM element — kalau
+// user tengah buka tab/window lain (bukan tab CollectorTrain), dia takkan
+// nampak badge tu langsung sampailah dia balik ke tab ni. Browser
+// Notification API pula pop-up di luar tab (macam notification WhatsApp
+// Web), dan bunyi "ding" boleh didengar walaupun tab tak focus.
+//
+// Flow:
+//   1. User klik "🔔 Enable Notifications" (kena user gesture, browser
+//      block auto-request tanpa klik) → simpan keputusan dalam
+//      Notification.permission (browser yang uruskan, bukan kita).
+//   2. pollUnreadMessages() poll setiap 20 saat macam biasa (badge count).
+//   3. Bila unreadTotal NAIK berbanding poll sebelum ni (mesej baru masuk),
+//      dan permission dah granted → tunjuk Notification + main bunyi.
+//   4. Baseline (lastNotifiedUnreadTotal) di-set kepada nilai poll PERTAMA
+//      lepas login — supaya mesej lama yang belum dibaca (dari sebelum
+//      login) tak trigger notification bertalu-talu bila page baru load.
+
+let lastNotifiedUnreadTotal=null; // null = baseline belum di-set lagi
+
+function notifStatusButton(){
+  if(typeof Notification==='undefined'){
+    return `<span style="font-size:11px;color:var(--text3)">🔕 Notifications tak disokong browser ni</span>`;
+  }
+  if(Notification.permission==='granted'){
+    return `<span style="font-size:11px;color:var(--green);display:flex;align-items:center;gap:4px">🔔 Notifications ON</span>`;
+  }
+  if(Notification.permission==='denied'){
+    return `<span style="font-size:11px;color:var(--text3)" title="Notifications diblok — enable semula dalam Site Settings browser">🔕 Notifications diblok</span>`;
+  }
+  return `<button class="btn btn-secondary" onclick="enableNotifications()">🔔 Enable Notifications</button>`;
+}
+
+async function enableNotifications(){
+  if(typeof Notification==='undefined'){alert('Browser ni tak sokong notification.');return;}
+  await Notification.requestPermission();
+  if(Notification.permission==='granted'){
+    playNotifSound(); // bunyi test, supaya user tahu volume okay
+  }
+  if(currentPage==='messages')renderMessages();
+}
+
+// Bunyi "ding" 2-nada guna Web Audio API — tak perlukan fail audio luar.
+function playNotifSound(){
+  try{
+    const ctx=new (window.AudioContext||window.webkitAudioContext)();
+    const playTone=(freq,startTime,duration)=>{
+      const osc=ctx.createOscillator();
+      const gain=ctx.createGain();
+      osc.type='sine';
+      osc.frequency.value=freq;
+      gain.gain.setValueAtTime(0.001,startTime);
+      gain.gain.exponentialRampToValueAtTime(0.25,startTime+0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001,startTime+duration);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(startTime);
+      osc.stop(startTime+duration);
+    };
+    const now=ctx.currentTime;
+    playTone(880,now,0.14);       // nada 1
+    playTone(1175,now+0.13,0.18); // nada 2 (lebih tinggi — "ding-dong")
+  }catch(e){/* Web Audio tak available — senyap je, bukan critical */}
+}
+
+function notifyNewMessage(convo){
+  playNotifSound();
+  if(typeof Notification==='undefined'||Notification.permission!=='granted')return;
+  try{
+    const n=new Notification(`✉️ Mesej baru dari ${convo.userName}`,{
+      body:convo.lastMessage.length>100?convo.lastMessage.slice(0,100)+'…':convo.lastMessage,
+      tag:'ct-message-'+convo.userId, // elak stack banyak notification dari orang sama
+      renotify:true
+    });
+    n.onclick=()=>{
+      window.focus();
+      navigate('messages');
+      openMessageThread(convo.userId);
+      n.close();
+    };
+  }catch(e){/* silent */}
+}
+
 // Poll setiap 20 saat untuk kemaskini badge notification dalam nav — pattern
 // sama macam pending session retry sedia ada (setInterval global).
 async function pollUnreadMessages(){
@@ -3610,6 +3696,26 @@ async function pollUnreadMessages(){
       if(data.unreadTotal>0){badge.textContent=data.unreadTotal>99?'99+':data.unreadTotal;badge.style.display='inline-block';}
       else{badge.style.display='none';}
     }
+    // Baseline pertama lepas login — jangan notify utk mesej lama yang
+    // memang dah tak dibaca sebelum session ni bermula.
+    if(lastNotifiedUnreadTotal===null){
+      lastNotifiedUnreadTotal=data.unreadTotal;
+      return;
+    }
+    if(data.unreadTotal>lastNotifiedUnreadTotal){
+      // Ada mesej baru — tarik inbox (ringan, sekali je bila perlu) untuk
+      // tahu dari siapa, untuk isi kandungan notification.
+      try{
+        const inboxRes=await fetch('/api/messages',{headers:authHeaders()});
+        const inboxData=await inboxRes.json();
+        if(inboxRes.ok){
+          const convos=(inboxData.conversations||[]).filter(c=>c.unreadCount>0);
+          const latest=convos.sort((a,b)=>new Date(b.lastAt)-new Date(a.lastAt))[0];
+          if(latest)notifyNewMessage(latest);
+        }
+      }catch(e){playNotifSound();} // inbox fetch gagal — bunyi je tanpa detail
+    }
+    lastNotifiedUnreadTotal=data.unreadTotal;
   }catch(e){/* silent — bukan critical, cuba lagi next poll */}
 }
 setInterval(pollUnreadMessages,20000);
