@@ -867,6 +867,7 @@ function initApp(){
   rb.textContent=currentUser.role==='admin'?'Admin':currentUser.role==='manager'?'Manager':'Collector';
   rb.className='user-role-badge badge-'+currentUser.role;
   buildNav();
+  pollUnreadMessages();
   navigate(currentUser.role==='collector'?'training':'dashboard');
   // Tunjuk banner & cuba retry kalau ada pending sessions dari sesi lepas
   if(getPendingSessions().length>0){showPendingBanner();retryPendingSessions();}
@@ -884,6 +885,7 @@ function buildNav(){
     {page:'leaderboard',icon:'🏆',label:'Leaderboard'},
     {page:'announcements',icon:'📢',label:'Announcements'},
     {page:'discussion',icon:'💬',label:'Discussion'},
+    {page:'messages',icon:'✉️',label:'Messages'},
     {page:'scenarios',icon:'🎭',label:'Manage Scenarios'},
     {page:'users',icon:'👤',label:'Manage Users'},
     {page:'audit-log',icon:'🕵️',label:'Audit Log'},
@@ -895,13 +897,14 @@ function buildNav(){
       {page:'my-history',icon:'📊',label:'My Records'},
       {page:'announcements',icon:'📢',label:'Announcements'},
       {page:'discussion',icon:'💬',label:'Discussion'},
+      {page:'messages',icon:'✉️',label:'Messages'},
     ],
     // Manager: akses penuh sama macam admin ("manager support can access all")
     manager:adminItems,
     admin:adminItems
   };
   const myItems=items[currentUser.role]||items.collector;
-  nav.innerHTML=myItems.map(i=>`<div class="nav-item" id="nav-${i.page}" onclick="navigate('${i.page}')"><span class="nav-icon">${i.icon}</span>${i.label}</div>`).join('');
+  nav.innerHTML=myItems.map(i=>`<div class="nav-item" id="nav-${i.page}" onclick="navigate('${i.page}')"><span class="nav-icon">${i.icon}</span>${i.label}${i.page==='messages'?' <span id="navMsgBadge" style="display:none;background:var(--red);color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:4px"></span>':''}</div>`).join('');
 }
 
 function navigate(page){
@@ -924,6 +927,7 @@ function navigate(page){
     'score':renderScoreScreen,
     'announcements':renderAnnouncements,
     'discussion':renderDiscussion,
+    'messages':renderMessages,
   };
   if(pages[page])pages[page]();
 }
@@ -3462,6 +3466,153 @@ async function deleteDiscussionPost(id){
     renderDiscussion();
   }catch(e){alert('Gagal padam: '+e.message);}
 }
+
+// ═══════════ MESSAGES (mesej peribadi/DM + notification badge) ═══════════
+async function renderMessages(){
+  setContent('<div class="page-header"><div class="page-title">Messages</div></div><div class="card">Loading...</div>');
+  let data;
+  try{
+    const res=await fetch('/api/messages',{headers:authHeaders()});
+    data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load messages.');
+  }catch(e){
+    setContent(`<div class="page-header"><div class="page-title">Messages</div></div><div class="card">⚠ ${esc(e.message)}</div>`);
+    return;
+  }
+  pollUnreadMessages(); // refresh badge terus lepas buka inbox
+  const convos=data.conversations||[];
+  setContent(`
+  <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+    <div><div class="page-title">✉️ Messages</div><div class="page-sub">Mesej peribadi antara staf</div></div>
+    <button class="btn btn-primary" onclick="openNewMessagePicker()">+ New Message</button>
+  </div>
+  <div class="card">
+    ${convos.length===0?`<div class="empty-state"><div class="es-icon">✉️</div><p>Tiada mesej lagi. Klik "+ New Message" untuk mula.</p></div>`:
+    convos.map(c=>`
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="openMessageThread('${c.userId}')">
+        <div style="min-width:0">
+          <div style="font-weight:600;font-size:13px">${esc(c.userName)}${c.unreadCount>0?` <span class="chip chip-red" style="font-size:10px">${c.unreadCount} baru</span>`:''}</div>
+          <div style="font-size:12px;color:var(--text3);margin-top:2px;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.lastMessage)}</div>
+        </div>
+        <div style="font-size:11px;color:var(--text3);flex-shrink:0;margin-left:10px">${fmtDateTime(c.lastAt)}</div>
+      </div>`).join('')}
+  </div>`);
+}
+
+function openMessageThread(userId){
+  renderMessageThread(userId);
+}
+function closeMessageThread(){
+  renderMessages();
+}
+
+async function renderMessageThread(userId){
+  setContent('<div class="page-header"><div class="page-title">Messages</div></div><div class="card">Loading...</div>');
+  let data;
+  try{
+    const res=await fetch('/api/messages?with='+encodeURIComponent(userId),{headers:authHeaders()});
+    data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load thread.');
+  }catch(e){
+    setContent(`<div class="page-header"><div class="page-title">Messages</div></div><div class="card">⚠ ${esc(e.message)}</div>`);
+    return;
+  }
+  pollUnreadMessages(); // badge patut turun lepas baca thread ni (server dah mark read)
+  const thread=data.thread||[];
+  const otherName=data.otherUser?data.otherUser.name:userId;
+  setContent(`
+  <div class="page-header">
+    <a href="#" onclick="event.preventDefault();closeMessageThread()" style="font-size:12px;color:var(--purple);font-weight:600">← Back to Messages</a>
+    <div class="page-title" style="margin-top:4px">${esc(otherName)}</div>
+  </div>
+  <div class="card">
+    <div id="msgThreadBox" style="max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
+      ${thread.length===0?`<div style="font-size:13px;color:var(--text3);text-align:center;padding:20px 0">Belum ada mesej. Mulakan perbualan!</div>`:
+      thread.map(m=>{
+        const isMe=m.senderId===currentUser.id;
+        return`<div style="align-self:${isMe?'flex-end':'flex-start'};max-width:70%">
+          <div style="padding:8px 12px;border-radius:10px;font-size:13px;line-height:1.5;background:${isMe?'var(--purple-light)':'var(--bg)'};color:${isMe?'var(--purple)':'var(--text)'}">${esc(m.body)}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:2px;text-align:${isMe?'right':'left'}">${fmtDateTime(m.createdAt)}</div>
+        </div>`;
+      }).join('')}
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
+      <input id="msgThreadInput" placeholder="Tulis mesej..." style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();sendMessageInThread('${userId}');}" />
+      <button class="btn btn-primary" style="padding:8px 16px" onclick="sendMessageInThread('${userId}')">Send</button>
+    </div>
+  </div>`);
+  const box=document.getElementById('msgThreadBox');
+  if(box)box.scrollTop=box.scrollHeight;
+  const input=document.getElementById('msgThreadInput');
+  if(input)input.focus();
+}
+
+async function sendMessageInThread(userId){
+  const input=document.getElementById('msgThreadInput');
+  const body=(input||{}).value||'';
+  if(!body.trim())return;
+  try{
+    const res=await fetch('/api/messages',{method:'POST',headers:authHeaders(),body:JSON.stringify({recipientId:userId,body})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to send.');
+    if(input)input.value='';
+    renderMessageThread(userId);
+  }catch(e){alert('Gagal hantar: '+e.message);}
+}
+
+async function openNewMessagePicker(){
+  let contacts;
+  try{
+    const res=await fetch('/api/messages?contacts=1',{headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load contacts.');
+    contacts=data.contacts||[];
+  }catch(e){alert('Gagal muat senarai staf: '+e.message);return;}
+  if(!contacts.length){alert('Tiada staf lain untuk dihubungi.');return;}
+  openModal(`
+    <div class="modal-title">✉️ New Message</div>
+    <div class="form-row"><label>Kepada</label>
+      <select id="newMsgTo" style="width:100%">
+        ${contacts.map(c=>`<option value="${c.id}">${esc(c.name)} (${c.role})</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-row"><label>Mesej</label><textarea id="newMsgBody" rows="3" placeholder="Tulis mesej..."></textarea></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="sendNewMessage()">Send</button>
+    </div>
+  `);
+}
+
+async function sendNewMessage(){
+  const to=(document.getElementById('newMsgTo')||{}).value;
+  const body=(document.getElementById('newMsgBody')||{}).value||'';
+  if(!to||!body.trim()){alert('Sila pilih penerima dan tulis mesej.');return;}
+  try{
+    const res=await fetch('/api/messages',{method:'POST',headers:authHeaders(),body:JSON.stringify({recipientId:to,body})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to send.');
+    closeModal();
+    openMessageThread(to);
+  }catch(e){alert('Gagal hantar: '+e.message);}
+}
+
+// Poll setiap 20 saat untuk kemaskini badge notification dalam nav — pattern
+// sama macam pending session retry sedia ada (setInterval global).
+async function pollUnreadMessages(){
+  if(!currentUser)return; // belum login — jangan poll
+  try{
+    const res=await fetch('/api/messages?unreadCountOnly=1',{headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)return;
+    const badge=document.getElementById('navMsgBadge');
+    if(badge){
+      if(data.unreadTotal>0){badge.textContent=data.unreadTotal>99?'99+':data.unreadTotal;badge.style.display='inline-block';}
+      else{badge.style.display='none';}
+    }
+  }catch(e){/* silent — bukan critical, cuba lagi next poll */}
+}
+setInterval(pollUnreadMessages,20000);
 
 // ═══════════ CALL LOGIC ═══════════
 // PUNCA BUG "nama wanita jadi suara lelaki" / "nama bangsa lain tetap suara
