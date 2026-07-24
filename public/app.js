@@ -4480,7 +4480,7 @@ function renderTakeQuizModal(quiz,questions,myAttempt){
       else if(isWrongPick)style+='background:#fdecea;color:var(--red);';
       return`<label style="${style}cursor:${submitted?'default':'pointer'}">
         <input type="radio" name="tqOpt${qi}" style="flex-shrink:0" ${isSelected?'checked':''} ${submitted?'disabled':''} onchange="_takeQuizState.answers[${qi}]=${oi}">
-        ${esc(opt)}${isCorrect?' ✓':''}
+        <span style="flex:1;min-width:0">${esc(opt)}${isCorrect?' ✓':''}</span>
       </label>`;
     }).join('')}
   </div>`).join('')}
