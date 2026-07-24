@@ -392,6 +392,92 @@ async function loadAssignments(force){
   assignmentsCache=await assignmentApi.list();
   return assignmentsCache;
 }
+
+// ── Learning Modules (kandungan onboarding, berstep) ─────────────────────
+const learningApi = {
+  async list(){
+    const res=await fetch('/api/learning',{headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load learning modules.');
+    return data; // { modules, completedStepIds }
+  },
+  async saveModule(payload){
+    const res=await fetch('/api/learning',{method:'POST',headers:authHeaders(),body:JSON.stringify({kind:'module',...payload})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to save module.');
+    return data.module;
+  },
+  async saveStep(payload){
+    const res=await fetch('/api/learning',{method:'POST',headers:authHeaders(),body:JSON.stringify({kind:'step',...payload})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to save step.');
+    return data.step;
+  },
+  async setProgress(stepId,done){
+    const res=await fetch('/api/learning',{method:'PATCH',headers:authHeaders(),body:JSON.stringify({stepId,done})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to update progress.');
+    return data;
+  },
+  async removeModule(id){
+    const res=await fetch('/api/learning',{method:'DELETE',headers:authHeaders(),body:JSON.stringify({kind:'module',id})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to delete module.');
+    return true;
+  },
+  async removeStep(id){
+    const res=await fetch('/api/learning',{method:'DELETE',headers:authHeaders(),body:JSON.stringify({kind:'step',id})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to delete step.');
+    return true;
+  }
+};
+
+// ── Weekly Quiz (wajib, manual atau AI-generated) ─────────────────────────
+const quizApi = {
+  async list(){
+    const res=await fetch('/api/quizzes',{headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load quizzes.');
+    return data.quizzes||[];
+  },
+  async getById(id){
+    const res=await fetch('/api/quizzes?id='+encodeURIComponent(id),{headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load quiz.');
+    return data; // { quiz, questions, myAttempt }
+  },
+  async tracking(id){
+    const res=await fetch('/api/quizzes?tracking='+encodeURIComponent(id),{headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load tracking.');
+    return data; // { quiz, rows }
+  },
+  async save(payload){
+    const res=await fetch('/api/quizzes',{method:'POST',headers:authHeaders(),body:JSON.stringify(payload)});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to save quiz.');
+    return data.quiz;
+  },
+  async publish(id,published){
+    const res=await fetch('/api/quizzes?action=publish',{method:'POST',headers:authHeaders(),body:JSON.stringify({id,published})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to update quiz.');
+    return data.quiz;
+  },
+  async submit(quizId,answers){
+    const res=await fetch('/api/quizzes?action=submit',{method:'POST',headers:authHeaders(),body:JSON.stringify({quizId,answers})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to submit quiz.');
+    return data; // { score, total, correctIndexes }
+  },
+  async remove(id){
+    const res=await fetch('/api/quizzes',{method:'DELETE',headers:authHeaders(),body:JSON.stringify({id})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to delete quiz.');
+    return true;
+  }
+};
 // PERMINTAAN: tunjuk waktu (bukan tarikh sahaja) untuk setiap sesi latihan —
 // senang semak kalau ada beberapa sesi pada hari yang sama (cth nak confirm
 // sesi mana dah betul-betul masuk Supabase semasa testing/audit).
@@ -1010,6 +1096,8 @@ function buildNav(){
     {page:'announcements',icon:'📢',label:'Announcements'},
     {page:'discussion',icon:'💬',label:'Discussion'},
     {page:'messages',icon:'✉️',label:'Messages'},
+    {page:'learning',icon:'📘',label:'Learning'},
+    {page:'quizzes',icon:'📝',label:'Quizzes'},
     {page:'scenarios',icon:'🎭',label:'Manage Scenarios'},
     {page:'users',icon:'👤',label:'Manage Users'},
     {page:'audit-log',icon:'🕵️',label:'Audit Log'},
@@ -1022,6 +1110,8 @@ function buildNav(){
       {page:'announcements',icon:'📢',label:'Announcements'},
       {page:'discussion',icon:'💬',label:'Discussion'},
       {page:'messages',icon:'✉️',label:'Messages'},
+      {page:'learning',icon:'📘',label:'Learning'},
+      {page:'quizzes',icon:'📝',label:'Quizzes'},
     ],
     // Manager: akses penuh sama macam admin ("manager support can access all")
     manager:adminItems,
@@ -1057,6 +1147,8 @@ function navigate(page){
     'announcements':renderAnnouncements,
     'discussion':renderDiscussion,
     'messages':renderMessages,
+    'learning':renderLearning,
+    'quizzes':renderQuizzes,
   };
   if(pages[page])pages[page]();
 }
@@ -3956,6 +4048,396 @@ async function pollUnreadDiscussion(){
   }catch(e){/* silent — bukan critical, cuba lagi next poll */}
 }
 setInterval(pollUnreadDiscussion,5000);
+
+// ═══════════ LEARNING MODULES (kandungan onboarding berstep) ═══════════
+async function renderLearning(){
+  setContent('<div class="page-header"><div class="page-title">📘 Learning</div></div><div class="card">Loading...</div>');
+  let data;
+  try{
+    data=await learningApi.list();
+  }catch(e){
+    setContent(`<div class="page-header"><div class="page-title">📘 Learning</div></div><div class="card">⚠ ${esc(e.message)}</div>`);
+    return;
+  }
+  const canManage=currentUser.role==='admin'||currentUser.role==='manager';
+  const modules=data.modules||[];
+  const completed=new Set(data.completedStepIds||[]);
+
+  const contentTypeIcon={text:'📄',video:'🎬',link:'🔗',file:'📎'};
+  function stepHTML(s){
+    const done=completed.has(s.id);
+    const isLinkType=s.contentType!=='text';
+    return`
+    <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">
+      <input type="checkbox" ${done?'checked':''} onchange="toggleLearningStep('${s.id}',this.checked)" style="margin-top:3px;width:16px;height:16px;cursor:pointer;flex-shrink:0">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;${done?'color:var(--text3);text-decoration:line-through':''}">${contentTypeIcon[s.contentType]||'📄'} ${esc(s.title)}</div>
+        ${isLinkType
+          ?`<a href="${esc(s.content)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--purple);word-break:break-all">${esc(s.content)}</a>`
+          :`<div style="font-size:12px;color:var(--text2);margin-top:4px;white-space:pre-wrap;line-height:1.5">${esc(s.content)}</div>`}
+      </div>
+      ${canManage?`<button class="btn btn-secondary" style="padding:2px 8px;font-size:10px" onclick="editLearningStep('${s.id}')">Edit</button>
+      <button class="btn btn-danger" style="padding:2px 8px;font-size:10px" onclick="deleteLearningStep('${s.id}')">Del</button>`:''}
+    </div>`;
+  }
+  function moduleHTML(m){
+    const steps=m.steps||[];
+    const doneCount=steps.filter(s=>completed.has(s.id)).length;
+    const pct=steps.length?Math.round(doneCount/steps.length*100):0;
+    return`
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px">
+        <div>
+          <div class="card-title" style="margin-bottom:2px">${esc(m.title)}</div>
+          ${m.description?`<div style="font-size:12px;color:var(--text3)">${esc(m.description)}</div>`:''}
+        </div>
+        ${canManage?`<div style="display:flex;gap:6px;flex-shrink:0">
+          <button class="btn btn-secondary" style="padding:3px 9px;font-size:11px" onclick="openLearningStepForm('${m.id}')">+ Step</button>
+          <button class="btn btn-secondary" style="padding:3px 9px;font-size:11px" onclick="editLearningModule('${m.id}')">Edit</button>
+          <button class="btn btn-danger" style="padding:3px 9px;font-size:11px" onclick="deleteLearningModule('${m.id}')">Delete</button>
+        </div>`:''}
+      </div>
+      ${steps.length>0?`<div style="height:6px;background:var(--border);border-radius:4px;overflow:hidden;margin:8px 0"><div style="height:100%;width:${pct}%;background:var(--green,#2e7d32);transition:width .2s"></div></div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:6px">${doneCount}/${steps.length} selesai (${pct}%)</div>`:''}
+      ${steps.length===0?`<div style="font-size:12px;color:var(--text3);padding:6px 0">Belum ada step lagi.</div>`:steps.map(stepHTML).join('')}
+    </div>`;
+  }
+
+  setContent(`
+  <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+    <div><div class="page-title">📘 Learning</div><div class="page-sub">Kandungan onboarding & rujukan, tersusun ikut step</div></div>
+    ${canManage?`<button class="btn btn-primary" onclick="openLearningModuleForm()">+ New Module</button>`:''}
+  </div>
+  ${modules.length===0?`<div class="card"><div class="empty-state"><div class="es-icon">📘</div><p>Belum ada module lagi.${canManage?' Klik "+ New Module" untuk mula.':''}</p></div></div>`:
+  modules.map(moduleHTML).join('')}
+  `);
+}
+async function toggleLearningStep(stepId,done){
+  try{ await learningApi.setProgress(stepId,done); }
+  catch(e){ alert('Gagal kemaskini progress: '+e.message); renderLearning(); }
+}
+function openLearningModuleForm(existing){
+  openModal(`
+  <div class="modal-title">${existing?'Edit Module':'📘 New Module'}</div>
+  <div class="form-row"><label>Title</label><input id="lmTitle" value="${existing?esc(existing.title):''}" placeholder="cth: Onboarding Minggu 1"></div>
+  <div class="form-row"><label>Description (optional)</label><textarea id="lmDesc" rows="2" placeholder="Ringkasan module ni">${existing?esc(existing.description||''):''}</textarea></div>
+  <button class="btn btn-primary" onclick="saveLearningModule(${existing?`'${existing.id}'`:'null'})">Save</button>
+  `);
+}
+async function editLearningModule(id){
+  const data=await learningApi.list();
+  const m=(data.modules||[]).find(x=>x.id===id);
+  if(m)openLearningModuleForm(m);
+}
+async function saveLearningModule(id){
+  const title=(document.getElementById('lmTitle')||{}).value||'';
+  const description=(document.getElementById('lmDesc')||{}).value||'';
+  if(!title.trim()){alert('Sila isi title.');return;}
+  try{
+    await learningApi.saveModule({id:id||undefined,title,description});
+    closeModal();
+    renderLearning();
+  }catch(e){alert('Gagal simpan: '+e.message);}
+}
+async function deleteLearningModule(id){
+  if(!confirm('Padam module ni? Semua step & progress dalam module ni akan turut dipadam.'))return;
+  try{ await learningApi.removeModule(id); renderLearning(); }
+  catch(e){ alert('Gagal padam: '+e.message); }
+}
+function openLearningStepForm(moduleId,existing){
+  openModal(`
+  <div class="modal-title">${existing?'Edit Step':'📄 New Step'}</div>
+  <div class="form-row"><label>Title</label><input id="lsTitle" value="${existing?esc(existing.title):''}" placeholder="cth: SOP Pengesahan Identiti"></div>
+  <div class="form-row"><label>Jenis Kandungan</label>
+    <select id="lsType" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px">
+      <option value="text" ${existing&&existing.contentType==='text'?'selected':''}>📄 Teks / SOP</option>
+      <option value="video" ${existing&&existing.contentType==='video'?'selected':''}>🎬 Video (URL)</option>
+      <option value="link" ${existing&&existing.contentType==='link'?'selected':''}>🔗 Link luar</option>
+      <option value="file" ${existing&&existing.contentType==='file'?'selected':''}>📎 Fail (URL)</option>
+    </select>
+  </div>
+  <div class="form-row"><label>Kandungan (teks, ATAU URL kalau video/link/fail)</label><textarea id="lsContent" rows="5" placeholder="Tulis kandungan penuh di sini, atau paste URL">${existing?esc(existing.content):''}</textarea></div>
+  <button class="btn btn-primary" onclick="saveLearningStep(${existing?`'${existing.id}'`:'null'},'${existing?existing.moduleId:moduleId}')">Save</button>
+  `);
+}
+async function editLearningStep(id){
+  const data=await learningApi.list();
+  for(const m of (data.modules||[])){
+    const s=(m.steps||[]).find(x=>x.id===id);
+    if(s){openLearningStepForm(m.id,s);return;}
+  }
+}
+async function saveLearningStep(id,moduleId){
+  const title=(document.getElementById('lsTitle')||{}).value||'';
+  const contentType=(document.getElementById('lsType')||{}).value||'text';
+  const content=(document.getElementById('lsContent')||{}).value||'';
+  if(!title.trim()||!content.trim()){alert('Sila isi title dan kandungan.');return;}
+  try{
+    await learningApi.saveStep({id:id||undefined,moduleId,title,contentType,content});
+    closeModal();
+    renderLearning();
+  }catch(e){alert('Gagal simpan: '+e.message);}
+}
+async function deleteLearningStep(id){
+  if(!confirm('Padam step ni?'))return;
+  try{ await learningApi.removeStep(id); renderLearning(); }
+  catch(e){ alert('Gagal padam: '+e.message); }
+}
+
+// ═══════════ WEEKLY QUIZ (wajib, manual atau AI-generated) ═══════════
+async function renderQuizzes(){
+  setContent('<div class="page-header"><div class="page-title">📝 Quizzes</div></div><div class="card">Loading...</div>');
+  let quizzes;
+  try{
+    quizzes=await quizApi.list();
+  }catch(e){
+    setContent(`<div class="page-header"><div class="page-title">📝 Quizzes</div></div><div class="card">⚠ ${esc(e.message)}</div>`);
+    return;
+  }
+  const canManage=currentUser.role==='admin'||currentUser.role==='manager';
+
+  if(canManage){
+    const statusChip=(q)=>q.published?`<span class="chip" style="background:#e8f5e9;color:#2e7d32;font-size:11px">Published</span>`:`<span class="chip" style="background:var(--surface2);color:var(--text3);font-size:11px">Draft</span>`;
+    setContent(`
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+      <div><div class="page-title">📝 Quizzes</div><div class="page-sub">Cipta & urus weekly quiz untuk collector</div></div>
+      <button class="btn btn-primary" onclick="openQuizForm()">+ New Quiz</button>
+    </div>
+    <div class="card">
+      ${quizzes.length===0?`<div class="empty-state"><div class="es-icon">📝</div><p>Belum ada quiz lagi.</p></div>`:`
+      <div class="table-wrap"><table>
+        <tr><th>Title</th><th>Soalan</th><th>Due Date</th><th>Status</th><th>Actions</th></tr>
+        ${quizzes.map(q=>`<tr>
+          <td><div style="font-weight:500">${esc(q.title)}</div>${q.source==='ai'?`<div style="font-size:10px;color:var(--text3)">✨ AI-generated</div>`:''}</td>
+          <td style="font-size:12px;color:var(--text3)">${q.questionCount||0}</td>
+          <td style="font-size:12px;color:var(--text3)">${q.dueDate?new Date(q.dueDate).toLocaleDateString('en-MY'):'—'}</td>
+          <td>${statusChip(q)}</td>
+          <td style="display:flex;gap:4px;flex-wrap:wrap">
+            <button class="btn btn-secondary" style="padding:3px 8px;font-size:11px" onclick="viewQuizTracking('${q.id}')">Tracking</button>
+            <button class="btn btn-secondary" style="padding:3px 8px;font-size:11px" onclick="togglePublishQuiz('${q.id}',${!q.published})">${q.published?'Unpublish':'Publish'}</button>
+            <button class="btn btn-danger" style="padding:3px 8px;font-size:11px" onclick="deleteQuiz('${q.id}')">Delete</button>
+          </td>
+        </tr>`).join('')}
+      </table></div>`}
+    </div>`);
+    return;
+  }
+
+  // ── Collector view ──
+  const statusChip=(s)=>{
+    if(s==='completed')return`<span class="chip" style="background:#e8f5e9;color:#2e7d32;font-size:11px">✓ Completed</span>`;
+    if(s==='overdue')return`<span class="chip" style="background:#fdecea;color:var(--red);font-size:11px">⚠ Overdue</span>`;
+    return`<span class="chip chip-amber" style="font-size:11px">⏳ Pending</span>`;
+  };
+  setContent(`
+  <div class="page-header"><div class="page-title">📝 Quizzes</div><div class="page-sub">Weekly quiz wajib \u2014 jawab sebelum due date</div></div>
+  <div class="card">
+    ${quizzes.length===0?`<div class="empty-state"><div class="es-icon">📝</div><p>Tiada quiz buat masa ni.</p></div>`:
+    quizzes.map(q=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border)">
+      <div style="min-width:0">
+        <div style="font-weight:600;font-size:13px">${esc(q.title)}</div>
+        <div style="font-size:12px;color:var(--text3);margin-top:2px">${q.questionCount||0} soalan${q.dueDate?' · Due '+new Date(q.dueDate).toLocaleDateString('en-MY'):''}${q.myStatus==='completed'?` · Skor ${q.myScore}/${q.myTotal}`:''}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        ${statusChip(q.myStatus)}
+        <button class="btn ${q.myStatus==='completed'?'btn-secondary':'btn-primary'}" style="padding:6px 12px;font-size:12px" onclick="openTakeQuiz('${q.id}')">${q.myStatus==='completed'?'Review':'Take Quiz'}</button>
+      </div>
+    </div>`).join('')}
+  </div>`);
+}
+
+async function togglePublishQuiz(id,published){
+  try{ await quizApi.publish(id,published); renderQuizzes(); }
+  catch(e){ alert('Gagal kemaskini: '+e.message); }
+}
+async function deleteQuiz(id){
+  if(!confirm('Padam quiz ni? Semua attempt collector untuk quiz ni turut dipadam.'))return;
+  try{ await quizApi.remove(id); renderQuizzes(); }
+  catch(e){ alert('Gagal padam: '+e.message); }
+}
+async function viewQuizTracking(id){
+  openModal('<div class="modal-title">Tracking</div><p style="font-size:13px;color:var(--text3)">Loading...</p>');
+  try{
+    const {quiz,rows}=await quizApi.tracking(id);
+    const statusChip=(s)=>{
+      if(s==='completed')return`<span class="chip" style="background:#e8f5e9;color:#2e7d32;font-size:11px">✓ Completed</span>`;
+      if(s==='overdue')return`<span class="chip" style="background:#fdecea;color:var(--red);font-size:11px">⚠ Overdue</span>`;
+      return`<span class="chip chip-amber" style="font-size:11px">⏳ Pending</span>`;
+    };
+    openModal(`
+    <div class="modal-title">📊 Tracking — ${esc(quiz.title)}</div>
+    ${rows.length===0?`<p style="font-size:13px;color:var(--text3)">Tiada collector didaftarkan.</p>`:`
+    <div class="table-wrap"><table>
+      <tr><th>Collector</th><th>Status</th><th>Skor</th><th>Submitted</th></tr>
+      ${rows.map(r=>`<tr>
+        <td>${esc(r.userName)}</td>
+        <td>${statusChip(r.status)}</td>
+        <td style="font-size:12px;color:var(--text3)">${r.score!=null?r.score+'/'+r.total:'—'}</td>
+        <td style="font-size:12px;color:var(--text3)">${r.submittedAt?fmtDateTime(r.submittedAt):'—'}</td>
+      </tr>`).join('')}
+    </table></div>`}
+    `);
+  }catch(e){
+    openModal(`<div class="modal-title">Tracking</div><p style="color:var(--red);font-size:13px">⚠ ${esc(e.message)}</p>`);
+  }
+}
+
+// ── Quiz builder (manual entry + optional AI draft) ──
+let _quizDraftQuestions=[];
+function openQuizForm(){
+  _quizDraftQuestions=[{question:'',options:['','','',''],correctIndex:0}];
+  openModal(`
+  <div class="modal-title">📝 New Quiz</div>
+  <div class="form-row"><label>Title</label><input id="qzTitle" placeholder="cth: Weekly Quiz - Minggu 30"></div>
+  <div class="form-row"><label>Description (optional)</label><textarea id="qzDesc" rows="2"></textarea></div>
+  <div class="form-row"><label>Due Date (optional)</label><input type="date" id="qzDueDate"></div>
+
+  <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:var(--surface2)">
+    <div style="font-size:12px;font-weight:600;margin-bottom:6px">✨ Auto-generate dengan AI (opsyenal)</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <input id="qzAiTopic" placeholder="Topik cth: SOP pengesahan identiti, PDPA" style="flex:2;min-width:160px;padding:7px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px">
+      <input id="qzAiCount" type="number" min="1" max="25" value="15" style="width:60px;padding:7px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px">
+      <button class="btn btn-secondary" id="qzAiBtn" onclick="generateQuizWithAI()">Generate Draft</button>
+    </div>
+    <div id="qzAiStatus" style="font-size:11px;color:var(--text3);margin-top:4px"></div>
+  </div>
+
+  <div id="qzQuestionsList"></div>
+  <button class="btn btn-secondary" style="margin-top:6px" onclick="addQuizQuestionRow()">+ Add Question</button>
+  <div style="margin-top:14px"><button class="btn btn-primary" onclick="saveQuiz()">Save Quiz</button></div>
+  `);
+  renderQuizQuestionRows();
+}
+function renderQuizQuestionRows(){
+  const el=document.getElementById('qzQuestionsList');
+  if(!el)return;
+  el.innerHTML=_quizDraftQuestions.map((q,qi)=>`
+    <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:8px">
+      <div style="display:flex;gap:6px;align-items:flex-start">
+        <input value="${esc(q.question)}" placeholder="Soalan ${qi+1}" oninput="_quizDraftQuestions[${qi}].question=this.value" style="flex:1;padding:7px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px">
+        <button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="removeQuizQuestionRow(${qi})">✕</button>
+      </div>
+      <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">
+        ${q.options.map((opt,oi)=>`
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="radio" name="qzCorrect${qi}" ${q.correctIndex===oi?'checked':''} onchange="_quizDraftQuestions[${qi}].correctIndex=${oi}" title="Tandakan sebagai jawapan betul">
+          <input value="${esc(opt)}" placeholder="Pilihan ${oi+1}" oninput="_quizDraftQuestions[${qi}].options[${oi}]=this.value" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:12px">
+          ${q.options.length>2?`<button class="btn btn-secondary" style="padding:2px 6px;font-size:10px" onclick="removeQuizOption(${qi},${oi})">✕</button>`:''}
+        </div>`).join('')}
+        <button class="btn btn-secondary" style="padding:2px 8px;font-size:10px;align-self:flex-start;margin-top:2px" onclick="addQuizOption(${qi})">+ Pilihan</button>
+      </div>
+    </div>`).join('');
+}
+function addQuizQuestionRow(){_quizDraftQuestions.push({question:'',options:['','','',''],correctIndex:0});renderQuizQuestionRows();}
+function removeQuizQuestionRow(qi){_quizDraftQuestions.splice(qi,1);renderQuizQuestionRows();}
+function addQuizOption(qi){_quizDraftQuestions[qi].options.push('');renderQuizQuestionRows();}
+function removeQuizOption(qi,oi){
+  const q=_quizDraftQuestions[qi];
+  q.options.splice(oi,1);
+  if(q.correctIndex>=q.options.length)q.correctIndex=0;
+  else if(q.correctIndex>oi)q.correctIndex--;
+  renderQuizQuestionRows();
+}
+async function generateQuizWithAI(){
+  const topic=(document.getElementById('qzAiTopic')||{}).value||'';
+  const count=Number((document.getElementById('qzAiCount')||{}).value)||15;
+  if(!topic.trim()){alert('Sila isi topik dulu.');return;}
+  const statusEl=document.getElementById('qzAiStatus');
+  const btn=document.getElementById('qzAiBtn');
+  btn.disabled=true;statusEl.textContent='Menjana soalan...';
+  try{
+    const prompt=`Anda pereka kuiz latihan untuk staf collector hutang telco di Malaysia. Hasilkan ${count} soalan kuiz aneka pilihan (multiple choice) pasal topik: "${topic.trim()}".
+Format JSON SAHAJA (tiada teks lain, tiada markdown fence), array of objects, struktur EXACT macam ni:
+[{"question":"(soalan)","options":["(pilihan A)","(pilihan B)","(pilihan C)","(pilihan D)"],"correctIndex":(index 0-3 pilihan yang betul)}]
+Setiap soalan WAJIB ada TEPAT 4 pilihan (A/B/C/D), hanya SATU jawapan betul. Soalan patut relevan dengan kerja collector (SOP, compliance, komunikasi, dsb), berbeza antara satu sama lain (jangan ulang), dan dalam Bahasa Malaysia.`;
+    // Skala max_tokens ikut bilangan soalan diminta — 15 soalan × 4 pilihan
+    // perlukan lebih ruang daripada 5 soalan, atau JSON terputus separuh
+    // jalan (sama isu yang pernah jejaskan evalCall(), lihat nota dalam
+    // app/api/claude/route.js). Server tetap cap pada 4096 max.
+    const estTokens=Math.min(4096,300+count*220);
+    const res=await fetch('/api/claude',{method:'POST',headers:authHeaders(),
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:estTokens,messages:[{role:'user',content:prompt}]})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Gagal generate.');
+    let text=(data.content?.[0]?.text||'').trim();
+    text=text.replace(/^```json\s*/i,'').replace(/```\s*$/,'').trim();
+    const firstBracket=text.indexOf('['), lastBracket=text.lastIndexOf(']');
+    if(firstBracket!==-1&&lastBracket>firstBracket)text=text.slice(firstBracket,lastBracket+1);
+    const draft=JSON.parse(text);
+    if(!Array.isArray(draft)||draft.length===0)throw new Error('Format tidak dijangka.');
+    _quizDraftQuestions=draft.map(q=>({question:q.question||'',options:Array.isArray(q.options)&&q.options.length>=2?q.options:['','','',''],correctIndex:Number(q.correctIndex)||0}));
+    window.__quizDraftSource='ai';
+    renderQuizQuestionRows();
+    statusEl.textContent=`✅ ${draft.length} soalan dijana — semak & edit sebelum save.`;
+  }catch(e){
+    statusEl.textContent='⚠ Gagal: '+e.message;
+  }finally{
+    btn.disabled=false;
+  }
+}
+async function saveQuiz(){
+  const title=(document.getElementById('qzTitle')||{}).value||'';
+  const description=(document.getElementById('qzDesc')||{}).value||'';
+  const dueDate=(document.getElementById('qzDueDate')||{}).value||null;
+  if(!title.trim()){alert('Sila isi title.');return;}
+  const questions=_quizDraftQuestions.filter(q=>q.question.trim()&&q.options.every(o=>o.trim()));
+  if(questions.length===0){alert('Sila lengkapkan sekurang-kurangnya 1 soalan (dengan semua pilihan diisi).');return;}
+  try{
+    await quizApi.save({title,description,dueDate,source:window.__quizDraftSource==='ai'?'ai':'manual',questions});
+    window.__quizDraftSource=null;
+    closeModal();
+    renderQuizzes();
+  }catch(e){alert('Gagal simpan: '+e.message);}
+}
+
+// ── Take quiz (collector) ──
+let _takeQuizState=null;
+async function openTakeQuiz(id){
+  openModal('<div class="modal-title">Quiz</div><p style="font-size:13px;color:var(--text3)">Loading...</p>');
+  try{
+    const {quiz,questions,myAttempt}=await quizApi.getById(id);
+    _takeQuizState={quizId:id,questions,answers:myAttempt?myAttempt.answers:questions.map(()=>null)};
+    renderTakeQuizModal(quiz,questions,myAttempt);
+  }catch(e){
+    openModal(`<div class="modal-title">Quiz</div><p style="color:var(--red);font-size:13px">⚠ ${esc(e.message)}</p>`);
+  }
+}
+function renderTakeQuizModal(quiz,questions,myAttempt){
+  const submitted=!!myAttempt;
+  openModal(`
+  <div class="modal-title">📝 ${esc(quiz.title)}</div>
+  ${quiz.description?`<p style="font-size:12px;color:var(--text3);margin-bottom:8px">${esc(quiz.description)}</p>`:''}
+  ${submitted?`<div class="chip" style="background:#e8f5e9;color:#2e7d32;font-size:12px;margin-bottom:10px">✓ Skor anda: ${myAttempt.score}/${myAttempt.total}</div>`:''}
+  ${questions.map((q,qi)=>`
+  <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px">
+    <div style="font-size:13px;font-weight:600;margin-bottom:6px">${qi+1}. ${esc(q.question)}</div>
+    ${q.options.map((opt,oi)=>{
+      const isSelected=_takeQuizState.answers[qi]===oi;
+      const isCorrect=submitted&&q.correctIndex===oi;
+      const isWrongPick=submitted&&isSelected&&q.correctIndex!==oi;
+      let style='display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;font-size:12px;';
+      if(isCorrect)style+='background:#e8f5e9;color:#2e7d32;';
+      else if(isWrongPick)style+='background:#fdecea;color:var(--red);';
+      return`<label style="${style}cursor:${submitted?'default':'pointer'}">
+        <input type="radio" name="tqOpt${qi}" ${isSelected?'checked':''} ${submitted?'disabled':''} onchange="_takeQuizState.answers[${qi}]=${oi}">
+        ${esc(opt)}${isCorrect?' ✓':''}
+      </label>`;
+    }).join('')}
+  </div>`).join('')}
+  ${submitted?'':`<button class="btn btn-primary" onclick="submitTakeQuiz()">Submit Jawapan</button>`}
+  `);
+}
+async function submitTakeQuiz(){
+  const {quizId,answers,questions}=_takeQuizState;
+  if(answers.some(a=>a===null||a===undefined)){alert('Sila jawab semua soalan dulu.');return;}
+  try{
+    const result=await quizApi.submit(quizId,answers);
+    alert(`Skor anda: ${result.score}/${result.total}`);
+    closeModal();
+    renderQuizzes();
+  }catch(e){alert('Gagal submit: '+e.message);}
+}
 
 // ═══════════ CALL LOGIC ═══════════
 // PUNCA BUG "nama wanita jadi suara lelaki" / "nama bangsa lain tetap suara
