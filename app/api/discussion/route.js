@@ -5,6 +5,7 @@
 // elak kerumitan nested-reply berbilang tahap.
 import { supabaseAdmin } from '../../../lib/supabaseAdmin';
 import { requireAuthWithUser } from '../../../lib/requireAuth';
+import { withSignedUrls } from '../../../lib/attachments';
 
 function toClientShape(row) {
   return {
@@ -13,6 +14,12 @@ function toClientShape(row) {
     body: row.body,
     parentId: row.parent_id,
     createdAt: row.created_at,
+    // attachmentUrl = signed URL sementara (1 jam), null kalau tiada lampiran
+    // ATAU lampiran dah dipurge (>48 jam) — lihat lib/attachments.js
+    attachmentUrl: row.attachmentUrl ?? null,
+    attachmentName: row.attachment_name || null,
+    attachmentType: row.attachment_type || null,
+    attachmentSize: row.attachment_size || null,
   };
 }
 
@@ -26,7 +33,8 @@ export async function GET(request) {
       .select('*')
       .order('created_at', { ascending: true });
     if (error) throw error;
-    return Response.json({ posts: (data || []).map(toClientShape) });
+    const withUrls = await withSignedUrls(data || []);
+    return Response.json({ posts: withUrls.map(toClientShape) });
   } catch (e) {
     return Response.json({ error: e.message || 'Failed to load discussion.' }, { status: 500 });
   }
@@ -43,6 +51,11 @@ export async function POST(request) {
     }
     const sb = supabaseAdmin();
     const id = 'disc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    // Lampiran (attachment) — opsyenal, dihantar client SELEPAS ia berjaya
+    // upload melalui POST /api/attachments (lihat public/app.js:
+    // uploadPendingAttachment()). attachmentPath = storage path (BUKAN
+    // signed URL) — cuma path yang disimpan dalam DB.
+    const { attachmentPath, attachmentName, attachmentType, attachmentSize } = body;
     const { data, error } = await sb
       .from('discussion_posts')
       .insert({
@@ -50,11 +63,18 @@ export async function POST(request) {
         author_id: authUser.id,
         body: body.body.trim(),
         parent_id: body.parentId || null,
+        ...(attachmentPath ? {
+          attachment_path: attachmentPath,
+          attachment_name: attachmentName || null,
+          attachment_type: attachmentType || null,
+          attachment_size: attachmentSize || null,
+        } : {}),
       })
       .select()
       .single();
     if (error) throw error;
-    return Response.json({ post: toClientShape(data) });
+    const [withUrl] = await withSignedUrls([data]);
+    return Response.json({ post: toClientShape(withUrl) });
   } catch (e) {
     return Response.json({ error: e.message || 'Failed to post message.' }, { status: 500 });
   }

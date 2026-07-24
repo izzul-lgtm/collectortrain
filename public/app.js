@@ -23,6 +23,128 @@ function authHeaders(extra) {
   return { 'Content-Type': 'application/json', 'x-session-token': token, ...extra };
 }
 
+// ═══════════ Emoji picker (dikongsi: Messages + Discussion compose box) ═══════════
+// Ringkas & tanpa dependency luar — satu grid emoji biasa, klik untuk selit
+// ke dalam textarea/input yang mana satu dibuka picker ni (targetId).
+const EMOJI_QUICK_LIST=['😀','😂','😊','😍','🥲','😢','😡','👍','👎','🙏','🎉','🔥','💯','✅','❌','📌','⏰','💬','👏','🙌','😅','🤔','😴','🚀','💰','📞','📅','⚠️','❤️','😮'];
+
+function emojiBtnHTML(targetId){
+  return `<button type="button" id="emojiBtn-${targetId}" class="btn btn-secondary" style="padding:6px 10px;font-size:14px;line-height:1" onclick="event.stopPropagation();toggleEmojiPicker('${targetId}')" title="Emoji">😊</button>`;
+}
+function toggleEmojiPicker(targetId){
+  const existing=document.getElementById('emojiPopover');
+  if(existing){
+    const wasSameTarget=existing.dataset.target===targetId;
+    existing.remove();
+    document.removeEventListener('click',_closeEmojiOnOutside);
+    if(wasSameTarget)return; // toggle off — dah cukup
+  }
+  const btn=document.getElementById('emojiBtn-'+targetId);
+  if(!btn)return;
+  const pop=document.createElement('div');
+  pop.id='emojiPopover';
+  pop.dataset.target=targetId;
+  pop.style.cssText='position:fixed;z-index:1000;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px;display:grid;grid-template-columns:repeat(8,1fr);gap:2px;box-shadow:var(--shadow-lg);max-width:272px';
+  pop.innerHTML=EMOJI_QUICK_LIST.map(e=>`<span style="cursor:pointer;font-size:18px;text-align:center;padding:3px;border-radius:6px" onmouseover="this.style.background='var(--bg)'" onmouseout="this.style.background=''" onclick="insertEmoji('${targetId}','${e}')">${e}</span>`).join('');
+  document.body.appendChild(pop);
+  const rect=btn.getBoundingClientRect();
+  const top=Math.min(rect.bottom+4,window.innerHeight-220);
+  const left=Math.min(rect.left,window.innerWidth-280);
+  pop.style.top=top+'px';
+  pop.style.left=Math.max(8,left)+'px';
+  setTimeout(()=>document.addEventListener('click',_closeEmojiOnOutside),0);
+}
+function _closeEmojiOnOutside(e){
+  const pop=document.getElementById('emojiPopover');
+  if(pop&&!pop.contains(e.target)&&!e.target.closest('[id^="emojiBtn-"]')){
+    pop.remove();
+    document.removeEventListener('click',_closeEmojiOnOutside);
+  }
+}
+function insertEmoji(targetId,emoji){
+  const el=document.getElementById(targetId);
+  if(el){
+    const start=el.selectionStart??el.value.length;
+    const end=el.selectionEnd??el.value.length;
+    el.value=el.value.slice(0,start)+emoji+el.value.slice(end);
+    el.focus();
+    el.selectionStart=el.selectionEnd=start+emoji.length;
+  }
+  const pop=document.getElementById('emojiPopover');
+  if(pop)pop.remove();
+  document.removeEventListener('click',_closeEmojiOnOutside);
+}
+
+// ═══════════ Lampiran/Attachment (dikongsi: Messages + Discussion) ═══════════
+// Fail dipilih disimpan sementara dalam _pendingAttachments[targetId] (client
+// memory sahaja) sehingga user hantar mesej/post — barulah upload sebenar
+// jalan (uploadPendingAttachment), supaya fail tak "orphan" dalam Storage
+// kalau user pilih fail tapi tak jadi hantar. Lampiran automatik dipadam
+// server-side selepas 48 jam (lihat lib/attachments.js + cron job) — tujuan
+// nya elak Storage/system jadi berat sebab lampiran lama bertimbun.
+const ATTACHMENT_MAX_MB=10;
+const ATTACHMENT_ALLOWED_TYPES=['image/jpeg','image/png','image/gif','image/webp','application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','text/plain'];
+const _pendingAttachments={};
+
+function attachBtnHTML(targetId){
+  return `<button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:14px;line-height:1" onclick="document.getElementById('file-${targetId}').click()" title="Lampirkan fail (max ${ATTACHMENT_MAX_MB}MB, auto-padam 48j)">📎</button><input type="file" id="file-${targetId}" style="display:none" onchange="handleAttachmentPick('${targetId}',this)" />`;
+}
+function attachPreviewHTML(targetId){
+  return `<div id="attachPreview-${targetId}" style="font-size:11px;color:var(--text3);margin-top:4px"></div>`;
+}
+function handleAttachmentPick(targetId,inputEl){
+  const file=inputEl.files&&inputEl.files[0];
+  if(!file)return;
+  if(file.size>ATTACHMENT_MAX_MB*1024*1024){
+    alert(`Fail terlalu besar (max ${ATTACHMENT_MAX_MB}MB).`);
+    inputEl.value='';
+    return;
+  }
+  if(!ATTACHMENT_ALLOWED_TYPES.includes(file.type)){
+    alert('Jenis fail tidak disokong. Guna imej, PDF, Word, Excel atau teks (.txt).');
+    inputEl.value='';
+    return;
+  }
+  _pendingAttachments[targetId]=file;
+  const prev=document.getElementById('attachPreview-'+targetId);
+  if(prev)prev.innerHTML=`📎 ${esc(file.name)} (${(file.size/1024).toFixed(0)}KB) — auto-padam lepas 48j <a href="#" onclick="event.preventDefault();clearAttachment('${targetId}')" style="color:var(--red);font-weight:600">✕ Buang</a>`;
+}
+function clearAttachment(targetId){
+  delete _pendingAttachments[targetId];
+  const inputEl=document.getElementById('file-'+targetId);
+  if(inputEl)inputEl.value='';
+  const prev=document.getElementById('attachPreview-'+targetId);
+  if(prev)prev.innerHTML='';
+}
+// Upload fail (kalau ada) untuk targetId ni, return {path,name,type,size} atau
+// null kalau tiada fail dipilih. Throws kalau upload gagal — caller patut
+// tunjuk error tu dan JANGAN teruskan hantar mesej/post (elak "separuh jalan").
+async function uploadPendingAttachment(targetId){
+  const file=_pendingAttachments[targetId];
+  if(!file)return null;
+  const fd=new FormData();
+  fd.append('file',file);
+  const token=localStorage.getItem('ct_session_token')||'';
+  const res=await fetch('/api/attachments',{method:'POST',headers:{'x-session-token':token},body:fd});
+  const data=await res.json();
+  if(!res.ok)throw new Error(data.error||'Gagal muat naik lampiran.');
+  clearAttachment(targetId);
+  return data.attachment;
+}
+// Papar satu lampiran (dari row API — attachmentUrl/Name/Type/Size) dalam
+// mesej/post. Imej papar sebagai thumbnail klik-untuk-besar; jenis lain
+// papar sebagai chip fail dengan link download. null kalau tiada lampiran
+// ATAU lampiran dah dipurge (>48 jam, attachmentUrl jadi null di server).
+function attachmentHTML(m){
+  if(!m||!m.attachmentUrl)return'';
+  const isImage=(m.attachmentType||'').startsWith('image/');
+  const sizeKb=m.attachmentSize?(m.attachmentSize/1024).toFixed(0)+'KB':'';
+  if(isImage){
+    return `<div style="margin-top:6px"><a href="${esc(m.attachmentUrl)}" target="_blank" rel="noopener"><img src="${esc(m.attachmentUrl)}" alt="${esc(m.attachmentName||'lampiran')}" style="max-width:220px;max-height:220px;border-radius:8px;display:block" /></a></div>`;
+  }
+  return `<div style="margin-top:6px"><a href="${esc(m.attachmentUrl)}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;color:var(--text2)">📎 ${esc(m.attachmentName||'Lampiran')} ${sizeKb?`<span style="color:var(--text3)">(${sizeKb})</span>`:''}</a></div>`;
+}
+
 const DB = {
   get(k){try{return JSON.parse(localStorage.getItem('ct_'+k)||'null');}catch{return null;}},
   set(k,v){localStorage.setItem('ct_'+k,JSON.stringify(v));}
@@ -3408,13 +3530,19 @@ async function renderDiscussion(){
         ${(isOwner||canModerate)?`<button class="btn btn-danger" style="padding:2px 8px;font-size:10px" onclick="deleteDiscussionPost('${p.id}')">Delete</button>`:''}
       </div>
       <div style="font-size:13px;color:var(--text2);margin-top:4px;white-space:pre-wrap;line-height:1.5">${esc(p.body)}</div>
+      ${attachmentHTML(p)}
       <div style="font-size:11px;color:var(--text3);margin-top:6px;display:flex;align-items:center;gap:10px">
         <span>${fmtDateTime(p.createdAt)}</span>
         ${!isReply?`<a href="#" onclick="event.preventDefault();toggleReplyBox('${p.id}')" style="color:var(--purple);font-weight:600">Reply</a>`:''}
       </div>
       ${!isReply?`<div id="replyBox-${p.id}" style="display:none;margin-top:8px;margin-left:8px">
         <textarea id="replyText-${p.id}" rows="2" placeholder="Tulis balasan..." style="width:100%;margin-bottom:6px"></textarea>
-        <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="postDiscussionReply('${p.id}')">Send Reply</button>
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+          ${emojiBtnHTML('replyText-'+p.id)}
+          ${attachBtnHTML('replyText-'+p.id)}
+          <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="postDiscussionReply('${p.id}')">Send Reply</button>
+        </div>
+        ${attachPreviewHTML('replyText-'+p.id)}
       </div>`:''}
       ${!isReply?repliesOf(p.id).map(r=>postHTML(r,true)).join(''):''}
     </div>`;
@@ -3425,7 +3553,12 @@ async function renderDiscussion(){
   <div class="card">
     <div class="card-title">✍️ New Post</div>
     <textarea id="discNewPost" rows="3" placeholder="Kongsi sesuatu dengan pasukan..."></textarea>
-    <button class="btn btn-primary" style="margin-top:8px" onclick="postDiscussion()">Post</button>
+    <div style="display:flex;gap:6px;align-items:center;margin-top:8px">
+      ${emojiBtnHTML('discNewPost')}
+      ${attachBtnHTML('discNewPost')}
+      <button class="btn btn-primary" onclick="postDiscussion()">Post</button>
+    </div>
+    ${attachPreviewHTML('discNewPost')}
   </div>
   <div class="card">
     ${topLevel.length===0?`<div class="empty-state"><div class="es-icon">💬</div><p>Belum ada perbincangan lagi. Mulakan yang pertama!</p></div>`:
@@ -3441,7 +3574,11 @@ async function postDiscussion(){
   const body=(el||{}).value||'';
   if(!body.trim()){alert('Sila tulis sesuatu dulu.');return;}
   try{
-    const res=await fetch('/api/discussion',{method:'POST',headers:authHeaders(),body:JSON.stringify({body})});
+    const attachment=await uploadPendingAttachment('discNewPost');
+    const res=await fetch('/api/discussion',{method:'POST',headers:authHeaders(),body:JSON.stringify({
+      body,
+      ...(attachment?{attachmentPath:attachment.path,attachmentName:attachment.name,attachmentType:attachment.type,attachmentSize:attachment.size}:{}),
+    })});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Failed to post.');
     renderDiscussion();
@@ -3452,7 +3589,11 @@ async function postDiscussionReply(parentId){
   const body=(el||{}).value||'';
   if(!body.trim()){alert('Sila tulis balasan dulu.');return;}
   try{
-    const res=await fetch('/api/discussion',{method:'POST',headers:authHeaders(),body:JSON.stringify({body,parentId})});
+    const attachment=await uploadPendingAttachment('replyText-'+parentId);
+    const res=await fetch('/api/discussion',{method:'POST',headers:authHeaders(),body:JSON.stringify({
+      body,parentId,
+      ...(attachment?{attachmentPath:attachment.path,attachmentName:attachment.name,attachmentType:attachment.type,attachmentSize:attachment.size}:{}),
+    })});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Failed to post.');
     renderDiscussion();
@@ -3535,14 +3676,19 @@ async function renderMessageThread(userId){
       thread.map(m=>{
         const isMe=m.senderId===currentUser.id;
         return`<div style="align-self:${isMe?'flex-end':'flex-start'};max-width:70%">
-          <div style="padding:8px 12px;border-radius:10px;font-size:13px;line-height:1.5;background:${isMe?'var(--purple-light)':'var(--bg)'};color:${isMe?'var(--purple)':'var(--text)'}">${esc(m.body)}</div>
+          <div style="padding:8px 12px;border-radius:10px;font-size:13px;line-height:1.5;background:${isMe?'var(--purple-light)':'var(--bg)'};color:${isMe?'var(--purple)':'var(--text)'}">${esc(m.body)}${attachmentHTML(m)}</div>
           <div style="font-size:10px;color:var(--text3);margin-top:2px;text-align:${isMe?'right':'left'}">${fmtDateTime(m.createdAt)}</div>
         </div>`;
       }).join('')}
     </div>
-    <div style="display:flex;gap:8px;margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
-      <input id="msgThreadInput" placeholder="Tulis mesej..." style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();sendMessageInThread('${userId}');}" />
-      <button class="btn btn-primary" style="padding:8px 16px" onclick="sendMessageInThread('${userId}')">Send</button>
+    <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:10px">
+      <div style="display:flex;gap:8px">
+        <input id="msgThreadInput" placeholder="Tulis mesej..." style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();sendMessageInThread('${userId}');}" />
+        ${emojiBtnHTML('msgThreadInput')}
+        ${attachBtnHTML('msgThreadInput')}
+        <button class="btn btn-primary" style="padding:8px 16px" onclick="sendMessageInThread('${userId}')">Send</button>
+      </div>
+      ${attachPreviewHTML('msgThreadInput')}
     </div>
   </div>`);
   const box=document.getElementById('msgThreadBox');
@@ -3556,7 +3702,11 @@ async function sendMessageInThread(userId){
   const body=(input||{}).value||'';
   if(!body.trim())return;
   try{
-    const res=await fetch('/api/messages',{method:'POST',headers:authHeaders(),body:JSON.stringify({recipientId:userId,body})});
+    const attachment=await uploadPendingAttachment('msgThreadInput');
+    const res=await fetch('/api/messages',{method:'POST',headers:authHeaders(),body:JSON.stringify({
+      recipientId:userId,body,
+      ...(attachment?{attachmentPath:attachment.path,attachmentName:attachment.name,attachmentType:attachment.type,attachmentSize:attachment.size}:{}),
+    })});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Failed to send.');
     if(input)input.value='';
@@ -3580,7 +3730,11 @@ async function openNewMessagePicker(){
         ${contacts.map(c=>`<option value="${c.id}">${esc(c.name)} (${c.role})</option>`).join('')}
       </select>
     </div>
-    <div class="form-row"><label>Mesej</label><textarea id="newMsgBody" rows="3" placeholder="Tulis mesej..."></textarea></div>
+    <div class="form-row"><label>Mesej</label>
+      <textarea id="newMsgBody" rows="3" placeholder="Tulis mesej..."></textarea>
+      <div style="display:flex;gap:6px;margin-top:6px">${emojiBtnHTML('newMsgBody')}${attachBtnHTML('newMsgBody')}</div>
+      ${attachPreviewHTML('newMsgBody')}
+    </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="sendNewMessage()">Send</button>
@@ -3593,7 +3747,11 @@ async function sendNewMessage(){
   const body=(document.getElementById('newMsgBody')||{}).value||'';
   if(!to||!body.trim()){alert('Sila pilih penerima dan tulis mesej.');return;}
   try{
-    const res=await fetch('/api/messages',{method:'POST',headers:authHeaders(),body:JSON.stringify({recipientId:to,body})});
+    const attachment=await uploadPendingAttachment('newMsgBody');
+    const res=await fetch('/api/messages',{method:'POST',headers:authHeaders(),body:JSON.stringify({
+      recipientId:to,body,
+      ...(attachment?{attachmentPath:attachment.path,attachmentName:attachment.name,attachmentType:attachment.type,attachmentSize:attachment.size}:{}),
+    })});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Failed to send.');
     closeModal();
@@ -3612,7 +3770,7 @@ async function sendNewMessage(){
 //   1. User klik "🔔 Enable Notifications" (kena user gesture, browser
 //      block auto-request tanpa klik) → simpan keputusan dalam
 //      Notification.permission (browser yang uruskan, bukan kita).
-//   2. pollUnreadMessages() poll setiap 20 saat macam biasa (badge count).
+//   2. pollUnreadMessages() poll setiap 5 saat macam biasa (badge count).
 //   3. Bila unreadTotal NAIK berbanding poll sebelum ni (mesej baru masuk),
 //      dan permission dah granted → tunjuk Notification + main bunyi.
 //   4. Baseline (lastNotifiedUnreadTotal) di-set kepada nilai poll PERTAMA
@@ -3683,8 +3841,10 @@ function notifyNewMessage(convo){
   }catch(e){/* silent */}
 }
 
-// Poll setiap 20 saat untuk kemaskini badge notification dalam nav — pattern
+// Poll setiap 5 saat untuk kemaskini badge notification dalam nav — pattern
 // sama macam pending session retry sedia ada (setInterval global).
+// (Asalnya 20s — ditukar ke 5s supaya mesej baru/notification nampak lebih
+// pantas. Query ni murah — cuma COUNT(*) head-only, so 4x lebih kerap okay.)
 async function pollUnreadMessages(){
   if(!currentUser)return; // belum login — jangan poll
   try{
@@ -3718,7 +3878,7 @@ async function pollUnreadMessages(){
     lastNotifiedUnreadTotal=data.unreadTotal;
   }catch(e){/* silent — bukan critical, cuba lagi next poll */}
 }
-setInterval(pollUnreadMessages,20000);
+setInterval(pollUnreadMessages,5000);
 
 // ═══════════ CALL LOGIC ═══════════
 // PUNCA BUG "nama wanita jadi suara lelaki" / "nama bangsa lain tetap suara

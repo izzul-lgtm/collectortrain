@@ -13,5 +13,11 @@
     "app/api/sessions/route.js": {
       "regions": ["sin1"]
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/purge-attachments",
+      "schedule": "0 19 * * *"
+    }
+  ]
 }

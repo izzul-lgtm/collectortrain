@@ -31,9 +31,10 @@ SUPABASE_SERVICE_ROLE_KEY
 ANTHROPIC_API_KEY
 GEMINI_API_KEY
 GROQ_API_KEY
+CRON_SECRET
 ```
 
-Tiada satu pun dari ni optional — app akan return error kalau mana-mana satu missing.
+Tiada satu pun dari ni optional — app akan return error kalau mana-mana satu missing. `CRON_SECRET` khusus untuk lindungi endpoint `/api/cron/purge-attachments` (lihat bahagian **Attachments** di bawah) — generate dengan `openssl rand -hex 32`, tak perlu daftar mana-mana service.
 
 ---
 
@@ -62,6 +63,25 @@ Tables utama:
 - `scenarios` — senario roleplay (client, persona debtor, checklist disclosure)
 - `sessions` — rekod setiap sesi latihan + eval scores (tone, delivery, counter argument, action, balance strategy, harassment)
 - `assignments` — manager assign senario wajib kepada collector
+- `messages` — mesej peribadi (DM) antara staf, sokong lampiran (attachment_*)
+- `discussion_posts` — perbincangan terbuka (thread 1 tahap), sokong lampiran (attachment_*)
+
+---
+
+## Attachments (lampiran Messages & Discussion)
+
+Messages dan Discussion boleh sertakan **satu lampiran** setiap mesej/post (imej, PDF, Word, Excel, atau `.txt`, max **10MB**).
+
+- Fail disimpan dalam Supabase **Storage bucket `attachments`** (private) — client tak pernah upload/baca terus dari Storage, semua melalui API route (`POST /api/attachments` untuk upload, signed URL 1-jam dijana server bila mesej/post dipapar).
+- **Auto-purge selepas 48 jam** — Vercel Cron (`vercel.json` → `crons`) panggil `GET /api/cron/purge-attachments` sekali sehari, padam fail Storage yang lampirannya berumur >48 jam dan null-kan lajur `attachment_*` dalam DB. **Mesej/post itu sendiri KEKAL** (teks je), cuma lampirannya hilang — tujuan ni elak Storage membesar tanpa had.
+- Endpoint cron dilindungi header `Authorization: Bearer <CRON_SECRET>` — kena set env var `CRON_SECRET` (lihat **Environment Variables** di atas), kalau tak, endpoint tutup (500/403).
+- Setup DB & Storage bucket sekali gus melalui `supabase/schema.sql` (statement idempotent — selamat run berkali-kali).
+
+---
+
+## Emoji
+
+Butang 😊 dalam setiap compose box (Messages: thread & new message modal; Discussion: new post & reply) — buka grid emoji ringkas, klik untuk selit ke text box. Tak perlukan sebarang setup/dependency tambahan.
 
 ---
 
@@ -106,6 +126,16 @@ POST   /api/assignments             — Assign senario
 DELETE /api/assignments             — Cancel assignment
 
 POST   /api/parse-document          — Parse PDF/TXT/CSV untuk scenario builder
+
+GET    /api/messages                — Inbox / thread / senarai kontak / unread count (lihat query params dalam route.js)
+POST   /api/messages                — Hantar mesej peribadi (+ lampiran opsyenal)
+
+GET    /api/discussion              — Senarai post + reply
+POST   /api/discussion              — Post/reply baru (+ lampiran opsyenal)
+DELETE /api/discussion              — Padam post (pemilik atau admin/manager)
+
+POST   /api/attachments             — Upload satu fail lampiran (imej/PDF/Word/Excel/txt, max 10MB)
+GET    /api/cron/purge-attachments  — [Vercel Cron sahaja, perlu CRON_SECRET] Padam lampiran >48 jam
 ```
 
 ---
@@ -132,10 +162,11 @@ Plus `priorityFocus` — satu aspek kritikal untuk collector fokus sesi akan dat
 | `/api/claude` | 40 req/min |
 | `/api/tts` | 40 req/min |
 | `/api/stt` | 60 req/min |
+| `/api/attachments` | 20 req/min |
 
 ---
 
 ## Deploy
 
-Push ke `main` branch → Vercel auto-deploy. Pastikan semua 5 env vars dah set dalam Vercel dashboard sebelum deploy pertama.
+Push ke `main` branch → Vercel auto-deploy. Pastikan semua 6 env vars dah set dalam Vercel dashboard sebelum deploy pertama, dan `supabase/schema.sql` (versi terkini, termasuk `messages`/`discussion_posts`/Storage bucket `attachments`) dah di-run dalam Supabase SQL Editor.
 

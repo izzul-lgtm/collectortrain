@@ -18,6 +18,7 @@
 // supaya SEMUA role (termasuk collector) boleh guna messaging tanpa 403.
 import { supabaseAdmin } from '../../../lib/supabaseAdmin';
 import { requireAuthWithUser } from '../../../lib/requireAuth';
+import { withSignedUrls } from '../../../lib/attachments';
 
 function toClientShape(row) {
   return {
@@ -27,6 +28,12 @@ function toClientShape(row) {
     body: row.body,
     readAt: row.read_at,
     createdAt: row.created_at,
+    // attachmentUrl = signed URL sementara (1 jam), null kalau tiada lampiran
+    // ATAU lampiran dah dipurge (>48 jam) — lihat lib/attachments.js
+    attachmentUrl: row.attachmentUrl ?? null,
+    attachmentName: row.attachment_name || null,
+    attachmentType: row.attachment_type || null,
+    attachmentSize: row.attachment_size || null,
   };
 }
 
@@ -81,8 +88,9 @@ export async function GET(request) {
       }
 
       const { data: otherUserRow } = await sb.from('users').select('id, name').eq('id', withUser).maybeSingle();
+      const threadWithUrls = await withSignedUrls(thread || []);
       return Response.json({
-        thread: (thread || []).map(toClientShape),
+        thread: threadWithUrls.map(toClientShape),
         otherUser: otherUserRow ? { id: otherUserRow.id, name: otherUserRow.name } : { id: withUser, name: withUser },
       });
     }
@@ -137,6 +145,11 @@ export async function POST(request) {
     }
     const sb = supabaseAdmin();
     const id = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    // Lampiran (attachment) — opsyenal, dihantar client SELEPAS ia berjaya
+    // upload melalui POST /api/attachments (lihat public/app.js:
+    // uploadPendingAttachment()). attachmentPath = storage path (BUKAN
+    // signed URL) — cuma path yang disimpan dalam DB.
+    const { attachmentPath, attachmentName, attachmentType, attachmentSize } = body;
     const { data, error } = await sb
       .from('messages')
       .insert({
@@ -144,11 +157,18 @@ export async function POST(request) {
         sender_id: authUser.id,
         recipient_id: body.recipientId,
         body: body.body.trim(),
+        ...(attachmentPath ? {
+          attachment_path: attachmentPath,
+          attachment_name: attachmentName || null,
+          attachment_type: attachmentType || null,
+          attachment_size: attachmentSize || null,
+        } : {}),
       })
       .select()
       .single();
     if (error) throw error;
-    return Response.json({ message: toClientShape(data) });
+    const [withUrl] = await withSignedUrls([data]);
+    return Response.json({ message: toClientShape(withUrl) });
   } catch (e) {
     return Response.json({ error: e.message || 'Failed to send message.' }, { status: 500 });
   }
