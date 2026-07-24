@@ -4213,6 +4213,8 @@ async function renderQuizzes(){
           <td style="font-size:12px;color:var(--text3)">${q.dueDate?new Date(q.dueDate).toLocaleDateString('en-MY'):'—'}</td>
           <td>${statusChip(q)}</td>
           <td style="display:flex;gap:4px;flex-wrap:wrap">
+            <button class="btn btn-secondary" style="padding:3px 8px;font-size:11px" onclick="editQuiz('${q.id}')">Edit</button>
+            <button class="btn btn-secondary" style="padding:3px 8px;font-size:11px" onclick="viewQuizContent('${q.id}')">View</button>
             <button class="btn btn-secondary" style="padding:3px 8px;font-size:11px" onclick="viewQuizTracking('${q.id}')">Tracking</button>
             <button class="btn btn-secondary" style="padding:3px 8px;font-size:11px" onclick="togglePublishQuiz('${q.id}',${!q.published})">${q.published?'Unpublish':'Publish'}</button>
             <button class="btn btn-danger" style="padding:3px 8px;font-size:11px" onclick="deleteQuiz('${q.id}')">Delete</button>
@@ -4256,6 +4258,31 @@ async function deleteQuiz(id){
   try{ await quizApi.remove(id); renderQuizzes(); }
   catch(e){ alert('Gagal padam: '+e.message); }
 }
+// Rujukan sahaja (read-only) untuk admin/manager — tengok soalan + pilihan +
+// jawapan betul bila-bila masa, TANPA cipta quiz_attempts (elak accidentally
+// submit atas nama admin) dan TANPA edit apa-apa data.
+async function viewQuizContent(id){
+  openModal('<div class="modal-title">📖 Soalan & Jawapan</div><p style="font-size:13px;color:var(--text3)">Loading...</p>');
+  try{
+    const {quiz,questions}=await quizApi.getById(id);
+    openModal(`
+    <div class="modal-title">📖 ${esc(quiz.title)}</div>
+    ${quiz.description?`<p style="font-size:12px;color:var(--text3);margin-bottom:8px">${esc(quiz.description)}</p>`:''}
+    ${questions.map((q,qi)=>`
+    <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:6px">${qi+1}. ${esc(q.question)}</div>
+      ${q.options.map((opt,oi)=>{
+        const isCorrect=q.correctIndex===oi;
+        let style='display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;font-size:12px;width:100%;box-sizing:border-box;justify-content:flex-start;text-align:left;';
+        if(isCorrect)style+='background:#e8f5e9;color:#2e7d32;font-weight:600;';
+        return`<div style="${style}">${esc(opt)}${isCorrect?' ✓':''}</div>`;
+      }).join('')}
+    </div>`).join('')}
+    `);
+  }catch(e){
+    openModal(`<div class="modal-title">📖 Soalan & Jawapan</div><p style="color:var(--red);font-size:13px">⚠ ${esc(e.message)}</p>`);
+  }
+}
 async function viewQuizTracking(id){
   openModal('<div class="modal-title">Tracking</div><p style="font-size:13px;color:var(--text3)">Loading...</p>');
   try{
@@ -4284,14 +4311,20 @@ async function viewQuizTracking(id){
 }
 
 // ── Quiz builder (manual entry + optional AI draft) ──
+// prefill (opsyenal) = {id,title,description,dueDate,questions} bila edit
+// quiz sedia ada (lihat editQuiz()) — kalau tiada, ni mode "New Quiz" biasa.
 let _quizDraftQuestions=[];
-function openQuizForm(){
-  _quizDraftQuestions=[{question:'',options:['','','',''],correctIndex:0}];
+let _quizEditId=null;
+function openQuizForm(prefill){
+  _quizEditId=prefill&&prefill.id?prefill.id:null;
+  _quizDraftQuestions=(prefill&&Array.isArray(prefill.questions)&&prefill.questions.length)
+    ?prefill.questions.map(q=>({question:q.question||'',options:[...(q.options||['',''])],correctIndex:q.correctIndex||0}))
+    :[{question:'',options:['','','',''],correctIndex:0}];
   openModal(`
-  <div class="modal-title">📝 New Quiz</div>
-  <div class="form-row"><label>Title</label><input id="qzTitle" placeholder="cth: Weekly Quiz - Minggu 30"></div>
-  <div class="form-row"><label>Description (optional)</label><textarea id="qzDesc" rows="2"></textarea></div>
-  <div class="form-row"><label>Due Date (optional)</label><input type="date" id="qzDueDate"></div>
+  <div class="modal-title">📝 ${_quizEditId?'Edit Quiz':'New Quiz'}</div>
+  <div class="form-row"><label>Title</label><input id="qzTitle" value="${esc((prefill&&prefill.title)||'')}" placeholder="cth: Weekly Quiz - Minggu 30"></div>
+  <div class="form-row"><label>Description (optional)</label><textarea id="qzDesc" rows="2">${esc((prefill&&prefill.description)||'')}</textarea></div>
+  <div class="form-row"><label>Due Date (optional)</label><input type="date" id="qzDueDate" value="${(prefill&&prefill.dueDate)?String(prefill.dueDate).slice(0,10):''}"></div>
 
   <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:var(--surface2)">
     <div style="font-size:12px;font-weight:600;margin-bottom:6px">✨ Auto-generate dengan AI (opsyenal)</div>
@@ -4305,9 +4338,34 @@ function openQuizForm(){
 
   <div id="qzQuestionsList"></div>
   <button class="btn btn-secondary" style="margin-top:6px" onclick="addQuizQuestionRow()">+ Add Question</button>
-  <div style="margin-top:14px"><button class="btn btn-primary" onclick="saveQuiz()">Save Quiz</button></div>
+  <div style="margin-top:14px"><button class="btn btn-primary" onclick="saveQuiz()">${_quizEditId?'Save Changes':'Save Quiz'}</button></div>
   `);
   renderQuizQuestionRows();
+}
+// Edit quiz sedia ada — DIBLOCK kalau dah ada collector yang submit/complete
+// quiz ni, sebab backend GANTI SEMUA soalan (delete+insert) bila update —
+// kalau ada attempt sedia ada, order_index soalan lama boleh tak match lagi
+// dengan array `answers`nya (rekod skor lama jadi salah bila di-review).
+// Draft/published TANPA attempt selamat untuk diedit bebas.
+async function editQuiz(id){
+  try{
+    const {rows}=await quizApi.tracking(id);
+    const completedCount=(rows||[]).filter(r=>r.status==='completed').length;
+    if(completedCount>0){
+      alert(`Quiz ini tak boleh diedit sebab dah ada ${completedCount} collector yang submit jawapan — mengedit soalan akan buatkan rekod skor mereka jadi tak tepat.\n\nKalau memang perlu ubah kandungan, gunakan Delete (akan padam quiz + semua attempt) dan cipta quiz baru.`);
+      return;
+    }
+    const {quiz,questions}=await quizApi.getById(id);
+    openQuizForm({
+      id: quiz.id,
+      title: quiz.title,
+      description: quiz.description,
+      dueDate: quiz.dueDate,
+      questions,
+    });
+  }catch(e){
+    alert('Gagal buka quiz untuk edit: '+e.message);
+  }
 }
 function renderQuizQuestionRows(){
   const el=document.getElementById('qzQuestionsList');
@@ -4384,8 +4442,9 @@ async function saveQuiz(){
   const questions=_quizDraftQuestions.filter(q=>q.question.trim()&&q.options.every(o=>o.trim()));
   if(questions.length===0){alert('Sila lengkapkan sekurang-kurangnya 1 soalan (dengan semua pilihan diisi).');return;}
   try{
-    await quizApi.save({title,description,dueDate,source:window.__quizDraftSource==='ai'?'ai':'manual',questions});
+    await quizApi.save({...( _quizEditId?{id:_quizEditId}:{} ),title,description,dueDate,source:window.__quizDraftSource==='ai'?'ai':'manual',questions});
     window.__quizDraftSource=null;
+    _quizEditId=null;
     closeModal();
     renderQuizzes();
   }catch(e){alert('Gagal simpan: '+e.message);}
