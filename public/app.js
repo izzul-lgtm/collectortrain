@@ -991,6 +991,7 @@ function initApp(){
   rb.className='user-role-badge badge-'+currentUser.role;
   buildNav();
   pollUnreadMessages();
+  pollUnreadDiscussion();
   navigate(currentUser.role==='collector'?'training':'dashboard');
   // Tunjuk banner & cuba retry kalau ada pending sessions dari sesi lepas
   if(getPendingSessions().length>0){showPendingBanner();retryPendingSessions();}
@@ -1027,7 +1028,12 @@ function buildNav(){
     admin:adminItems
   };
   const myItems=items[currentUser.role]||items.collector;
-  nav.innerHTML=myItems.map(i=>`<div class="nav-item" id="nav-${i.page}" onclick="navigate('${i.page}')"><span class="nav-icon">${i.icon}</span>${i.label}${i.page==='messages'?' <span id="navMsgBadge" style="display:none;background:var(--red);color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:4px"></span>':''}</div>`).join('');
+  nav.innerHTML=myItems.map(i=>{
+    let badgeId=null;
+    if(i.page==='messages')badgeId='navMsgBadge';
+    else if(i.page==='discussion')badgeId='navDiscBadge';
+    return `<div class="nav-item" id="nav-${i.page}" onclick="navigate('${i.page}')"><span class="nav-icon">${i.icon}</span>${i.label}${badgeId?` <span id="${badgeId}" style="display:none;background:var(--red);color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:4px"></span>`:''}</div>`;
+  }).join('');
 }
 
 function navigate(page){
@@ -3516,6 +3522,7 @@ async function renderDiscussion(){
     setContent(`<div class="page-header"><div class="page-title">Discussion</div></div><div class="card">⚠ ${esc(e.message)}</div>`);
     return;
   }
+  pollUnreadDiscussion(); // refresh badge terus lepas buka Discussion (server dah mark read)
   const authorName=id=>{const p=posts.find(x=>x.authorId===id);return p?p.authorName:id;};
   const topLevel=posts.filter(p=>!p.parentId);
   const repliesOf=pid=>posts.filter(p=>p.parentId===pid);
@@ -3552,7 +3559,10 @@ async function renderDiscussion(){
   }
 
   setContent(`
-  <div class="page-header"><div class="page-title">💬 Discussion</div><div class="page-sub">Ruang perbincangan terbuka untuk semua</div></div>
+  <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+    <div><div class="page-title">💬 Discussion</div><div class="page-sub">Ruang perbincangan terbuka untuk semua</div></div>
+    <div>${notifStatusButton()}</div>
+  </div>
   <div class="card">
     <div class="card-title">✍️ New Post</div>
     <textarea id="discNewPost" rows="3" placeholder="Kongsi sesuatu dengan pasukan..."></textarea>
@@ -3818,6 +3828,7 @@ async function enableNotifications(){
     playNotifSound(); // bunyi test, supaya user tahu volume okay
   }
   if(currentPage==='messages')renderMessages();
+  if(currentPage==='discussion')renderDiscussion();
 }
 
 // Bunyi "ding" 2-nada guna Web Audio API — tak perlukan fail audio luar.
@@ -3898,6 +3909,57 @@ async function pollUnreadMessages(){
   }catch(e){/* silent — bukan critical, cuba lagi next poll */}
 }
 setInterval(pollUnreadMessages,5000);
+
+// Sama pattern macam pollUnreadMessages() di atas, tapi untuk Discussion
+// board (baca komen di app/api/discussion/route.js — unread dikira guna
+// timestamp discussion_reads.last_read_at, bukan flag per-post, sebab
+// discussion tiada "recipient" khusus — semua orang share papan yang sama).
+let lastNotifiedDiscUnreadTotal=null; // null = baseline belum di-set lagi
+
+function notifyNewDiscussionPost(count){
+  playNotifSound();
+  if(typeof Notification==='undefined'||Notification.permission!=='granted')return;
+  try{
+    const n=new Notification(count>1?`💬 ${count} post baru dalam Discussion`:'💬 Post baru dalam Discussion',{
+      body:'Klik untuk lihat perbincangan terkini.',
+      tag:'ct-discussion',
+      renotify:true
+    });
+    n.onclick=()=>{
+      window.focus();
+      navigate('discussion');
+      n.close();
+    };
+  }catch(e){/* silent */}
+}
+
+async function pollUnreadDiscussion(){
+  if(!currentUser)return; // belum login — jangan poll
+  try{
+    const res=await fetch('/api/discussion?unreadCountOnly=1',{headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)return;
+    const badge=document.getElementById('navDiscBadge');
+    if(badge){
+      if(data.unreadTotal>0){badge.textContent=data.unreadTotal>99?'99+':data.unreadTotal;badge.style.display='inline-block';}
+      else{badge.style.display='none';}
+    }
+    // Baseline pertama lepas login — jangan notify utk post lama yang
+    // memang dah tak dibaca sebelum session ni bermula.
+    if(lastNotifiedDiscUnreadTotal===null){
+      lastNotifiedDiscUnreadTotal=data.unreadTotal;
+      return;
+    }
+    // Elak notify semasa user memang tengah berada dalam page Discussion
+    // (badge akan clear sekejap lagi bila renderDiscussion() mark-read) —
+    // tak perlu popup notification untuk sesuatu yang dia dah sedang tengok.
+    if(data.unreadTotal>lastNotifiedDiscUnreadTotal && currentPage!=='discussion'){
+      notifyNewDiscussionPost(data.unreadTotal-lastNotifiedDiscUnreadTotal);
+    }
+    lastNotifiedDiscUnreadTotal=data.unreadTotal;
+  }catch(e){/* silent — bukan critical, cuba lagi next poll */}
+}
+setInterval(pollUnreadDiscussion,5000);
 
 // ═══════════ CALL LOGIC ═══════════
 // PUNCA BUG "nama wanita jadi suara lelaki" / "nama bangsa lain tetap suara

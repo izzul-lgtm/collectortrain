@@ -11,6 +11,7 @@ function toClientShape(row) {
   return {
     id: row.id,
     authorId: row.author_id,
+    authorName: row.authorName || row.author_id,
     body: row.body,
     parentId: row.parent_id,
     createdAt: row.created_at,
@@ -24,16 +25,53 @@ function toClientShape(row) {
 }
 
 export async function GET(request) {
-  const { authError } = await requireAuthWithUser(request);
+  const { authError, authUser } = await requireAuthWithUser(request);
   if (authError) return authError;
+  const { searchParams } = new URL(request.url);
+  const unreadCountOnly = searchParams.get('unreadCountOnly');
+  const sb = supabaseAdmin();
+
   try {
-    const sb = supabaseAdmin();
+    // ── Lightweight poll: badge count sahaja, tiada senarai post ──
+    // (sama pattern macam GET /api/messages?unreadCountOnly=1)
+    if (unreadCountOnly) {
+      const { data: readRow, error: readErr } = await sb
+        .from('discussion_reads')
+        .select('last_read_at')
+        .eq('user_id', authUser.id)
+        .maybeSingle();
+      if (readErr) throw readErr;
+      // User belum pernah buka Discussion langsung -> anggap semua post
+      // SEBELUM sekarang dah "dibaca" (elak banjir notification post lama
+      // untuk staf baru daftar) — sama baseline logic macam client
+      // lastNotifiedUnreadTotal, tapi di server-side.
+      const lastReadAt = readRow?.last_read_at || new Date().toISOString();
+      if (!readRow) {
+        await sb.from('discussion_reads').upsert({ user_id: authUser.id, last_read_at: lastReadAt });
+      }
+      const { count, error } = await sb
+        .from('discussion_posts')
+        .select('id', { count: 'exact', head: true })
+        .gt('created_at', lastReadAt)
+        .neq('author_id', authUser.id); // jangan kira post sendiri sebagai unread
+      if (error) throw error;
+      return Response.json({ unreadTotal: count || 0 });
+    }
+
     const { data, error } = await sb
       .from('discussion_posts')
       .select('*')
       .order('created_at', { ascending: true });
     if (error) throw error;
-    const withUrls = await withSignedUrls(data || []);
+    const { data: users } = await sb.from('users').select('id, name');
+    const nameMap = {};
+    (users || []).forEach(u => { nameMap[u.id] = u.name; });
+    const withNames = (data || []).map(row => ({ ...row, authorName: nameMap[row.author_id] || row.author_id }));
+    const withUrls = await withSignedUrls(withNames);
+    // Buka page Discussion (senarai penuh dimuatkan) = anggap semua post
+    // setakat ni dah dibaca -> upsert last_read_at supaya badge/notification
+    // clear lepas ni.
+    await sb.from('discussion_reads').upsert({ user_id: authUser.id, last_read_at: new Date().toISOString() });
     return Response.json({ posts: withUrls.map(toClientShape) });
   } catch (e) {
     return Response.json({ error: e.message || 'Failed to load discussion.' }, { status: 500 });
