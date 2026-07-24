@@ -3800,7 +3800,7 @@ async function renderMessageThread(userId){
     </div>
     <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:10px">
       <div style="display:flex;gap:8px">
-        <input id="msgThreadInput" placeholder="Tulis mesej..." style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();sendMessageInThread('${userId}');}" />
+        <textarea id="msgThreadInput" placeholder="Tulis mesej..." rows="1" style="flex:1;resize:none;overflow-y:hidden;max-height:140px;line-height:1.4" oninput="this.rows=1;const r=Math.min(6,Math.ceil(this.scrollHeight/20));this.rows=r;" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessageInThread('${userId}');}"></textarea>
         ${emojiBtnHTML('msgThreadInput')}
         ${attachBtnHTML('msgThreadInput')}
         <button class="btn btn-primary" style="padding:8px 16px" onclick="sendMessageInThread('${userId}')">Send</button>
@@ -4416,11 +4416,11 @@ function renderTakeQuizModal(quiz,questions,myAttempt){
       const isSelected=_takeQuizState.answers[qi]===oi;
       const isCorrect=submitted&&q.correctIndex===oi;
       const isWrongPick=submitted&&isSelected&&q.correctIndex!==oi;
-      let style='display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;font-size:12px;';
+      let style='display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;font-size:12px;width:100%;box-sizing:border-box;justify-content:flex-start;text-align:left;';
       if(isCorrect)style+='background:#e8f5e9;color:#2e7d32;';
       else if(isWrongPick)style+='background:#fdecea;color:var(--red);';
       return`<label style="${style}cursor:${submitted?'default':'pointer'}">
-        <input type="radio" name="tqOpt${qi}" ${isSelected?'checked':''} ${submitted?'disabled':''} onchange="_takeQuizState.answers[${qi}]=${oi}">
+        <input type="radio" name="tqOpt${qi}" style="flex-shrink:0" ${isSelected?'checked':''} ${submitted?'disabled':''} onchange="_takeQuizState.answers[${qi}]=${oi}">
         ${esc(opt)}${isCorrect?' ✓':''}
       </label>`;
     }).join('')}
