@@ -4067,14 +4067,20 @@ async function renderLearning(){
   function stepHTML(s){
     const done=completed.has(s.id);
     const isLinkType=s.contentType!=='text';
+    const fileUrl=s.contentType==='file'?(s.attachmentUrl||s.content||null):null;
+    const fileLabel=s.contentType==='file'?(s.attachmentName||s.content):null;
     return`
     <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">
       <input type="checkbox" ${done?'checked':''} onchange="toggleLearningStep('${s.id}',this.checked)" style="margin-top:3px;width:16px;height:16px;cursor:pointer;flex-shrink:0">
       <div style="flex:1;min-width:0">
         <div style="font-size:13px;font-weight:600;${done?'color:var(--text3);text-decoration:line-through':''}">${contentTypeIcon[s.contentType]||'📄'} ${esc(s.title)}</div>
-        ${isLinkType
-          ?`<a href="${esc(s.content)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--purple);word-break:break-all">${esc(s.content)}</a>`
-          :`<div style="font-size:12px;color:var(--text2);margin-top:4px;white-space:pre-wrap;line-height:1.5">${esc(s.content)}</div>`}
+        ${s.contentType==='file'
+          ?(fileUrl
+            ?`<a href="${esc(fileUrl)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--purple);word-break:break-all">📎 ${esc(fileLabel||'Buka fail')}</a>`
+            :`<div style="font-size:12px;color:var(--text3)">⚠ Tiada fail/URL dilampirkan</div>`)
+          :isLinkType
+            ?`<a href="${esc(s.content)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--purple);word-break:break-all">${esc(s.content)}</a>`
+            :`<div style="font-size:12px;color:var(--text2);margin-top:4px;white-space:pre-wrap;line-height:1.5">${esc(s.content)}</div>`}
       </div>
       ${canManage?`<button class="btn btn-secondary" style="padding:2px 8px;font-size:10px" onclick="editLearningStep('${s.id}')">Edit</button>
       <button class="btn btn-danger" style="padding:2px 8px;font-size:10px" onclick="deleteLearningStep('${s.id}')">Del</button>`:''}
@@ -4144,21 +4150,70 @@ async function deleteLearningModule(id){
   try{ await learningApi.removeModule(id); renderLearning(); }
   catch(e){ alert('Gagal padam: '+e.message); }
 }
+let _lsExistingAttachment=null; // {name,url} kalau step sedang diedit ada lampiran, else null
+let _lsAttachmentRemoved=false;
 function openLearningStepForm(moduleId,existing){
+  _lsExistingAttachment=(existing&&existing.attachmentName)?{name:existing.attachmentName,url:existing.attachmentUrl}:null;
+  _lsAttachmentRemoved=false;
+  clearAttachment('lsContent'); // buang sisa fail pending dari sesi form sebelum ni (kalau ada)
+  const contentType=existing?existing.contentType:'text';
   openModal(`
   <div class="modal-title">${existing?'Edit Step':'📄 New Step'}</div>
   <div class="form-row"><label>Title</label><input id="lsTitle" value="${existing?esc(existing.title):''}" placeholder="cth: SOP Pengesahan Identiti"></div>
   <div class="form-row"><label>Jenis Kandungan</label>
-    <select id="lsType" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px">
-      <option value="text" ${existing&&existing.contentType==='text'?'selected':''}>📄 Teks / SOP</option>
-      <option value="video" ${existing&&existing.contentType==='video'?'selected':''}>🎬 Video (URL)</option>
-      <option value="link" ${existing&&existing.contentType==='link'?'selected':''}>🔗 Link luar</option>
-      <option value="file" ${existing&&existing.contentType==='file'?'selected':''}>📎 Fail (URL)</option>
+    <select id="lsType" onchange="renderLearningAttachSection()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px">
+      <option value="text" ${contentType==='text'?'selected':''}>📄 Teks / SOP</option>
+      <option value="video" ${contentType==='video'?'selected':''}>🎬 Video (URL)</option>
+      <option value="link" ${contentType==='link'?'selected':''}>🔗 Link luar</option>
+      <option value="file" ${contentType==='file'?'selected':''}>📎 Fail (PDF/Word/Excel/imej)</option>
     </select>
   </div>
-  <div class="form-row"><label>Kandungan (teks, ATAU URL kalau video/link/fail)</label><textarea id="lsContent" rows="5" placeholder="Tulis kandungan penuh di sini, atau paste URL">${existing?esc(existing.content):''}</textarea></div>
+  <div class="form-row"><label id="lsContentLabel">Kandungan</label><textarea id="lsContent" rows="5" placeholder="Tulis kandungan penuh di sini">${existing?esc(existing.content):''}</textarea></div>
+  <div id="lsAttachSection" style="margin-bottom:10px"></div>
   <button class="btn btn-primary" onclick="saveLearningStep(${existing?`'${existing.id}'`:'null'},'${existing?existing.moduleId:moduleId}')">Save</button>
   `);
+  renderLearningAttachSection();
+}
+// Tunjuk/sorok kawasan "muat naik fail" ikut Jenis Kandungan yang dipilih —
+// dipanggil semula setiap kali <select id="lsType"> ditukar.
+function renderLearningAttachSection(){
+  const type=(document.getElementById('lsType')||{}).value||'text';
+  const label=document.getElementById('lsContentLabel');
+  const contentEl=document.getElementById('lsContent');
+  const el=document.getElementById('lsAttachSection');
+  if(label)label.textContent = type==='video'?'Kandungan (URL video)': type==='link'?'Kandungan (URL link)': type==='file'?'URL Fail (opsyenal — boleh biar kosong kalau muat naik terus di bawah)':'Kandungan';
+  if(contentEl)contentEl.placeholder = type==='file'?'cth: https://drive.google.com/... (atau biar kosong kalau muat naik fail di bawah)':'Tulis kandungan penuh di sini';
+  if(!el)return;
+  if(type!=='file'){el.innerHTML='';return;}
+  const keepingExisting=_lsExistingAttachment&&!_lsAttachmentRemoved;
+  const existingHTML=keepingExisting
+    ?`<div style="font-size:12px;margin-bottom:6px">📎 Fail sedia ada: <a href="${_lsExistingAttachment.url||'#'}" target="_blank" rel="noopener">${esc(_lsExistingAttachment.name)}</a> <a href="#" onclick="event.preventDefault();clearLearningAttachment()" style="color:var(--red);font-weight:600;margin-left:6px">✕ Buang</a></div>`
+    :'';
+  el.innerHTML=`
+    ${existingHTML}
+    <button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:13px" onclick="document.getElementById('file-lsContent').click()">📎 ${keepingExisting?'Ganti Fail':'Muat Naik Fail'}</button>
+    <input type="file" id="file-lsContent" style="display:none" onchange="handleLearningAttachmentPick(this)">
+    <div id="attachPreview-lsContent" style="font-size:11px;color:var(--text3);margin-top:4px"></div>
+    <div style="font-size:10px;color:var(--text3);margin-top:2px">Max ${ATTACHMENT_MAX_MB}MB — imej, PDF, Word, Excel atau teks. Fail ni kekal (tiada auto-padam).</div>
+  `;
+}
+// Pick fail untuk step 'file' — guna _pendingAttachments/uploadPendingAttachment
+// yang sama macam Messages/Discussion, tapi preview sendiri (elak label
+// "auto-padam 48j" yang TAK BETUL untuk Learning — fail ni kekal selama-lamanya).
+function handleLearningAttachmentPick(inputEl){
+  const file=inputEl.files&&inputEl.files[0];
+  if(!file)return;
+  if(file.size>ATTACHMENT_MAX_MB*1024*1024){alert(`Fail terlalu besar (max ${ATTACHMENT_MAX_MB}MB).`);inputEl.value='';return;}
+  if(!ATTACHMENT_ALLOWED_TYPES.includes(file.type)){alert('Jenis fail tidak disokong. Guna imej, PDF, Word, Excel atau teks (.txt).');inputEl.value='';return;}
+  _pendingAttachments['lsContent']=file;
+  _lsAttachmentRemoved=false;
+  const prev=document.getElementById('attachPreview-lsContent');
+  if(prev)prev.innerHTML=`📎 ${esc(file.name)} (${(file.size/1024).toFixed(0)}KB) <a href="#" onclick="event.preventDefault();clearLearningAttachment()" style="color:var(--red);font-weight:600">✕ Buang</a>`;
+}
+function clearLearningAttachment(){
+  clearAttachment('lsContent');
+  if(_lsExistingAttachment)_lsAttachmentRemoved=true;
+  renderLearningAttachSection();
 }
 async function editLearningStep(id){
   const data=await learningApi.list();
@@ -4171,9 +4226,26 @@ async function saveLearningStep(id,moduleId){
   const title=(document.getElementById('lsTitle')||{}).value||'';
   const contentType=(document.getElementById('lsType')||{}).value||'text';
   const content=(document.getElementById('lsContent')||{}).value||'';
-  if(!title.trim()||!content.trim()){alert('Sila isi title dan kandungan.');return;}
+  if(!title.trim()){alert('Sila isi title.');return;}
   try{
-    await learningApi.saveStep({id:id||undefined,moduleId,title,contentType,content});
+    let attachment=null;
+    if(contentType==='file'){
+      attachment=await uploadPendingAttachment('lsContent'); // null kalau tiada fail baru dipilih
+    }
+    const keepsExisting=contentType==='file'&&!attachment&&_lsExistingAttachment&&!_lsAttachmentRemoved;
+    if(contentType==='file'&&!attachment&&!keepsExisting&&!content.trim()){
+      alert('Sila muat naik fail atau isi URL untuk Jenis Kandungan "Fail".');
+      return;
+    }
+    if(contentType!=='file'&&!content.trim()){
+      alert('Sila isi kandungan.');
+      return;
+    }
+    await learningApi.saveStep({
+      id:id||undefined,moduleId,title,contentType,content,
+      ...(attachment?{attachmentPath:attachment.path,attachmentName:attachment.name,attachmentType:attachment.type,attachmentSize:attachment.size}:{}),
+      ...(_lsAttachmentRemoved?{removeAttachment:true}:{}),
+    });
     closeModal();
     renderLearning();
   }catch(e){alert('Gagal simpan: '+e.message);}
