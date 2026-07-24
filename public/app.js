@@ -3523,6 +3523,8 @@ async function renderDiscussion(){
 
   function postHTML(p,isReply){
     const isOwner=p.authorId===currentUser.id;
+    const replies=isReply?[]:repliesOf(p.id);
+    const expanded=_expandedReplies.has(p.id);
     return`
     <div style="padding:${isReply?'10px 0 10px 24px':'14px 0'};${isReply?'border-left:2px solid var(--border);margin-left:8px':'border-bottom:1px solid var(--border)'}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
@@ -3534,6 +3536,7 @@ async function renderDiscussion(){
       <div style="font-size:11px;color:var(--text3);margin-top:6px;display:flex;align-items:center;gap:10px">
         <span>${fmtDateTime(p.createdAt)}</span>
         ${!isReply?`<a href="#" onclick="event.preventDefault();toggleReplyBox('${p.id}')" style="color:var(--purple);font-weight:600">Reply</a>`:''}
+        ${!isReply&&replies.length>0?`<a href="#" id="repliesToggle-${p.id}" data-count="${replies.length}" onclick="event.preventDefault();toggleRepliesList('${p.id}')" style="color:var(--text3);font-weight:600">${expanded?'▴ Sembunyikan balasan':`▾ ${replies.length} balasan`}</a>`:''}
       </div>
       ${!isReply?`<div id="replyBox-${p.id}" style="display:none;margin-top:8px;margin-left:8px">
         <textarea id="replyText-${p.id}" rows="2" placeholder="Tulis balasan..." style="width:100%;margin-bottom:6px"></textarea>
@@ -3544,7 +3547,7 @@ async function renderDiscussion(){
         </div>
         ${attachPreviewHTML('replyText-'+p.id)}
       </div>`:''}
-      ${!isReply?repliesOf(p.id).map(r=>postHTML(r,true)).join(''):''}
+      ${!isReply&&replies.length>0?`<div id="repliesList-${p.id}" style="display:${expanded?'block':'none'}">${replies.map(r=>postHTML(r,true)).join('')}</div>`:''}
     </div>`;
   }
 
@@ -3564,6 +3567,21 @@ async function renderDiscussion(){
     ${topLevel.length===0?`<div class="empty-state"><div class="es-icon">💬</div><p>Belum ada perbincangan lagi. Mulakan yang pertama!</p></div>`:
     topLevel.slice().reverse().map(p=>postHTML(p,false)).join('')}
   </div>`);
+}
+// Topik dengan banyak balasan (comment) jadi terlalu panjang untuk scroll —
+// balasan disembunyikan secara default (kekalkan topik ringkas), user klik
+// "X balasan" untuk expand ikut keperluan. _expandedReplies (Set post ID)
+// simpan state expand/collapse SEPANJANG sesi page ni (reset bila navigate
+// keluar Discussion & masuk semula) — supaya lepas hantar balasan baru,
+// thread yang baru dibalas terus expand (tak collapse balik secara mengejut).
+const _expandedReplies=new Set();
+function toggleRepliesList(id){
+  if(_expandedReplies.has(id))_expandedReplies.delete(id);
+  else _expandedReplies.add(id);
+  const box=document.getElementById('repliesList-'+id);
+  const link=document.getElementById('repliesToggle-'+id);
+  if(box)box.style.display=_expandedReplies.has(id)?'block':'none';
+  if(link)link.textContent=_expandedReplies.has(id)?'▴ Sembunyikan balasan':`▾ ${link.dataset.count} balasan`;
 }
 function toggleReplyBox(id){
   const box=document.getElementById('replyBox-'+id);
@@ -3596,6 +3614,7 @@ async function postDiscussionReply(parentId){
     })});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Failed to post.');
+    _expandedReplies.add(parentId); // biar balasan baru terus nampak, bukan collapse
     renderDiscussion();
   }catch(e){alert('Gagal post: '+e.message);}
 }
@@ -3676,7 +3695,7 @@ async function renderMessageThread(userId){
       thread.map(m=>{
         const isMe=m.senderId===currentUser.id;
         return`<div style="align-self:${isMe?'flex-end':'flex-start'};max-width:70%">
-          <div style="padding:8px 12px;border-radius:10px;font-size:13px;line-height:1.5;background:${isMe?'var(--purple-light)':'var(--bg)'};color:${isMe?'var(--purple)':'var(--text)'}">${esc(m.body)}${attachmentHTML(m)}</div>
+          <div style="padding:8px 12px;border-radius:10px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word;background:${isMe?'var(--purple-light)':'var(--bg)'};color:${isMe?'var(--purple)':'var(--text)'}">${esc(m.body)}${attachmentHTML(m)}</div>
           <div style="font-size:10px;color:var(--text3);margin-top:2px;text-align:${isMe?'right':'left'}">${fmtDateTime(m.createdAt)}</div>
         </div>`;
       }).join('')}
