@@ -11,7 +11,6 @@ function toClientShape(row) {
   return {
     id: row.id,
     authorId: row.author_id,
-    authorName: row.authorName || row.author_id,
     body: row.body,
     parentId: row.parent_id,
     createdAt: row.created_at,
@@ -63,11 +62,7 @@ export async function GET(request) {
       .select('*')
       .order('created_at', { ascending: true });
     if (error) throw error;
-    const { data: users } = await sb.from('users').select('id, name');
-    const nameMap = {};
-    (users || []).forEach(u => { nameMap[u.id] = u.name; });
-    const withNames = (data || []).map(row => ({ ...row, authorName: nameMap[row.author_id] || row.author_id }));
-    const withUrls = await withSignedUrls(withNames);
+    const withUrls = await withSignedUrls(data || []);
     // Buka page Discussion (senarai penuh dimuatkan) = anggap semua post
     // setakat ni dah dibaca -> upsert last_read_at supaya badge/notification
     // clear lepas ni.

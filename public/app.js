@@ -3523,7 +3523,6 @@ async function renderDiscussion(){
     return;
   }
   pollUnreadDiscussion(); // refresh badge terus lepas buka Discussion (server dah mark read)
-  const authorName=id=>{const p=posts.find(x=>x.authorId===id);return p?p.authorName:id;};
   const topLevel=posts.filter(p=>!p.parentId);
   const repliesOf=pid=>posts.filter(p=>p.parentId===pid);
   const canModerate=currentUser.role==='admin'||currentUser.role==='manager';
@@ -3534,10 +3533,7 @@ async function renderDiscussion(){
     const expanded=_expandedReplies.has(p.id);
     return`
     <div style="padding:${isReply?'10px 0 10px 24px':'14px 0'};${isReply?'border-left:2px solid var(--border);margin-left:8px':'border-bottom:1px solid var(--border)'}">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
-        <div style="font-weight:600;font-size:13px">${esc(authorName(p.authorId))}</div>
-        ${(isOwner||canModerate)?`<button class="btn btn-danger" style="padding:2px 8px;font-size:10px" onclick="deleteDiscussionPost('${p.id}')">Delete</button>`:''}
-      </div>
+      ${(isOwner||canModerate)?`<div style="display:flex;justify-content:flex-end"><button class="btn btn-danger" style="padding:2px 8px;font-size:10px" onclick="deleteDiscussionPost('${p.id}')">Delete</button></div>`:''}
       <div style="font-size:13px;color:var(--text2);margin-top:4px;white-space:pre-wrap;line-height:1.5">${esc(p.body)}</div>
       ${attachmentHTML(p)}
       <div style="font-size:11px;color:var(--text3);margin-top:6px;display:flex;align-items:center;gap:10px">
