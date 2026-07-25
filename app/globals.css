@@ -803,6 +803,7 @@ tr:hover td { background:var(--bg); }
   max-width:480px;
   max-height:90vh;
   overflow-y:auto;
+  overflow-x:hidden;
   box-shadow:var(--shadow-lg);
 }
 .modal-title { font-size:17px; font-weight:700; margin-bottom:1.25rem; color:var(--text); letter-spacing:-0.2px; }

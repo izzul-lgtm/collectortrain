@@ -4581,12 +4581,12 @@ function renderTakeQuizModal(quiz,questions,myAttempt){
       const isSelected=_takeQuizState.answers[qi]===oi;
       const isCorrect=submitted&&q.correctIndex===oi;
       const isWrongPick=submitted&&isSelected&&q.correctIndex!==oi;
-      let style='display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;font-size:12px;width:100%;box-sizing:border-box;justify-content:flex-start;text-align:left;';
+      let style='display:flex;align-items:center;gap:8px;padding:8px 8px;margin-bottom:4px;border-radius:6px;font-size:12px;width:100%;box-sizing:border-box;justify-content:flex-start;text-align:left;';
       if(isCorrect)style+='background:#e8f5e9;color:#2e7d32;';
       else if(isWrongPick)style+='background:#fdecea;color:var(--red);';
       return`<label style="${style}cursor:${submitted?'default':'pointer'}">
         <input type="radio" name="tqOpt${qi}" style="flex-shrink:0" ${isSelected?'checked':''} ${submitted?'disabled':''} onchange="_takeQuizState.answers[${qi}]=${oi}">
-        <span style="flex:1;min-width:0">${esc(opt)}${isCorrect?' ✓':''}</span>
+        <span style="flex:1;min-width:0;word-break:break-word;overflow-wrap:anywhere">${esc(opt)}${isCorrect?' ✓':''}</span>
       </label>`;
     }).join('')}
   </div>`).join('')}
