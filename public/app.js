@@ -84,6 +84,10 @@ function insertEmoji(targetId,emoji){
 // nya elak Storage/system jadi berat sebab lampiran lama bertimbun.
 const ATTACHMENT_MAX_MB=10;
 const ATTACHMENT_ALLOWED_TYPES=['image/jpeg','image/png','image/gif','image/webp','application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','text/plain'];
+// Learning (SOP/onboarding) — had lebih longgar + video, TAK dikongsi dengan
+// had 10MB mesej (lihat lib/attachments.js untuk penjelasan sama di server).
+const LEARNING_ATTACHMENT_MAX_MB=100;
+const LEARNING_ATTACHMENT_ALLOWED_TYPES=[...ATTACHMENT_ALLOWED_TYPES,'video/mp4','video/webm','video/quicktime','video/x-msvideo'];
 const _pendingAttachments={};
 
 function attachBtnHTML(targetId){
@@ -119,11 +123,12 @@ function clearAttachment(targetId){
 // Upload fail (kalau ada) untuk targetId ni, return {path,name,type,size} atau
 // null kalau tiada fail dipilih. Throws kalau upload gagal — caller patut
 // tunjuk error tu dan JANGAN teruskan hantar mesej/post (elak "separuh jalan").
-async function uploadPendingAttachment(targetId){
+async function uploadPendingAttachment(targetId,context){
   const file=_pendingAttachments[targetId];
   if(!file)return null;
   const fd=new FormData();
   fd.append('file',file);
+  if(context)fd.append('context',context);
   const token=localStorage.getItem('ct_session_token')||'';
   const res=await fetch('/api/attachments',{method:'POST',headers:{'x-session-token':token},body:fd});
   const data=await res.json();
@@ -4069,15 +4074,31 @@ async function renderLearning(){
     const isLinkType=s.contentType!=='text';
     const fileUrl=s.contentType==='file'?(s.attachmentUrl||s.content||null):null;
     const fileLabel=s.contentType==='file'?(s.attachmentName||s.content):null;
+    const mime=s.attachmentType||'';
+    let fileBodyHTML='';
+    if(s.contentType==='file'){
+      if(!fileUrl){
+        fileBodyHTML=`<div style="font-size:12px;color:var(--text3)">⚠ Tiada fail/URL dilampirkan</div>`;
+      }else if(mime.startsWith('image/')){
+        fileBodyHTML=`<img src="${esc(fileUrl)}" alt="${esc(fileLabel||'')}" style="max-width:100%;max-height:320px;border-radius:6px;margin-top:6px;display:block;cursor:pointer" onclick="window.open('${esc(fileUrl)}','_blank')">`;
+      }else if(mime==='application/pdf'){
+        fileBodyHTML=`<button class="btn btn-secondary" style="padding:4px 10px;font-size:11px;margin-top:4px" onclick="viewLearningFile('${esc(fileUrl)}','${esc(fileLabel||'')}','pdf')">📄 Lihat PDF</button>`;
+      }else if(mime.startsWith('video/')){
+        fileBodyHTML=`<video controls preload="metadata" style="max-width:100%;max-height:320px;border-radius:6px;margin-top:6px;display:block" src="${esc(fileUrl)}"></video>`;
+      }else{
+        // Word/Excel/lain — tiada penonton dalam-pelayar tersedia tanpa
+        // servis luar (bucket private, tiada URL awam boleh diberi ke
+        // Office/Google viewer) — beri link biasa, label jujur "muat turun".
+        fileBodyHTML=`<a href="${esc(fileUrl)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--purple);word-break:break-all">⬇ ${esc(fileLabel||'Muat turun fail')}</a>`;
+      }
+    }
     return`
     <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">
       <input type="checkbox" ${done?'checked':''} onchange="toggleLearningStep('${s.id}',this.checked)" style="margin-top:3px;width:16px;height:16px;cursor:pointer;flex-shrink:0">
       <div style="flex:1;min-width:0">
         <div style="font-size:13px;font-weight:600;${done?'color:var(--text3);text-decoration:line-through':''}">${contentTypeIcon[s.contentType]||'📄'} ${esc(s.title)}</div>
         ${s.contentType==='file'
-          ?(fileUrl
-            ?`<a href="${esc(fileUrl)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--purple);word-break:break-all">📎 ${esc(fileLabel||'Buka fail')}</a>`
-            :`<div style="font-size:12px;color:var(--text3)">⚠ Tiada fail/URL dilampirkan</div>`)
+          ?fileBodyHTML
           :isLinkType
             ?`<a href="${esc(s.content)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--purple);word-break:break-all">${esc(s.content)}</a>`
             :`<div style="font-size:12px;color:var(--text2);margin-top:4px;white-space:pre-wrap;line-height:1.5">${esc(s.content)}</div>`}
@@ -4122,6 +4143,19 @@ async function toggleLearningStep(stepId,done){
   try{ await learningApi.setProgress(stepId,done); }
   catch(e){ alert('Gagal kemaskini progress: '+e.message); renderLearning(); }
 }
+// Buka PDF terus dalam modal (iframe guna PDF renderer terbina-dalam pelayar)
+// — supaya staf boleh baca dalam sistem tanpa perlu muat turun fail.
+function viewLearningFile(url,label,kind){
+  if(kind==='pdf'){
+    openModal(`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div class="modal-title" style="margin-bottom:0">📄 ${esc(label||'PDF')}</div>
+      <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="closeModal()">✕ Tutup</button>
+    </div>
+    <iframe src="${esc(url)}" style="width:100%;height:75vh;border:1px solid var(--border);border-radius:6px;background:#fff"></iframe>
+    `,true);
+  }
+}
 function openLearningModuleForm(existing){
   openModal(`
   <div class="modal-title">${existing?'Edit Module':'📘 New Module'}</div>
@@ -4165,7 +4199,7 @@ function openLearningStepForm(moduleId,existing){
       <option value="text" ${contentType==='text'?'selected':''}>📄 Teks / SOP</option>
       <option value="video" ${contentType==='video'?'selected':''}>🎬 Video (URL)</option>
       <option value="link" ${contentType==='link'?'selected':''}>🔗 Link luar</option>
-      <option value="file" ${contentType==='file'?'selected':''}>📎 Fail (PDF/Word/Excel/imej)</option>
+      <option value="file" ${contentType==='file'?'selected':''}>📎 Fail / Video (upload terus)</option>
     </select>
   </div>
   <div class="form-row"><label id="lsContentLabel">Kandungan</label><textarea id="lsContent" rows="5" placeholder="Tulis kandungan penuh di sini">${existing?esc(existing.content):''}</textarea></div>
@@ -4194,7 +4228,7 @@ function renderLearningAttachSection(){
     <button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:13px" onclick="document.getElementById('file-lsContent').click()">📎 ${keepingExisting?'Ganti Fail':'Muat Naik Fail'}</button>
     <input type="file" id="file-lsContent" style="display:none" onchange="handleLearningAttachmentPick(this)">
     <div id="attachPreview-lsContent" style="font-size:11px;color:var(--text3);margin-top:4px"></div>
-    <div style="font-size:10px;color:var(--text3);margin-top:2px">Max ${ATTACHMENT_MAX_MB}MB — imej, PDF, Word, Excel atau teks. Fail ni kekal (tiada auto-padam).</div>
+    <div style="font-size:10px;color:var(--text3);margin-top:2px">Max ${LEARNING_ATTACHMENT_MAX_MB}MB — imej, PDF, Word, Excel, teks atau video (mp4/webm/mov). Fail ni kekal (tiada auto-padam) & boleh dilihat terus dalam sistem.</div>
   `;
 }
 // Pick fail untuk step 'file' — guna _pendingAttachments/uploadPendingAttachment
@@ -4203,12 +4237,12 @@ function renderLearningAttachSection(){
 function handleLearningAttachmentPick(inputEl){
   const file=inputEl.files&&inputEl.files[0];
   if(!file)return;
-  if(file.size>ATTACHMENT_MAX_MB*1024*1024){alert(`Fail terlalu besar (max ${ATTACHMENT_MAX_MB}MB).`);inputEl.value='';return;}
-  if(!ATTACHMENT_ALLOWED_TYPES.includes(file.type)){alert('Jenis fail tidak disokong. Guna imej, PDF, Word, Excel atau teks (.txt).');inputEl.value='';return;}
+  if(file.size>LEARNING_ATTACHMENT_MAX_MB*1024*1024){alert(`Fail terlalu besar (max ${LEARNING_ATTACHMENT_MAX_MB}MB).`);inputEl.value='';return;}
+  if(!LEARNING_ATTACHMENT_ALLOWED_TYPES.includes(file.type)){alert('Jenis fail tidak disokong. Guna imej, PDF, Word, Excel, teks (.txt) atau video (mp4/webm/mov).');inputEl.value='';return;}
   _pendingAttachments['lsContent']=file;
   _lsAttachmentRemoved=false;
   const prev=document.getElementById('attachPreview-lsContent');
-  if(prev)prev.innerHTML=`📎 ${esc(file.name)} (${(file.size/1024).toFixed(0)}KB) <a href="#" onclick="event.preventDefault();clearLearningAttachment()" style="color:var(--red);font-weight:600">✕ Buang</a>`;
+  if(prev)prev.innerHTML=`📎 ${esc(file.name)} (${(file.size/1024/1024).toFixed(1)}MB) <a href="#" onclick="event.preventDefault();clearLearningAttachment()" style="color:var(--red);font-weight:600">✕ Buang</a>`;
 }
 function clearLearningAttachment(){
   clearAttachment('lsContent');
@@ -4230,7 +4264,7 @@ async function saveLearningStep(id,moduleId){
   try{
     let attachment=null;
     if(contentType==='file'){
-      attachment=await uploadPendingAttachment('lsContent'); // null kalau tiada fail baru dipilih
+      attachment=await uploadPendingAttachment('lsContent','learning'); // null kalau tiada fail baru dipilih
     }
     const keepsExisting=contentType==='file'&&!attachment&&_lsExistingAttachment&&!_lsAttachmentRemoved;
     if(contentType==='file'&&!attachment&&!keepsExisting&&!content.trim()){
@@ -5742,7 +5776,7 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
 }
 
 // ═══════════ MODAL ═══════════
-function openModal(html){document.getElementById('modalBox').innerHTML=html;document.getElementById('modalOverlay').classList.add('open');}
+function openModal(html,wide){document.getElementById('modalBox').style.maxWidth=wide?'min(920px, 92vw)':'';document.getElementById('modalBox').innerHTML=html;document.getElementById('modalOverlay').classList.add('open');}
 function closeModal(e){if(!e||e.target===document.getElementById('modalOverlay')){document.getElementById('modalOverlay').classList.remove('open');stopScenarioDraftTimer();}}
 
 // ═══════════ UTILS ═══════════

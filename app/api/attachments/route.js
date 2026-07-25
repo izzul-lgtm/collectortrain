@@ -13,7 +13,7 @@
 // Rate limit sama macam claude route — elak abuse storage (spam upload).
 import { requireAuthWithUser } from '../../../lib/requireAuth';
 import { rateLimit } from '../../../lib/rateLimit';
-import { uploadAttachment } from '../../../lib/attachments';
+import { uploadAttachment, LEARNING_ATTACHMENT_MAX_BYTES, LEARNING_ATTACHMENT_ALLOWED_TYPES } from '../../../lib/attachments';
 
 export async function POST(request) {
   const { authError, authUser } = await requireAuthWithUser(request);
@@ -35,7 +35,10 @@ export async function POST(request) {
   }
 
   try {
-    const attachment = await uploadAttachment(file, authUser.id);
+    const opts = form.get('context') === 'learning'
+      ? { maxBytes: LEARNING_ATTACHMENT_MAX_BYTES, allowedTypes: LEARNING_ATTACHMENT_ALLOWED_TYPES }
+      : {};
+    const attachment = await uploadAttachment(file, authUser.id, opts);
     return Response.json({ attachment });
   } catch (e) {
     return Response.json({ error: e.message || 'Gagal muat naik lampiran.' }, { status: 400 });
