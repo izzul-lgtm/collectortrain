@@ -350,3 +350,235 @@ alter table audit_log enable row level security;
 drop policy if exists "audit_log_read_all" on audit_log;
 create policy "audit_log_read_all" on audit_log
   for select using (true);
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Mesej peribadi (DM) + Discussion board — dengan sokongan lampiran
+-- ═══════════════════════════════════════════════════════════════════
+-- Nota: `create table if not exists` di sini idempotent — kalau jadual ni
+-- dah wujud (dibuat manual dalam dashboard sebelum ni), statement ni skip
+-- sahaja dan terus ke `alter table ... add column if not exists` di bawah,
+-- yang akan tambah 4 lajur lampiran baru tanpa jejaskan data sedia ada.
+
+create table if not exists messages (
+  id            text primary key,
+  sender_id     text not null,
+  recipient_id  text not null,
+  body          text not null,
+  read_at       timestamptz,
+  created_at    timestamptz not null default now()
+);
+
+create table if not exists discussion_posts (
+  id            text primary key,
+  author_id     text not null,
+  body          text not null,
+  parent_id     text references discussion_posts(id) on delete cascade,
+  created_at    timestamptz not null default now()
+);
+
+-- Lampiran (attachment) — fail disimpan dalam Storage bucket `attachments`
+-- (private), lajur di bawah cuma simpan METADATA + path storan, bukan fail
+-- sebenar. attachment_url simpan STORAGE PATH (bukan public URL — bucket
+-- private), server jana signed URL sementara (1 jam) bila GET dipanggil.
+--
+-- PURGE 48 JAM: cron job harian (/api/cron/purge-attachments, lihat
+-- vercel.json) padam fail dalam Storage + null-kan 4 lajur ni untuk
+-- baris >48 jam. Mesej/post sendiri KEKAL — cuma lampiran dibuang, supaya
+-- Storage tak membesar tanpa had ("elak system berat").
+alter table messages add column if not exists attachment_path text;
+alter table messages add column if not exists attachment_name text;
+alter table messages add column if not exists attachment_type text;
+alter table messages add column if not exists attachment_size integer;
+
+alter table discussion_posts add column if not exists attachment_path text;
+alter table discussion_posts add column if not exists attachment_name text;
+alter table discussion_posts add column if not exists attachment_type text;
+alter table discussion_posts add column if not exists attachment_size integer;
+
+create index if not exists idx_messages_sender on messages(sender_id);
+create index if not exists idx_messages_recipient on messages(recipient_id);
+create index if not exists idx_messages_created_at on messages(created_at);
+-- Bantu query purge job cari lampiran >48 jam dengan cepat (jadual boleh
+-- jadi besar lama-lama, index partial ni kekal kecil sebab cuma cover
+-- baris yang MASIH ada lampiran).
+create index if not exists idx_messages_attachment_purge on messages(created_at) where attachment_path is not null;
+
+create index if not exists idx_discussion_posts_parent on discussion_posts(parent_id);
+create index if not exists idx_discussion_posts_created_at on discussion_posts(created_at);
+create index if not exists idx_discussion_posts_attachment_purge on discussion_posts(created_at) where attachment_path is not null;
+
+-- Discussion tak macam Messages (tiada recipient khusus per baris — semua
+-- orang boleh nampak semua post), so "unread" tak boleh disimpan sebagai
+-- lajur read_at atas discussion_posts. Sebaliknya kita simpan SATU
+-- timestamp "last_read_at" per user — unread count = bilangan post
+-- (bukan author sendiri) dengan created_at > last_read_at user tu.
+-- Di-upsert setiap kali user buka page Discussion (GET /api/discussion).
+create table if not exists discussion_reads (
+  user_id       text primary key,
+  last_read_at  timestamptz not null default now()
+);
+
+alter table messages enable row level security;
+alter table discussion_posts enable row level security;
+alter table discussion_reads enable row level security;
+
+-- App guna supabaseAdmin (service role, bypass RLS) di server sahaja —
+-- policy read-all ni sekadar defence-in-depth, sama pattern macam audit_log.
+drop policy if exists "messages_read_all" on messages;
+create policy "messages_read_all" on messages for select using (true);
+drop policy if exists "discussion_posts_read_all" on discussion_posts;
+create policy "discussion_posts_read_all" on discussion_posts for select using (true);
+drop policy if exists "discussion_reads_read_all" on discussion_reads;
+create policy "discussion_reads_read_all" on discussion_reads for select using (true);
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Storage bucket untuk lampiran mesej/discussion
+-- ═══════════════════════════════════════════════════════════════════
+-- Bucket PRIVATE (public=false) — fail cuma boleh dibaca melalui signed URL
+-- yang dijana server (service role), elak sesiapa guna URL awam untuk akses
+-- lampiran orang lain. file_size_limit & allowed_mime_types di sini ikut had
+-- PALING LONGGAR (Learning, 100MB + video) — had lagi ketat untuk mesej/
+-- discussion (10MB, tiada video) dikuatkuasakan di app/api/attachments/
+-- route.js (bukan di Storage), 2 lapisan check sekadar defence-in-depth.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'attachments', 'attachments', false, 104857600,
+  array['image/jpeg','image/png','image/gif','image/webp','application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/plain',
+        'video/mp4','video/webm','video/quicktime','video/x-msvideo']
+)
+on conflict (id) do update set
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+-- Tiada storage.objects policy ditambah sengaja — semua akses (upload, signed
+-- URL, delete semasa purge) berlaku melalui supabaseAdmin (service role) di
+-- server, yang bypass RLS/Storage policy sepenuhnya. Client TIDAK PERNAH
+-- berurusan terus dengan Supabase Storage.
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Learning Modules — kandungan pembelajaran berstruktur (bacaan/video/SOP)
+-- tersusun ikut step, terutamanya untuk onboarding staf baru. Admin/manager
+-- urus kandungan, semua staf (termasuk collector) boleh baca & tanda step
+-- sebagai selesai. Susunan modul & step (order_index) tentukan urutan
+-- "course" — supaya staf baru ikut ikut step yang logik, bukan random.
+-- ═══════════════════════════════════════════════════════════════════
+create table if not exists learning_modules (
+  id            text primary key,
+  title         text not null,
+  description   text,
+  order_index   integer not null default 0,
+  created_by    text not null,
+  created_at    timestamptz not null default now()
+);
+
+create table if not exists learning_steps (
+  id            text primary key,
+  module_id     text not null references learning_modules(id) on delete cascade,
+  title         text not null,
+  -- content_type: 'text' (bacaan/SOP, content = badan teks), 'video' atau
+  -- 'link' (content = URL — video YouTube/Drive/dsb, atau link luar), 'file'
+  -- (content = URL fail luar, ATAU kosong kalau fail dimuat naik terus —
+  -- lihat attachment_* di bawah).
+  content_type  text not null default 'text' check (content_type in ('text','video','link','file')),
+  content       text not null,
+  order_index   integer not null default 0,
+  created_at    timestamptz not null default now()
+);
+
+-- Lampiran fail dimuat naik terus (PDF/Word/Excel/imej) untuk step jenis
+-- 'file' — guna Storage bucket `attachments` YANG SAMA macam messages/
+-- discussion (lihat app/api/attachments/route.js & lib/attachments.js),
+-- TAPI SENGAJA TIDAK tertakluk pada cron purge 48 jam (purge-attachments
+-- cuma target table messages/discussion_posts secara explicit — lihat
+-- app/api/cron/purge-attachments/route.js). Fail Learning kekal SELAMA-
+-- LAMANYA sehingga step dipadam/fail diganti (app/api/learning/route.js
+-- padam fail Storage lama secara manual bila itu berlaku).
+alter table learning_steps add column if not exists attachment_path text;
+alter table learning_steps add column if not exists attachment_name text;
+alter table learning_steps add column if not exists attachment_type text;
+alter table learning_steps add column if not exists attachment_size integer;
+
+-- Progress per staf per step — composite PK (bukan text id berasingan)
+-- sebab semantiknya "adakah user ni dah selesai step ni", bukan rekod
+-- berbilang attempt macam quiz_attempts di bawah.
+create table if not exists learning_progress (
+  user_id       text not null,
+  step_id       text not null references learning_steps(id) on delete cascade,
+  completed_at  timestamptz not null default now(),
+  primary key (user_id, step_id)
+);
+
+create index if not exists idx_learning_steps_module on learning_steps(module_id);
+create index if not exists idx_learning_progress_user on learning_progress(user_id);
+
+alter table learning_modules enable row level security;
+alter table learning_steps enable row level security;
+alter table learning_progress enable row level security;
+drop policy if exists "learning_modules_read_all" on learning_modules;
+create policy "learning_modules_read_all" on learning_modules for select using (true);
+drop policy if exists "learning_steps_read_all" on learning_steps;
+create policy "learning_steps_read_all" on learning_steps for select using (true);
+drop policy if exists "learning_progress_read_all" on learning_progress;
+create policy "learning_progress_read_all" on learning_progress for select using (true);
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Weekly Quiz — wajib (macam Assignments), admin/manager boleh set soalan
+-- manual ATAU auto-generate draf guna AI (Claude, client-side call ke
+-- /api/claude — sama pattern macam AI Scenario Builder, tiada endpoint
+-- server berasingan diperlukan untuk generation). Status siapa dah/belum
+-- jawab DIKIRA on-the-fly (bukan pre-created stub row per collector) —
+-- sama approach macam statusBadge() dalam Assignments: bandingkan
+-- quiz_attempts sedia ada vs due_date, bukan simpan status eksplisit.
+-- ═══════════════════════════════════════════════════════════════════
+create table if not exists quizzes (
+  id            text primary key,
+  title         text not null,
+  description   text,
+  source        text not null default 'manual' check (source in ('manual','ai')),
+  due_date      date,
+  published     boolean not null default false,
+  created_by    text not null,
+  created_at    timestamptz not null default now()
+);
+
+create table if not exists quiz_questions (
+  id            text primary key,
+  quiz_id       text not null references quizzes(id) on delete cascade,
+  question      text not null,
+  options       jsonb not null,   -- array of strings, cth ["A","B","C","D"]
+  correct_index integer not null, -- index dalam `options` yang betul
+  order_index   integer not null default 0
+);
+
+-- unique(quiz_id, user_id): satu attempt sahaja per collector per quiz —
+-- elak collector cuba berkali-kali sampai jawab betul (defeat purpose
+-- "wajib" tu — nak ukur pemahaman sebenar, bukan proses cuba-jaya).
+create table if not exists quiz_attempts (
+  id            text primary key,
+  quiz_id       text not null references quizzes(id) on delete cascade,
+  user_id       text not null,
+  answers       jsonb,      -- array of selected option index, ikut order_index soalan
+  score         integer,    -- bilangan jawapan betul
+  total         integer,    -- jumlah soalan (snapshot masa attempt — elak salah kira kalau soalan ditambah/dibuang lepas ni)
+  submitted_at  timestamptz not null default now(),
+  unique(quiz_id, user_id)
+);
+
+create index if not exists idx_quiz_questions_quiz on quiz_questions(quiz_id);
+create index if not exists idx_quiz_attempts_quiz on quiz_attempts(quiz_id);
+create index if not exists idx_quiz_attempts_user on quiz_attempts(user_id);
+
+alter table quizzes enable row level security;
+alter table quiz_questions enable row level security;
+alter table quiz_attempts enable row level security;
+drop policy if exists "quizzes_read_all" on quizzes;
+create policy "quizzes_read_all" on quizzes for select using (true);
+drop policy if exists "quiz_questions_read_all" on quiz_questions;
+create policy "quiz_questions_read_all" on quiz_questions for select using (true);
+drop policy if exists "quiz_attempts_read_all" on quiz_attempts;
+create policy "quiz_attempts_read_all" on quiz_attempts for select using (true);

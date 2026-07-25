@@ -4477,17 +4477,17 @@ function renderQuizQuestionRows(){
   const el=document.getElementById('qzQuestionsList');
   if(!el)return;
   el.innerHTML=_quizDraftQuestions.map((q,qi)=>`
-    <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:8px">
-      <div style="display:flex;gap:6px;align-items:flex-start">
-        <input value="${esc(q.question)}" placeholder="Soalan ${qi+1}" oninput="_quizDraftQuestions[${qi}].question=this.value" style="flex:1;padding:7px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px">
-        <button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="removeQuizQuestionRow(${qi})">✕</button>
+    <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:8px;box-sizing:border-box;width:100%">
+      <div style="display:flex;gap:6px;align-items:flex-start;width:100%">
+        <input value="${esc(q.question)}" placeholder="Soalan ${qi+1}" oninput="_quizDraftQuestions[${qi}].question=this.value" style="flex:1 1 0%;min-width:0;width:100%;box-sizing:border-box;padding:7px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px">
+        <button class="btn btn-danger" style="padding:4px 8px;font-size:11px;flex-shrink:0" onclick="removeQuizQuestionRow(${qi})">✕</button>
       </div>
-      <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">
+      <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px;width:100%">
         ${q.options.map((opt,oi)=>`
-        <div style="display:flex;gap:6px;align-items:center">
-          <input type="radio" name="qzCorrect${qi}" ${q.correctIndex===oi?'checked':''} onchange="_quizDraftQuestions[${qi}].correctIndex=${oi}" title="Tandakan sebagai jawapan betul">
-          <input value="${esc(opt)}" placeholder="Pilihan ${oi+1}" oninput="_quizDraftQuestions[${qi}].options[${oi}]=this.value" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:12px">
-          ${q.options.length>2?`<button class="btn btn-secondary" style="padding:2px 6px;font-size:10px" onclick="removeQuizOption(${qi},${oi})">✕</button>`:''}
+        <div style="display:flex;gap:6px;align-items:center;width:100%">
+          <input type="radio" name="qzCorrect${qi}" ${q.correctIndex===oi?'checked':''} onchange="_quizDraftQuestions[${qi}].correctIndex=${oi}" title="Tandakan sebagai jawapan betul" style="flex-shrink:0">
+          <input value="${esc(opt)}" placeholder="Pilihan ${oi+1}" oninput="_quizDraftQuestions[${qi}].options[${oi}]=this.value" style="flex:1 1 0%;min-width:0;width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:12px">
+          ${q.options.length>2?`<button class="btn btn-secondary" style="padding:2px 6px;font-size:10px;flex-shrink:0" onclick="removeQuizOption(${qi},${oi})">✕</button>`:''}
         </div>`).join('')}
         <button class="btn btn-secondary" style="padding:2px 8px;font-size:10px;align-self:flex-start;margin-top:2px" onclick="addQuizOption(${qi})">+ Pilihan</button>
       </div>
