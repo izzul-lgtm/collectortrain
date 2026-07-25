@@ -4379,9 +4379,9 @@ async function viewQuizContent(id){
       <div style="font-size:13px;font-weight:600;margin-bottom:6px">${qi+1}. ${esc(q.question)}</div>
       ${q.options.map((opt,oi)=>{
         const isCorrect=q.correctIndex===oi;
-        let style='display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;font-size:12px;width:100%;box-sizing:border-box;justify-content:flex-start;text-align:left;';
-        if(isCorrect)style+='background:#e8f5e9;color:#2e7d32;font-weight:600;';
-        return`<div style="${style}">${esc(opt)}${isCorrect?' ✓':''}</div>`;
+        let cls='quiz-option readonly'+(isCorrect?' is-correct':'');
+        let style=isCorrect?'font-weight:600;':'';
+        return`<div class="${cls}" style="${style}"><span class="quiz-option-text">${esc(opt)}${isCorrect?' ✓':''}</span></div>`;
       }).join('')}
     </div>`).join('')}
     `);
@@ -4484,8 +4484,8 @@ function renderQuizQuestionRows(){
       </div>
       <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px;width:100%">
         ${q.options.map((opt,oi)=>`
-        <div style="display:flex;gap:6px;align-items:center;width:100%">
-          <input type="radio" name="qzCorrect${qi}" ${q.correctIndex===oi?'checked':''} onchange="_quizDraftQuestions[${qi}].correctIndex=${oi}" title="Tandakan sebagai jawapan betul" style="flex-shrink:0">
+        <div class="quiz-option" style="padding:0;margin-bottom:0;cursor:default">
+          <input type="radio" name="qzCorrect${qi}" ${q.correctIndex===oi?'checked':''} onchange="_quizDraftQuestions[${qi}].correctIndex=${oi}" title="Tandakan sebagai jawapan betul">
           <input value="${esc(opt)}" placeholder="Pilihan ${oi+1}" oninput="_quizDraftQuestions[${qi}].options[${oi}]=this.value" style="flex:1 1 0%;min-width:0;width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:12px">
           ${q.options.length>2?`<button class="btn btn-secondary" style="padding:2px 6px;font-size:10px;flex-shrink:0" onclick="removeQuizOption(${qi},${oi})">✕</button>`:''}
         </div>`).join('')}
@@ -4581,12 +4581,12 @@ function renderTakeQuizModal(quiz,questions,myAttempt){
       const isSelected=_takeQuizState.answers[qi]===oi;
       const isCorrect=submitted&&q.correctIndex===oi;
       const isWrongPick=submitted&&isSelected&&q.correctIndex!==oi;
-      let style='display:flex;align-items:center;gap:8px;padding:8px 8px;margin-bottom:4px;border-radius:6px;font-size:12px;width:100%;box-sizing:border-box;justify-content:flex-start;text-align:left;';
-      if(isCorrect)style+='background:#e8f5e9;color:#2e7d32;';
-      else if(isWrongPick)style+='background:#fdecea;color:var(--red);';
-      return`<label style="${style}cursor:${submitted?'default':'pointer'}">
-        <input type="radio" name="tqOpt${qi}" style="flex-shrink:0" ${isSelected?'checked':''} ${submitted?'disabled':''} onchange="_takeQuizState.answers[${qi}]=${oi}">
-        <span style="flex:1;min-width:0;word-break:break-word;overflow-wrap:anywhere">${esc(opt)}${isCorrect?' ✓':''}</span>
+      let cls='quiz-option'+(submitted?' readonly':'');
+      if(isCorrect)cls+=' is-correct';
+      else if(isWrongPick)cls+=' is-wrong';
+      return`<label class="${cls}">
+        <input type="radio" name="tqOpt${qi}" ${isSelected?'checked':''} ${submitted?'disabled':''} onchange="_takeQuizState.answers[${qi}]=${oi}">
+        <span class="quiz-option-text">${esc(opt)}${isCorrect?' ✓':''}</span>
       </label>`;
     }).join('')}
   </div>`).join('')}
