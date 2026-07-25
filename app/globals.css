@@ -57,6 +57,51 @@ input:focus, select:focus, textarea:focus {
 input::placeholder { color:var(--text3); }
 button { font-family:inherit; cursor:pointer; }
 
+/* Radio & checkbox mesti dikecualikan daripada rule input{width:100%;padding:10px 14px}
+   di atas — kalau tidak, radio button akan jadi kotak besar (width:100% + padding),
+   menolak teks pilihan jawapan ke tepi sampai terpotong. */
+input[type="radio"],
+input[type="checkbox"] {
+  width:16px;
+  height:16px;
+  min-width:16px;
+  min-height:16px;
+  padding:0;
+  margin:0;
+  border:1.5px solid var(--border2);
+  border-radius:50%;
+  accent-color:var(--brand);
+  flex:0 0 auto;
+}
+input[type="checkbox"] { border-radius:4px; }
+
+/* ═══════════ QUIZ OPTION (radio) ROW — Flexbox ═══════════ */
+.quiz-option {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  width:100%;
+  padding:8px 10px;
+  margin-bottom:6px;
+  border-radius:6px;
+  font-size:12px;
+  line-height:1.4;
+  box-sizing:border-box;
+  text-align:left;
+  cursor:pointer;
+}
+.quiz-option:last-child { margin-bottom:0; }
+.quiz-option.readonly { cursor:default; }
+.quiz-option input[type="radio"] { flex:0 0 auto; }
+.quiz-option-text {
+  flex:1 1 auto;
+  min-width:0;
+  word-break:break-word;
+  overflow-wrap:anywhere;
+}
+.quiz-option.is-correct { background:#e8f5e9; color:#2e7d32; }
+.quiz-option.is-wrong { background:#fdecea; color:var(--red); }
+
 .screen { display:none; }
 .screen.active { display:block; }
 
