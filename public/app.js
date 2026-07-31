@@ -3745,15 +3745,31 @@ async function renderMessages(){
   }
   pollUnreadMessages(); // refresh badge terus lepas buka inbox
   const convos=data.conversations||[];
+  const groups=data.groups||[];
+  const canCreateGroup=currentUser.role==='admin'||currentUser.role==='manager';
   setContent(`
   <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
-    <div><div class="page-title">✉️ Messages</div><div class="page-sub">Mesej peribadi antara staf</div></div>
+    <div><div class="page-title">✉️ Messages</div><div class="page-sub">Mesej peribadi & group chat antara staf</div></div>
     <div style="display:flex;gap:8px;align-items:center">
       ${notifStatusButton()}
+      ${canCreateGroup?`<button class="btn btn-secondary" onclick="openNewGroupModal()">+ New Group</button>`:''}
       <button class="btn btn-primary" onclick="openNewMessagePicker()">+ New Message</button>
     </div>
   </div>
   <div class="card">
+    <div class="card-title">👥 Group Chats</div>
+    ${groups.length===0?`<div style="font-size:12px;color:var(--text3);padding:6px 0 12px">${canCreateGroup?'Tiada group chat lagi. Klik "+ New Group" untuk buat satu.':'Anda belum jadi ahli mana-mana group chat.'}</div>`:
+    groups.map(g=>`
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="openGroupThread('${g.id}')">
+        <div style="min-width:0">
+          <div style="font-weight:600;font-size:13px">👥 ${esc(g.name)}${g.unreadCount>0?` <span class="chip chip-red" style="font-size:10px">${g.unreadCount} baru</span>`:''}</div>
+          <div style="font-size:12px;color:var(--text3);margin-top:2px;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${g.lastMessage?esc(g.lastMessage):'Belum ada mesej'} · ${g.memberCount} ahli</div>
+        </div>
+        <div style="font-size:11px;color:var(--text3);flex-shrink:0;margin-left:10px">${fmtDateTime(g.lastAt)}</div>
+      </div>`).join('')}
+  </div>
+  <div class="card">
+    <div class="card-title">💬 Direct Messages</div>
     ${convos.length===0?`<div class="empty-state"><div class="es-icon">✉️</div><p>Tiada mesej lagi. Klik "+ New Message" untuk mula.</p></div>`:
     convos.map(c=>`
       <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="openMessageThread('${c.userId}')">
@@ -3881,6 +3897,210 @@ async function sendNewMessage(){
   }catch(e){alert('Gagal hantar: '+e.message);}
 }
 
+// ═══════════ GROUP CHAT (create/manage = admin+manager sahaja, hantar
+// mesej = SEMUA ahli group, termasuk collector) ═══════════
+function openGroupThread(groupId){
+  renderGroupThread(groupId);
+}
+
+async function renderGroupThread(groupId){
+  setContent('<div class="page-header"><div class="page-title">Messages</div></div><div class="card">Loading...</div>');
+  let data;
+  try{
+    const res=await fetch('/api/messages?groupId='+encodeURIComponent(groupId),{headers:authHeaders()});
+    data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load group.');
+  }catch(e){
+    setContent(`<div class="page-header"><div class="page-title">Messages</div></div><div class="card">⚠ ${esc(e.message)}</div>`);
+    return;
+  }
+  pollUnreadMessages(); // badge patut turun lepas baca thread ni (server dah mark read)
+  const thread=data.thread||[];
+  const group=data.group||{name:'Group'};
+  const canManage=currentUser.role==='admin'||currentUser.role==='manager';
+  setContent(`
+  <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+    <div>
+      <a href="#" onclick="event.preventDefault();closeMessageThread()" style="font-size:12px;color:var(--purple);font-weight:600">← Back to Messages</a>
+      <div class="page-title" style="margin-top:4px">👥 ${esc(group.name)}</div>
+      <div class="page-sub">${(group.members||[]).length} ahli: ${(group.members||[]).map(m=>esc(m.name)).join(', ')}</div>
+    </div>
+    ${canManage?`<button class="btn btn-secondary" onclick="openManageGroupModal('${groupId}')">⚙️ Manage Group</button>`:''}
+  </div>
+  <div class="card">
+    <div id="msgThreadBox" style="max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
+      ${thread.length===0?`<div style="font-size:13px;color:var(--text3);text-align:center;padding:20px 0">Belum ada mesej. Mulakan perbualan!</div>`:
+      thread.map(m=>{
+        const isMe=m.senderId===currentUser.id;
+        return`<div style="align-self:${isMe?'flex-end':'flex-start'};max-width:70%">
+          ${!isMe?`<div style="font-size:11px;color:var(--text3);margin-bottom:2px;font-weight:600">${esc(m.senderName||m.senderId)}</div>`:''}
+          <div style="padding:8px 12px;border-radius:10px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word;background:${isMe?'var(--purple-light)':'var(--bg)'};color:${isMe?'var(--purple)':'var(--text)'}">${esc(m.body)}${attachmentHTML(m)}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:2px;text-align:${isMe?'right':'left'}">${fmtDateTime(m.createdAt)}</div>
+        </div>`;
+      }).join('')}
+    </div>
+    <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:10px">
+      <div style="display:flex;gap:8px">
+        <textarea id="msgThreadInput" placeholder="Tulis mesej..." rows="1" style="flex:1;resize:none;overflow-y:hidden;max-height:140px;line-height:1.4" oninput="this.rows=1;const r=Math.min(6,Math.ceil(this.scrollHeight/20));this.rows=r;" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessageInGroupThread('${groupId}');}"></textarea>
+        ${emojiBtnHTML('msgThreadInput')}
+        ${attachBtnHTML('msgThreadInput')}
+        <button class="btn btn-primary" style="padding:8px 16px" onclick="sendMessageInGroupThread('${groupId}')">Send</button>
+      </div>
+      ${attachPreviewHTML('msgThreadInput')}
+    </div>
+  </div>`);
+  const box=document.getElementById('msgThreadBox');
+  if(box)box.scrollTop=box.scrollHeight;
+  const input=document.getElementById('msgThreadInput');
+  if(input)input.focus();
+}
+
+async function sendMessageInGroupThread(groupId){
+  const input=document.getElementById('msgThreadInput');
+  const body=(input||{}).value||'';
+  if(!body.trim())return;
+  try{
+    const attachment=await uploadPendingAttachment('msgThreadInput');
+    const res=await fetch('/api/messages',{method:'POST',headers:authHeaders(),body:JSON.stringify({
+      groupId,body,
+      ...(attachment?{attachmentPath:attachment.path,attachmentName:attachment.name,attachmentType:attachment.type,attachmentSize:attachment.size}:{}),
+    })});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to send.');
+    if(input)input.value='';
+    renderGroupThread(groupId);
+  }catch(e){alert('Gagal hantar: '+e.message);}
+}
+
+// New Group modal — admin/manager sahaja (button pun disorok utk collector,
+// tapi API POST /api/messages/groups pun double-check role di server).
+async function openNewGroupModal(){
+  let contacts;
+  try{
+    const res=await fetch('/api/messages?contacts=1',{headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load contacts.');
+    contacts=data.contacts||[];
+  }catch(e){alert('Gagal muat senarai staf: '+e.message);return;}
+  if(!contacts.length){alert('Tiada staf lain untuk ditambah ke group.');return;}
+  openModal(`
+    <div class="modal-title">👥 New Group Chat</div>
+    <div class="form-row"><label>Nama Group</label>
+      <input id="newGroupName" placeholder="cth: RedOne Team, TL Sync..." />
+    </div>
+    <div class="form-row"><label>Ahli Group</label>
+      <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
+        ${contacts.map(c=>`
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 2px;font-size:13px;cursor:pointer">
+            <input type="checkbox" class="newGroupMember" value="${c.id}" style="margin:0" />
+            <span>${esc(c.name)} <span style="color:var(--text3);font-size:11px">(${c.role})</span></span>
+          </label>`).join('')}
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="createGroup()">Create Group</button>
+    </div>
+  `);
+}
+
+async function createGroup(){
+  const name=(document.getElementById('newGroupName')||{}).value||'';
+  const memberIds=Array.from(document.querySelectorAll('.newGroupMember:checked')).map(el=>el.value);
+  if(!name.trim()){alert('Sila masukkan nama group.');return;}
+  if(!memberIds.length){alert('Sila pilih sekurang-kurangnya 1 ahli.');return;}
+  try{
+    const res=await fetch('/api/messages/groups',{method:'POST',headers:authHeaders(),body:JSON.stringify({name,memberIds})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to create group.');
+    closeModal();
+    openGroupThread(data.group.id);
+  }catch(e){alert('Gagal buat group: '+e.message);}
+}
+
+// Manage Group modal — rename, tambah/buang ahli, padam group. admin/manager sahaja.
+async function openManageGroupModal(groupId){
+  let group,contacts;
+  try{
+    const [gRes,cRes]=await Promise.all([
+      fetch('/api/messages/groups?groupId='+encodeURIComponent(groupId),{headers:authHeaders()}),
+      fetch('/api/messages?contacts=1',{headers:authHeaders()}),
+    ]);
+    const gData=await gRes.json();
+    if(!gRes.ok)throw new Error(gData.error||'Failed to load group.');
+    group=gData.group;
+    const cData=await cRes.json();
+    contacts=cData.contacts||[];
+  }catch(e){alert('Gagal muat group: '+e.message);return;}
+  const memberIds=new Set((group.members||[]).map(m=>m.id));
+  const nonMembers=contacts.filter(c=>!memberIds.has(c.id));
+  openModal(`
+    <div class="modal-title">⚙️ Manage Group: ${esc(group.name)}</div>
+    <div class="form-row"><label>Nama Group</label>
+      <input id="editGroupName" value="${esc(group.name)}" />
+    </div>
+    <div class="form-row"><label>Ahli Semasa</label>
+      <div style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
+        ${(group.members||[]).map(m=>`
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 2px;font-size:13px">
+            <span>${esc(m.name)} <span style="color:var(--text3);font-size:11px">(${m.role})</span>${m.id===group.createdBy?' <span class="chip" style="font-size:10px">Creator</span>':''}</span>
+            <button class="btn btn-danger" style="padding:2px 8px;font-size:11px" onclick="removeGroupMember('${groupId}','${m.id}')">Remove</button>
+          </div>`).join('')}
+      </div>
+    </div>
+    ${nonMembers.length?`
+    <div class="form-row"><label>Tambah Ahli</label>
+      <div style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
+        ${nonMembers.map(c=>`
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 2px;font-size:13px;cursor:pointer">
+            <input type="checkbox" class="addGroupMember" value="${c.id}" style="margin:0" />
+            <span>${esc(c.name)} <span style="color:var(--text3);font-size:11px">(${c.role})</span></span>
+          </label>`).join('')}
+      </div>
+    </div>`:''}
+    <div class="modal-footer" style="justify-content:space-between">
+      <button class="btn btn-danger" onclick="deleteGroup('${groupId}')">🗑️ Delete Group</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="closeModal()">Close</button>
+        <button class="btn btn-primary" onclick="saveGroupChanges('${groupId}')">Save Changes</button>
+      </div>
+    </div>
+  `);
+}
+
+async function saveGroupChanges(groupId){
+  const name=(document.getElementById('editGroupName')||{}).value||'';
+  const addMemberIds=Array.from(document.querySelectorAll('.addGroupMember:checked')).map(el=>el.value);
+  try{
+    const res=await fetch('/api/messages/groups',{method:'PATCH',headers:authHeaders(),body:JSON.stringify({groupId,name,addMemberIds})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to update group.');
+    closeModal();
+    renderGroupThread(groupId);
+  }catch(e){alert('Gagal kemaskini group: '+e.message);}
+}
+
+async function removeGroupMember(groupId,userId){
+  if(!confirm('Buang ahli ini dari group?'))return;
+  try{
+    const res=await fetch('/api/messages/groups',{method:'PATCH',headers:authHeaders(),body:JSON.stringify({groupId,removeMemberIds:[userId]})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to remove member.');
+    openManageGroupModal(groupId); // refresh modal ni dengan senarai ahli terkini
+  }catch(e){alert('Gagal buang ahli: '+e.message);}
+}
+
+async function deleteGroup(groupId){
+  if(!confirm('Padam group chat ini? Semua mesej dalam group akan hilang selama-lamanya.'))return;
+  try{
+    const res=await fetch('/api/messages/groups?groupId='+encodeURIComponent(groupId),{method:'DELETE',headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to delete group.');
+    closeModal();
+    renderMessages();
+  }catch(e){alert('Gagal padam group: '+e.message);}
+}
+
 // ═══════════ Browser Notifications + Sound untuk mesej baru ═══════════
 // SEBAB INI WUJUD: badge dalam nav (navMsgBadge) cuma DOM element — kalau
 // user tengah buka tab/window lain (bukan tab CollectorTrain), dia takkan
@@ -3950,15 +4170,16 @@ function notifyNewMessage(convo){
   playNotifSound();
   if(typeof Notification==='undefined'||Notification.permission!=='granted')return;
   try{
-    const n=new Notification(`✉️ Mesej baru dari ${convo.userName}`,{
+    const n=new Notification(convo.isGroup?`👥 Mesej baru dalam ${convo.userName}`:`✉️ Mesej baru dari ${convo.userName}`,{
       body:convo.lastMessage.length>100?convo.lastMessage.slice(0,100)+'…':convo.lastMessage,
-      tag:'ct-message-'+convo.userId, // elak stack banyak notification dari orang sama
+      tag:'ct-message-'+convo.userId, // elak stack banyak notification dari orang/group sama
       renotify:true
     });
     n.onclick=()=>{
       window.focus();
       navigate('messages');
-      openMessageThread(convo.userId);
+      if(convo.isGroup)openGroupThread(convo.userId);
+      else openMessageThread(convo.userId);
       n.close();
     };
   }catch(e){/* silent */}
@@ -3993,7 +4214,8 @@ async function pollUnreadMessages(){
         const inboxData=await inboxRes.json();
         if(inboxRes.ok){
           const convos=(inboxData.conversations||[]).filter(c=>c.unreadCount>0);
-          const latest=convos.sort((a,b)=>new Date(b.lastAt)-new Date(a.lastAt))[0];
+          const groupConvos=(inboxData.groups||[]).filter(g=>g.unreadCount>0).map(g=>({userId:g.id,userName:g.name,lastMessage:g.lastMessage||'',lastAt:g.lastAt,isGroup:true}));
+          const latest=[...convos,...groupConvos].sort((a,b)=>new Date(b.lastAt)-new Date(a.lastAt))[0];
           if(latest)notifyNewMessage(latest);
         }
       }catch(e){playNotifSound();} // inbox fetch gagal — bunyi je tanpa detail
