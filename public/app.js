@@ -5191,10 +5191,13 @@ function getTtsAudioCtx(){
   return _ttsAudioCtx;
 }
 
-// Fetch SATU chunk PCM penuh dari /api/tts (Gemini TTS tak support streaming
-// — lihat app/api/tts/route.js — so request ni tunggu seluruh audio chunk
-// tu siap, then return raw PCM bytes sekali gus).
-async function fetchTtsPcm(text,_isFirstChunk){
+// Fetch SATU chunk audio penuh dari /api/tts (Gemini TTS tak support
+// streaming — lihat app/api/tts/route.js — so request ni tunggu seluruh
+// audio chunk tu siap). FIX (Ogos 2026): server sekarang hantar MP3
+// (bukan raw PCM lagi — raw PCM punca Fast Origin Transfer meletup, lihat
+// note dalam tts/route.js), so kita return arrayBuffer mentah je di sini,
+// decode jadi AudioBuffer berlaku dalam playNext() guna decodeAudioData().
+async function fetchTtsAudio(text,_isFirstChunk){
   if(_isFirstChunk)perfMark('TTS fetch start (1st chunk)');
   const res=await fetch('/api/tts',{
     method:'POST',
@@ -5202,9 +5205,9 @@ async function fetchTtsPcm(text,_isFirstChunk){
     body:JSON.stringify({text,gender:scenario?.gender||'male',geminiVoice:getGeminiVoice()})
   });
   if(!res.ok)throw new Error('TTS HTTP '+res.status);
-  const bytes=new Uint8Array(await res.arrayBuffer());
-  if(_isFirstChunk)perfMark('TTS fetch done (1st chunk, PCM bytes received)');
-  return bytes;
+  const buf=await res.arrayBuffer();
+  if(_isFirstChunk)perfMark('TTS fetch done (1st chunk, MP3 bytes received)');
+  return buf;
 }
 
 // PREFETCH PIPELINE: chunk semasa main SAMBIL chunk seterusnya (dalam
@@ -5228,15 +5231,15 @@ async function playNext(){
   // sepadan dengan chunk semasa — elak tunggu fetch start dari kosong.
   let fetchPromise;
   if(_nextFetchFor===text&&_nextFetchPromise)fetchPromise=_nextFetchPromise;
-  else{ const isFirst=!_perfFirstAudio; _perfFirstAudio=true; fetchPromise=fetchTtsPcm(text,isFirst); }
+  else{ const isFirst=!_perfFirstAudio; _perfFirstAudio=true; fetchPromise=fetchTtsAudio(text,isFirst); }
   _nextFetchPromise=null;_nextFetchFor=null;
 
   const ctx=getTtsAudioCtx();
   if(ctx.state==='suspended'){try{await ctx.resume();}catch(_){/* abai — fallback try/catch di bawah akan tangkap kalau betul2 gagal */}}
 
-  let pcmBytes;
+  let mp3Buf;
   try{
-    pcmBytes=await fetchPromise;
+    mp3Buf=await fetchPromise;
   }catch(e){
     addBubble('debtor','[Audio error — please try again shortly]');
     playNext();
@@ -5248,19 +5251,20 @@ async function playNext(){
   // dah sedia (atau hampir sedia) kat background.
   if(audioQueue.length){
     _nextFetchFor=audioQueue[0];
-    _nextFetchPromise=fetchTtsPcm(audioQueue[0]).catch(e=>{_nextFetchPromise=null;_nextFetchFor=null;throw e;});
+    _nextFetchPromise=fetchTtsAudio(audioQueue[0]).catch(e=>{_nextFetchPromise=null;_nextFetchFor=null;throw e;});
   }
 
-  const usableLen=pcmBytes.length-(pcmBytes.length%2);
-  if(usableLen<2){playNext();return;}
-
-  const samples=usableLen/2;
-  const float32=new Float32Array(samples);
-  const dv=new DataView(pcmBytes.buffer,pcmBytes.byteOffset,usableLen);
-  for(let i=0;i<samples;i++)float32[i]=dv.getInt16(i*2,true)/32768; // 16-bit little-endian PCM → Float32 [-1,1]
-
-  const audioBuffer=ctx.createBuffer(1,samples,24000); // Gemini TTS: mono, 24kHz, 16-bit PCM
-  audioBuffer.getChannelData(0).set(float32);
+  // FIX (Ogos 2026): server hantar MP3 sekarang (bukan raw PCM) — guna
+  // decodeAudioData() browser punya built-in decoder, bukan manual PCM
+  // parsing macam sebelum ni. Kalau decode gagal (chunk corrupt/kosong),
+  // skip chunk ni je, jangan crash seluruh call.
+  let audioBuffer;
+  try{
+    audioBuffer=await ctx.decodeAudioData(mp3Buf);
+  }catch(e){
+    playNext();
+    return;
+  }
 
   const source=ctx.createBufferSource();
   source.buffer=audioBuffer;

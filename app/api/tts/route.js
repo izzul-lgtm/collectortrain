@@ -22,6 +22,33 @@
 
 import { requireAuth } from '../../../lib/requireAuth';
 import { rateLimit } from '../../../lib/rateLimit';
+import lamejs from '@breezystack/lamejs';
+
+// FIX (Ogos 2026): Gemini TTS cuma pulangkan raw PCM (16-bit/24kHz/mono)
+// — TIADA option compressed format dari Google sendiri (confirmed dari
+// dokumentasi rasmi). Raw PCM = 48 KB/saat, punca utama akaun Vercel kena
+// "Paused" sebab exceed Fast Origin Transfer (30GB/10GB dalam sebulan).
+// Fix: encode PCM -> MP3 di server (guna lamejs, pure JS, jalan dalam
+// Node.js runtime Vercel functions) SEBELUM hantar response ke client.
+// 48kbps mono cukup jelas utk voice dialogue, ~8x lebih kecil dari raw PCM.
+function encodePcmToMp3(pcmBytes, sampleRate = 24000, kbps = 48) {
+  // pcmBytes: Buffer/Uint8Array 16-bit little-endian PCM mono.
+  const sampleCount = Math.floor(pcmBytes.length / 2);
+  const samples = new Int16Array(sampleCount);
+  const dv = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, sampleCount * 2);
+  for (let i = 0; i < sampleCount; i++) samples[i] = dv.getInt16(i * 2, true);
+
+  const encoder = new lamejs.Mp3Encoder(1, sampleRate, kbps);
+  const blockSize = 1152; // saiz frame standard MP3 encoder
+  const chunks = [];
+  for (let i = 0; i < samples.length; i += blockSize) {
+    const buf = encoder.encodeBuffer(samples.subarray(i, i + blockSize));
+    if (buf.length > 0) chunks.push(Buffer.from(buf));
+  }
+  const end = encoder.flush();
+  if (end.length > 0) chunks.push(Buffer.from(end));
+  return Buffer.concat(chunks);
+}
 
 const GEMINI_VOICES = {
   male:   ['Orus','Fenrir','Charon','Puck'],
@@ -115,15 +142,18 @@ export async function POST(request) {
 
   const pcmBytes = Buffer.from(b64, 'base64');
 
-  return new Response(pcmBytes, {
+  let mp3Bytes;
+  try {
+    mp3Bytes = encodePcmToMp3(pcmBytes, 24000, 48);
+  } catch (err) {
+    console.error('Gagal encode PCM -> MP3:', err);
+    return Response.json({ error: 'Ralat memproses audio.' }, { status: 500 });
+  }
+
+  return new Response(mp3Bytes, {
     status: 200,
     headers: {
-      'Content-Type': 'application/octet-stream',
-      // Metadata format PCM untuk client (playNext() dalam app.js hardcode
-      // nilai yang sama, tapi header ni bagi dokumentasi/future-proofing).
-      'X-Audio-Sample-Rate': '24000',
-      'X-Audio-Channels': '1',
-      'X-Audio-Bit-Depth': '16'
+      'Content-Type': 'audio/mpeg'
     }
   });
 }
