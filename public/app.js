@@ -5049,7 +5049,8 @@ async function startCall(){
   activeVoiceId=null; // reset suara — akan pick baru untuk call ni
   warmupMic(); // panaskan mic SEAWAL mungkin — sebelum collector sempat tekan butang mic (lihat nota di atas function warmupMic)
   callHistory=[];callFullTranscript=[];callSeconds=0;callActive=true;
-  audioQueue=[];isPlayingAudio=false;_nextFetchPromise=null;_nextFetchFor=null;
+  audioQueue=[];isPlayingAudio=false;
+  if(_ttsAbortController){try{_ttsAbortController.abort();}catch(_){}_ttsAbortController=null;}
   if(currentAudio){currentAudio.pause();currentAudio=null;}
   navigate('call');
   timerInterval=setInterval(()=>{
@@ -5093,7 +5094,9 @@ function stopCall(){
   if(timerInterval){clearInterval(timerInterval);timerInterval=null;}
   if(recognition)try{recognition.stop();}catch(e){}
   if(currentAudio){currentAudio.pause();currentAudio=null;}
-  audioQueue=[];isPlayingAudio=false;isRecording=false;_nextFetchPromise=null;_nextFetchFor=null;
+  audioQueue=[];isPlayingAudio=false;isRecording=false;
+  if(_ttsAbortController){try{_ttsAbortController.abort();}catch(_){}_ttsAbortController=null;}
+  if(_ttsAudioEl){try{_ttsAudioEl.pause();}catch(_){}}
   stopMicLevelMeter(); // lepas track mic — call dah tamat
 }
 
@@ -5147,78 +5150,43 @@ async function endCall(){
   }
 }
 
-// Pecah reply panjang ke beberapa ayat pendek (~140 aksara), supaya setiap
-// ayat boleh dihantar sebagai request /api/tts BERASINGAN dan di-PREFETCH
-// semasa ayat sebelumnya tengah main (lihat playNext()) — Gemini TTS sendiri
-// TAK support streaming (lihat note dalam app/api/tts/route.js), so ni cara
-// kita "fake" rasa streaming: ayat 1 main → ayat 2 dah tengah generate kat
-// background → bila ayat 1 habis, ayat 2 terus main tanpa gap lama.
-function splitIntoSpeechChunks(text){
-  if(!text)return[text];
-  const sentences=text.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[text];
-  const chunks=[];let buf='';
-  for(const s of sentences){
-    if((buf+s).length<=140)buf+=s;
-    else{if(buf.trim())chunks.push(buf.trim());buf=s;}
-  }
-  if(buf.trim())chunks.push(buf.trim());
-  return chunks.length?chunks:[text];
-}
-
+// UPDATE (Ogos 2026): Gemini 3.1 Flash TTS kini support streaming betul2
+// (streamGenerateContent, lihat note dalam app/api/tts/route.js — Google
+// tambah support ni 17 Jun 2026). Server proxy stream tu terus sbg MP3
+// bytes progresif. Sebab audio dah "streaming" secara natural sekarang,
+// TAK PERLU lagi trick pecah reply ke ayat pendek + prefetch chunk
+// seterusnya (cara lama) — satu turn = satu request, main progresif guna
+// MediaSource Extensions (MSE) sebaik byte pertama sampai.
 async function speakEl(text){
   if(!TTS_ENABLED){
     // TTS dimatikan — skip terus ke state sedia terima input
     if(callActive){setStatus('green','Press mic to speak.');resetMicBtn();}
     return;
   }
-  // Tag emosi dikira SEKALI utk seluruh reply, then disisip ke SETIAP chunk
-  // (bukan chunk pertama je) supaya delivery emosi konsisten sepanjang ayat.
   const tagged=getAudioTagInstruction(text);
-  const tagMatch=tagged.match(/^(\[[a-z]+\]\s*)+/i);
-  const tag=tagMatch?tagMatch[0]:'';
-  const bareText=tag?tagged.slice(tag.length):tagged;
-  const chunks=splitIntoSpeechChunks(bareText).map(c=>tag+c);
-  _perfFirstAudio=false; // reset utk turn baru — chunk pertama speakEl ni belum diukur
-  audioQueue.push(...chunks);
+  _perfFirstAudio=false; // reset utk turn baru
+  audioQueue.push(tagged);
   if(!isPlayingAudio)playNext();
 }
-// AudioContext dikongsi sepanjang call (bukan dicipta baru tiap giliran) —
-// supaya scheduling antara chunk/giliran kekal smooth & elak overhead
-// cipta context berulang kali.
+
+// AudioContext dikongsi sepanjang call — dipakai untuk fallback (browser
+// tanpa MediaSource support) je sekarang; playback utama guna <audio> + MSE.
 let _ttsAudioCtx=null;
 function getTtsAudioCtx(){
   if(!_ttsAudioCtx)_ttsAudioCtx=new (window.AudioContext||window.webkitAudioContext)();
   return _ttsAudioCtx;
 }
-
-// Fetch SATU chunk audio penuh dari /api/tts (Gemini TTS tak support
-// streaming — lihat app/api/tts/route.js — so request ni tunggu seluruh
-// audio chunk tu siap). FIX (Ogos 2026): server sekarang hantar MP3
-// (bukan raw PCM lagi — raw PCM punca Fast Origin Transfer meletup, lihat
-// note dalam tts/route.js), so kita return arrayBuffer mentah je di sini,
-// decode jadi AudioBuffer berlaku dalam playNext() guna decodeAudioData().
-async function fetchTtsAudio(text,_isFirstChunk){
-  if(_isFirstChunk)perfMark('TTS fetch start (1st chunk)');
-  const res=await fetch('/api/tts',{
-    method:'POST',
-    headers:authHeaders(),
-    body:JSON.stringify({text,gender:scenario?.gender||'male',geminiVoice:getGeminiVoice()})
-  });
-  if(!res.ok)throw new Error('TTS HTTP '+res.status);
-  const buf=await res.arrayBuffer();
-  if(_isFirstChunk)perfMark('TTS fetch done (1st chunk, MP3 bytes received)');
-  return buf;
+// <audio> element dikongsi sepanjang call (elak overhead cipta berulang).
+let _ttsAudioEl=null;
+function getTtsAudioEl(){
+  if(!_ttsAudioEl)_ttsAudioEl=new Audio();
+  return _ttsAudioEl;
 }
-
-// PREFETCH PIPELINE: chunk semasa main SAMBIL chunk seterusnya (dalam
-// audioQueue) dah mula di-fetch kat background — bila chunk semasa habis,
-// chunk seterusnya (atau dah sedia, atau hampir sedia) terus main, kurangkan
-// rasa "gap" senyap antara ayat berbanding tunggu fetch baru bermula.
-let _nextFetchPromise=null,_nextFetchFor=null;
+let _ttsAbortController=null;
 
 async function playNext(){
   if(!audioQueue.length){
-    isPlayingAudio=false;_nextFetchPromise=null;_nextFetchFor=null;
+    isPlayingAudio=false;
     if(callActive){setStatus('green','Tekan mikrofon untuk bercakap.');resetMicBtn();}
     return;
   }
@@ -5227,51 +5195,99 @@ async function playNext(){
   setStatus('purple',scenario.name+' is speaking...');
   setMicState('speaking','🔊','AI is speaking...');
 
-  // Guna prefetch yang dah start awal (semasa chunk SEBELUM ni main) kalau
-  // sepadan dengan chunk semasa — elak tunggu fetch start dari kosong.
-  let fetchPromise;
-  if(_nextFetchFor===text&&_nextFetchPromise)fetchPromise=_nextFetchPromise;
-  else{ const isFirst=!_perfFirstAudio; _perfFirstAudio=true; fetchPromise=fetchTtsAudio(text,isFirst); }
-  _nextFetchPromise=null;_nextFetchFor=null;
+  const isFirst=!_perfFirstAudio; _perfFirstAudio=true;
+  if(isFirst)perfMark('TTS fetch start (1st chunk)');
 
-  const ctx=getTtsAudioCtx();
-  if(ctx.state==='suspended'){try{await ctx.resume();}catch(_){/* abai — fallback try/catch di bawah akan tangkap kalau betul2 gagal */}}
-
-  let mp3Buf;
   try{
-    mp3Buf=await fetchPromise;
+    await streamAndPlay(text,isFirst);
   }catch(e){
     addBubble('debtor','[Audio error — please try again shortly]');
-    playNext();
-    return;
   }
+  playNext();
+}
 
-  // SEBAIK fetch chunk semasa siap, terus mula fetch chunk SETERUSNYA dalam
-  // queue (kalau ada) — supaya bila chunk semasa habis main, chunk lepas
-  // dah sedia (atau hampir sedia) kat background.
-  if(audioQueue.length){
-    _nextFetchFor=audioQueue[0];
-    _nextFetchPromise=fetchTtsAudio(audioQueue[0]).catch(e=>{_nextFetchPromise=null;_nextFetchFor=null;throw e;});
-  }
+// Fetch /api/tts (respons streaming, MP3 bytes progresif) dan main sebaik
+// byte pertama sampai guna MediaSource Extensions. Resolve bila playback
+// betul2 SIAP (audio 'ended'), reject kalau ada ralat fatal.
+function streamAndPlay(text,isFirstChunk){
+  return new Promise(async (resolve,reject)=>{
+    // Browser lama tanpa MediaSource — fallback: tunggu penuh, decode biasa.
+    if(!('MediaSource' in window)){
+      try{
+        const res=await fetch('/api/tts',{
+          method:'POST',headers:authHeaders(),
+          body:JSON.stringify({text,gender:scenario?.gender||'male',geminiVoice:getGeminiVoice()})
+        });
+        if(!res.ok)throw new Error('TTS HTTP '+res.status);
+        const buf=await res.arrayBuffer();
+        if(isFirstChunk)perfMark('TTS fetch done (1st chunk, MP3 bytes received)');
+        const ctx=getTtsAudioCtx();
+        if(ctx.state==='suspended'){try{await ctx.resume();}catch(_){}}
+        const audioBuffer=await ctx.decodeAudioData(buf);
+        const source=ctx.createBufferSource();
+        source.buffer=audioBuffer;source.connect(ctx.destination);source.start();
+        if(_perfTurnStart){perfMark('🔊 AUDIO STARTS PLAYING (user hears reply)');_perfTurnStart=0;}
+        source.onended=()=>resolve();
+      }catch(e){reject(e);}
+      return;
+    }
 
-  // FIX (Ogos 2026): server hantar MP3 sekarang (bukan raw PCM) — guna
-  // decodeAudioData() browser punya built-in decoder, bukan manual PCM
-  // parsing macam sebelum ni. Kalau decode gagal (chunk corrupt/kosong),
-  // skip chunk ni je, jangan crash seluruh call.
-  let audioBuffer;
-  try{
-    audioBuffer=await ctx.decodeAudioData(mp3Buf);
-  }catch(e){
-    playNext();
-    return;
-  }
+    const audioEl=getTtsAudioEl();
+    const mediaSource=new MediaSource();
+    const objectUrl=URL.createObjectURL(mediaSource);
+    audioEl.src=objectUrl;
+    let sourceBuffer=null,queue=[],streamDone=false,started=false;
 
-  const source=ctx.createBufferSource();
-  source.buffer=audioBuffer;
-  source.connect(ctx.destination);
-  source.start();
-  if(_perfTurnStart){perfMark('🔊 AUDIO STARTS PLAYING (user hears reply)');_perfTurnStart=0;}
-  source.onended=()=>{playNext();};
+    function pump(){
+      if(!sourceBuffer||sourceBuffer.updating||!queue.length)return;
+      try{sourceBuffer.appendBuffer(queue.shift());}catch(_){/* race MSE state — updateend akan retry */}
+    }
+    function maybeEnd(){
+      if(streamDone&&!queue.length&&sourceBuffer&&!sourceBuffer.updating&&mediaSource.readyState==='open'){
+        try{mediaSource.endOfStream();}catch(_){}
+      }
+    }
+
+    audioEl.onended=()=>{URL.revokeObjectURL(objectUrl);resolve();};
+    audioEl.onerror=()=>{URL.revokeObjectURL(objectUrl);reject(new Error('Audio playback error'));};
+
+    mediaSource.addEventListener('sourceopen',async ()=>{
+      try{ sourceBuffer=mediaSource.addSourceBuffer('audio/mpeg'); }
+      catch(e){ reject(e); return; }
+
+      sourceBuffer.addEventListener('updateend',()=>{
+        if(!started&&sourceBuffer.buffered.length){
+          started=true;
+          audioEl.play().catch(()=>{});
+          if(isFirstChunk)perfMark('TTS fetch done (1st chunk, MP3 bytes received)');
+          if(_perfTurnStart){perfMark('🔊 AUDIO STARTS PLAYING (user hears reply)');_perfTurnStart=0;}
+        }
+        pump();
+        maybeEnd();
+      });
+
+      _ttsAbortController=new AbortController();
+      try{
+        const res=await fetch('/api/tts',{
+          method:'POST',headers:authHeaders(),signal:_ttsAbortController.signal,
+          body:JSON.stringify({text,gender:scenario?.gender||'male',geminiVoice:getGeminiVoice()})
+        });
+        if(!res.ok||!res.body)throw new Error('TTS HTTP '+res.status);
+        const reader=res.body.getReader();
+        while(true){
+          const {done,value}=await reader.read();
+          if(done)break;
+          if(value&&value.length){queue.push(value);pump();}
+        }
+        streamDone=true;
+        if(!started){ started=true; audioEl.play().catch(()=>{}); } // stream kosong — jangan hang selamanya
+        maybeEnd();
+      }catch(e){
+        if(e?.name==='AbortError')resolve(); // call ditamatkan pertengahan — bukan ralat
+        else reject(e);
+      }
+    });
+  });
 }
 
 function setStatus(dot,msg){
