@@ -40,6 +40,23 @@ function pickGeminiVoice(gender) {
 }
 
 export async function POST(request) {
+  try {
+    return await handleTts(request);
+  } catch (err) {
+    // SAFETY NET: apa-apa error yang terlepas dari try/catch dalam
+    // handleTts() (contoh: lamejs gagal init, atau exception lain yang
+    // tak dijangka) akan ditangkap sini — supaya browser dapat JSON error
+    // yang boleh dibaca, bukan generic Next.js "500 This page couldn't
+    // load" HTML yang tak bagitau apa-apa punca sebenar.
+    console.error('TTS route fatal error:', err && err.stack || err);
+    return Response.json(
+      { error: 'TTS fatal error: ' + (err && err.message ? err.message : String(err)) },
+      { status: 500 }
+    );
+  }
+}
+
+async function handleTts(request) {
   const authError = await requireAuth(request);
   if (authError) return authError;
 
