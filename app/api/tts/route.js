@@ -1,54 +1,26 @@
 // Proxies text-to-speech ke Gemini 3.1 Flash TTS API.
 //
-// PERUBAHAN (fix "AI is speaking..." stuck/Pending): Versi sebelum ni guna
-// streamGenerateContent?alt=sse sebab nak voice keluar lebih awal (chunk by
-// chunk). Tapi dokumentasi rasmi Gemini TTS terkini
-// (ai.google.dev/gemini-api/docs/speech-generation, updated 2026-05-18)
-// sebut dengan jelas: "TTS does not support streaming". Sebab tu request
-// streamGenerateContent kita hang — upstream Gemini tak reply headers pun,
-// jadi network tab tunjuk "Pending" selama-lamanya dan client stuck di
-// state "AI is speaking..." (audioQueue tak pernah resolve).
+// UPDATE (Ogos 2026): Google tambah balik streaming support khas untuk
+// gemini-3.1-flash-tts-preview pada 17 Jun 2026 (lihat changelog rasmi:
+// ai.google.dev/gemini-api/docs/changelog#june-17-2026 —
+// "Streaming support for speech generation ... now supported for the
+// gemini-3.1-flash-tts-preview model"). Sebelum ni kita revert ke
+// generateContent (non-streaming) sebab masa tu TTS memang tak support
+// streaming langsung — tapi itu dah outdated sekarang.
 //
-// Balik guna generateContent biasa (non-streaming): tunggu Gemini siap jana
-// SELURUH audio, decode base64 -> raw PCM bytes, return SATU response kepada
-// client. Client (playNext() dalam app.js) TAK PERLU diubah — dia baca
-// reader.read() dalam loop macam biasa, cuma sekarang dapat satu chunk besar
-// drpd byte-byte kecil. Hilang sikit "main awal sementara jana" feel, tapi
-// voice keluar balik (drpd stuck pending terus).
+// Balik guna streamGenerateContent?alt=sse: Gemini hantar audio dalam
+// beberapa SSE event (base64 PCM chunk demi chunk) instead of tunggu
+// semua siap dulu. Kita parse tiap event, encode PCM->MP3 SECARA
+// INCREMENTAL (lamejs encoder support encodeBuffer() dipanggil berkali-kali
+// dgn chunk kecil), dan terus stream MP3 bytes tu ke client guna
+// ReadableStream/chunked response — client dapat audio bytes awal-awal,
+// tak perlu tunggu whole generation siap macam sebelum ni.
 //
-// Format raw PCM yang Gemini TTS pulangkan: 16-bit signed little-endian,
-// mono, 24000 Hz — client kena tahu format ni untuk decode (lihat
-// playNext() dalam app.js — hardcode 24000/16-bit/mono).
+// Format raw PCM Gemini TTS: 16-bit signed little-endian, mono, 24000 Hz.
 
 import { requireAuth } from '../../../lib/requireAuth';
 import { rateLimit } from '../../../lib/rateLimit';
 import lamejs from '@breezystack/lamejs';
-
-// FIX (Ogos 2026): Gemini TTS cuma pulangkan raw PCM (16-bit/24kHz/mono)
-// — TIADA option compressed format dari Google sendiri (confirmed dari
-// dokumentasi rasmi). Raw PCM = 48 KB/saat, punca utama akaun Vercel kena
-// "Paused" sebab exceed Fast Origin Transfer (30GB/10GB dalam sebulan).
-// Fix: encode PCM -> MP3 di server (guna lamejs, pure JS, jalan dalam
-// Node.js runtime Vercel functions) SEBELUM hantar response ke client.
-// 48kbps mono cukup jelas utk voice dialogue, ~8x lebih kecil dari raw PCM.
-function encodePcmToMp3(pcmBytes, sampleRate = 24000, kbps = 48) {
-  // pcmBytes: Buffer/Uint8Array 16-bit little-endian PCM mono.
-  const sampleCount = Math.floor(pcmBytes.length / 2);
-  const samples = new Int16Array(sampleCount);
-  const dv = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, sampleCount * 2);
-  for (let i = 0; i < sampleCount; i++) samples[i] = dv.getInt16(i * 2, true);
-
-  const encoder = new lamejs.Mp3Encoder(1, sampleRate, kbps);
-  const blockSize = 1152; // saiz frame standard MP3 encoder
-  const chunks = [];
-  for (let i = 0; i < samples.length; i += blockSize) {
-    const buf = encoder.encodeBuffer(samples.subarray(i, i + blockSize));
-    if (buf.length > 0) chunks.push(Buffer.from(buf));
-  }
-  const end = encoder.flush();
-  if (end.length > 0) chunks.push(Buffer.from(end));
-  return Buffer.concat(chunks);
-}
 
 const GEMINI_VOICES = {
   male:   ['Orus','Fenrir','Charon','Puck'],
@@ -87,13 +59,13 @@ export async function POST(request) {
   const { text, gender, geminiVoice } = body || {};
   if (!text) return Response.json({ error: "'text' diperlukan." }, { status: 400 });
 
-  const safeText = String(text).slice(0, 200);
+  const safeText = String(text).slice(0, 400); // dah tak perlu keping ~140 char macam dulu — streaming urus turn penuh terus
   const voice = geminiVoice || pickGeminiVoice(gender || 'male');
 
   let upstream;
   try {
     upstream = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:streamGenerateContent?alt=sse`,
       {
         method: 'POST',
         headers: {
@@ -118,42 +90,119 @@ export async function POST(request) {
     return Response.json({ error: 'Ralat proxy TTS: ' + err.message }, { status: 500 });
   }
 
-  if (!upstream.ok) {
-    const errText = await upstream.text();
+  if (!upstream.ok || !upstream.body) {
+    const errText = await upstream.text().catch(() => '');
     console.error('Gemini TTS error:', errText);
-    return Response.json({ error: 'Gemini TTS error: ' + errText }, { status: upstream.status });
+    return Response.json({ error: 'Gemini TTS error: ' + errText }, { status: upstream.status || 500 });
   }
 
-  let json;
-  try {
-    json = await upstream.json();
-  } catch (err) {
-    console.error('Gagal parse response Gemini TTS:', err);
-    return Response.json({ error: 'Respons Gemini TTS tidak sah (bukan JSON).' }, { status: 500 });
+  const sampleRate = 24000;
+  const encoder = new lamejs.Mp3Encoder(1, sampleRate, 48); // mono, 48kbps
+  const MP3_BLOCK_SIZE = 1152; // saiz frame standard MP3 encoder
+
+  // Leftover odd byte antara SSE chunk (PCM 16-bit = 2 byte/sample, chunk
+  // boundary dari Gemini tak semestinya align ke 2-byte).
+  let leftoverByte = null;
+  // Sample buffer belum cukup 1152 (block size) untuk encode lagi.
+  let sampleCarry = new Int16Array(0);
+  let gotAudio = false;
+
+  function pcmChunkToInt16(pcmBytes) {
+    let bytes = pcmBytes;
+    if (leftoverByte !== null) {
+      const merged = new Uint8Array(bytes.length + 1);
+      merged[0] = leftoverByte;
+      merged.set(bytes, 1);
+      bytes = merged;
+      leftoverByte = null;
+    }
+    if (bytes.length % 2 !== 0) {
+      leftoverByte = bytes[bytes.length - 1];
+      bytes = bytes.slice(0, bytes.length - 1);
+    }
+    const sampleCount = bytes.length / 2;
+    const samples = new Int16Array(sampleCount);
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
+    for (let i = 0; i < sampleCount; i++) samples[i] = dv.getInt16(i * 2, true);
+    return samples;
   }
 
-  const b64 = json?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-  if (!b64) {
-    // Limitation rasmi Gemini: model occasionally pulang text token instead
-    // of audio (random, kadar kecil) -> minta client retry.
-    console.error('Tiada audio dalam response Gemini TTS:', JSON.stringify(json).slice(0, 300));
-    return Response.json({ error: 'Gemini TTS tidak pulangkan audio — sila cuba lagi.' }, { status: 500 });
+  function encodeSamples(samples, controller) {
+    // Gabung dgn carry dari call sebelum, encode dlm block 1152, simpan baki sbg carry baru.
+    const combined = new Int16Array(sampleCarry.length + samples.length);
+    combined.set(sampleCarry, 0);
+    combined.set(samples, sampleCarry.length);
+
+    let i = 0;
+    for (; i + MP3_BLOCK_SIZE <= combined.length; i += MP3_BLOCK_SIZE) {
+      const mp3buf = encoder.encodeBuffer(combined.subarray(i, i + MP3_BLOCK_SIZE));
+      if (mp3buf.length > 0) controller.enqueue(new Uint8Array(mp3buf));
+    }
+    sampleCarry = combined.slice(i);
   }
 
-  const pcmBytes = Buffer.from(b64, 'base64');
+  const stream = new ReadableStream({
+    async start(controller) {
+      const reader = upstream.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
 
-  let mp3Bytes;
-  try {
-    mp3Bytes = encodePcmToMp3(pcmBytes, 24000, 48);
-  } catch (err) {
-    console.error('Gagal encode PCM -> MP3:', err);
-    return Response.json({ error: 'Ralat memproses audio.' }, { status: 500 });
-  }
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
 
-  return new Response(mp3Bytes, {
+          // SSE frames dipisah dgn "\n\n"; tiap frame ada line "data: {...}"
+          let idx;
+          while ((idx = buf.indexOf('\n\n')) !== -1) {
+            const frame = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            const line = frame.split('\n').find(l => l.startsWith('data:'));
+            if (!line) continue;
+            const jsonStr = line.slice(5).trim();
+            if (!jsonStr || jsonStr === '[DONE]') continue;
+
+            let evt;
+            try { evt = JSON.parse(jsonStr); }
+            catch { continue; } // frame parsial/rosak — skip, bukan fatal
+
+            const b64 = evt?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+            if (!b64) continue;
+            gotAudio = true;
+            const pcmBytes = Buffer.from(b64, 'base64');
+            const samples = pcmChunkToInt16(pcmBytes);
+            if (samples.length) encodeSamples(samples, controller);
+          }
+        }
+
+        if (!gotAudio) {
+          console.error('Tiada audio dalam stream Gemini TTS.');
+          controller.error(new Error('Gemini TTS tidak pulangkan audio — sila cuba lagi.'));
+          return;
+        }
+
+        // Flush baki sample yang tak cukup 1 block, then flush encoder.
+        if (sampleCarry.length) {
+          const mp3buf = encoder.encodeBuffer(sampleCarry);
+          if (mp3buf.length > 0) controller.enqueue(new Uint8Array(mp3buf));
+        }
+        const end = encoder.flush();
+        if (end.length > 0) controller.enqueue(new Uint8Array(end));
+
+        controller.close();
+      } catch (err) {
+        console.error('TTS stream error:', err);
+        controller.error(err);
+      }
+    }
+  });
+
+  return new Response(stream, {
     status: 200,
     headers: {
-      'Content-Type': 'audio/mpeg'
+      'Content-Type': 'audio/mpeg',
+      'Cache-Control': 'no-store'
     }
   });
 }
