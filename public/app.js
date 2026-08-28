@@ -3610,11 +3610,12 @@ async function deleteAnnouncement(id){
   }catch(e){alert('Gagal padam: '+e.message);}
 }
 
-// ═══════════ WHATSAPP CHANNEL (read-only — bridge dari Baileys service) ═══
-// Papar mesej dari channel/community WhatsApp yang di-whitelist sahaja
-// (tapisan sebenar berlaku di whatsapp-service, bukan di sini — ni cuma
-// display). View-only sengaja: tiada input box untuk hantar balik.
+// ═══════════ WHATSAPP CHANNEL (multi-account — setiap user link sendiri) ═
+// Setiap collector/manager/admin link akaun WhatsApp SENDIRI (scan QR
+// dalam CollectorTrain) — reply guna nombor masing-masing, bukan 1 akaun
+// shared. Compose disabled sehingga user tu sendiri connected.
 let _waPollTimer=null;
+let _waLinkPollTimer=null;
 const WA_STATUS_LABEL={
   connected:{text:'🟢 Connected',color:'var(--green)'},
   qr:{text:'🟡 Menunggu scan QR',color:'var(--amber)'},
@@ -3623,11 +3624,67 @@ const WA_STATUS_LABEL={
   starting:{text:'⏳ Memulakan...',color:'var(--text3)'},
   unknown:{text:'⚪ Status tidak diketahui',color:'var(--text3)'},
 };
+const WA_LINK_STATUS_LABEL={
+  not_linked:{text:'WhatsApp anda belum di-link',color:'var(--text3)'},
+  requested:{text:'⏳ Memulakan pairing...',color:'var(--amber)'},
+  qr:{text:'🟡 Scan QR di bawah',color:'var(--amber)'},
+  connected:{text:'🟢 WhatsApp anda connected',color:'var(--green)'},
+  disconnected:{text:'🔴 Terputus (auto-reconnect)',color:'var(--red)'},
+  logged_out:{text:'⚫ Logged out — perlu link semula',color:'var(--text3)'},
+};
 async function renderWhatsApp(){
   clearInterval(_waPollTimer);
+  clearInterval(_waLinkPollTimer);
   setContent('<div class="page-header"><div class="page-title">WhatsApp Channel</div></div><div class="card">Loading...</div>');
+  await _loadWhatsAppLinkStatus();
   await _loadWhatsAppView();
   _waPollTimer=setInterval(()=>{ if(currentPage==='whatsapp')_loadWhatsAppView(true); else clearInterval(_waPollTimer); },6000);
+  _waLinkPollTimer=setInterval(()=>{ if(currentPage==='whatsapp')_loadWhatsAppLinkStatus(true); else clearInterval(_waLinkPollTimer); },3000);
+}
+let _waMyLinkStatus='not_linked';
+let _waLinkData={status:'not_linked'};
+async function _loadWhatsAppLinkStatus(silent){
+  try{
+    const res=await fetch('/api/whatsapp/link',{headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load link status.');
+    const changed=_waMyLinkStatus!==data.status;
+    _waMyLinkStatus=data.status||'not_linked';
+    _waLinkData=data;
+    const box=document.getElementById('waLinkBox');
+    if(box){
+      box.outerHTML=_renderWaLinkBox(data);
+    }
+    if(changed)await _loadWhatsAppView(true); // status link berubah — refresh compose availability
+  }catch(e){
+    if(!silent)console.error('WhatsApp link status error:',e.message);
+  }
+}
+function _renderWaLinkBox(data){
+  const status=data.status||'not_linked';
+  const lbl=WA_LINK_STATUS_LABEL[status]||WA_LINK_STATUS_LABEL.not_linked;
+  return `<div id="waLinkBox" class="card" style="margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-weight:700;font-size:13px;color:${lbl.color}">${lbl.text}</div>
+        ${status==='connected'&&data.phoneNumber?`<div style="font-size:11px;color:var(--text3)">Nombor: ${esc(data.phoneNumber)}</div>`:''}
+        ${status==='not_linked'?`<div style="font-size:11px;color:var(--text3)">Link WhatsApp anda supaya boleh hantar notis guna nombor sendiri (bukan share dengan orang lain)</div>`:''}
+      </div>
+      ${status==='not_linked'||status==='logged_out'?`<button class="btn btn-primary" onclick="requestWhatsAppLink()">Link WhatsApp Saya</button>`:''}
+    </div>
+    ${status==='qr'&&data.qrData?`<div style="text-align:center;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+      <img src="${esc(data.qrData)}" style="width:220px;height:220px;border:1px solid var(--border);padding:8px;border-radius:8px" />
+      <div style="font-size:11px;color:var(--text3);margin-top:8px">WhatsApp anda → Settings → Linked Devices → Link a Device</div>
+    </div>`:''}
+  </div>`;
+}
+async function requestWhatsAppLink(){
+  try{
+    const res=await fetch('/api/whatsapp/link',{method:'POST',headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Gagal mula link.');
+    await _loadWhatsAppLinkStatus();
+  }catch(e){alert('Gagal: '+e.message);}
 }
 async function _loadWhatsAppView(silent){
   let messages,status,channels;
@@ -3646,6 +3703,7 @@ async function _loadWhatsAppView(silent){
   const composerEl=document.getElementById('waComposeText');
   const draftText=composerEl?composerEl.value:'';
   const draftJid=(document.getElementById('waComposeJid')||{}).value||'';
+  const myLinked=_waMyLinkStatus==='connected';
 
   const st=WA_STATUS_LABEL[status]||WA_STATUS_LABEL.unknown;
   const distinctChannels=[...new Set(messages.map(m=>m.channel_label||m.jid))];
@@ -3653,8 +3711,9 @@ async function _loadWhatsAppView(silent){
   setContent(`
   <div class="page-header">
     <div class="page-title">🟢 WhatsApp Channel</div>
-    <div class="page-sub">Dipaparkan dari channel/community yang dibenarkan sahaja — notis yang dihantar dari sini akan muncul di WhatsApp sebenar</div>
+    <div class="page-sub">Setiap orang link akaun WhatsApp sendiri — notis yang dihantar akan muncul guna nombor anda sendiri</div>
   </div>
+  ${_renderWaLinkBox(_waLinkData)}
   <div class="card" style="padding:0;overflow:hidden">
     <div style="padding:12px 16px;background:#075E54;color:#fff;display:flex;justify-content:space-between;align-items:center">
       <div style="font-weight:700;font-size:14px">${distinctChannels.length?esc(distinctChannels.join(', ')):'Menunggu mesej pertama...'}</div>
@@ -3665,13 +3724,14 @@ async function _loadWhatsAppView(silent){
       messages.map(m=>`
         <div style="align-self:${m.from_me?'flex-end':'flex-start'};max-width:75%;background:${m.from_me?'#DCF8C6':'#fff'};border-radius:8px;padding:6px 9px;box-shadow:0 1px 1px rgba(0,0,0,0.1)">
           ${showChannelTag?`<div style="font-size:10px;font-weight:700;color:var(--brand);margin-bottom:2px">${esc(m.channel_label||m.jid)}</div>`:''}
-          ${!m.from_me&&m.sender_name?`<div style="font-size:11px;font-weight:700;color:#075E54">${esc(m.sender_name)}</div>`:''}
+          ${m.sender_name?`<div style="font-size:11px;font-weight:700;color:#075E54">${esc(m.sender_name)}</div>`:''}
           <div style="font-size:13px;color:#111;white-space:pre-wrap;word-break:break-word">${esc(m.text||'')}</div>
           <div style="font-size:10px;color:#8a8a8a;text-align:right;margin-top:2px">${fmtDateTime(m.wa_timestamp)}</div>
         </div>`).join('')}
     </div>
     <div style="padding:12px 16px;background:var(--surface2);border-top:1px solid var(--border)">
-      ${channels.length===0?`<div style="font-size:12px;color:var(--text3);text-align:center">Belum ada channel/community di-setup lagi.</div>`:`
+      ${!myLinked?`<div style="font-size:12px;color:var(--text3);text-align:center">🔒 Link WhatsApp anda dahulu (atas) untuk boleh hantar notis.</div>`:
+      channels.length===0?`<div style="font-size:12px;color:var(--text3);text-align:center">Belum ada channel/community di-setup lagi.</div>`:`
       <div style="display:flex;gap:8px;align-items:flex-end">
         ${channels.length>1?`
         <select id="waComposeJid" style="flex-shrink:0;max-width:150px">
@@ -3680,7 +3740,7 @@ async function _loadWhatsAppView(silent){
         <textarea id="waComposeText" rows="2" placeholder="Taip notis untuk dihantar ke WhatsApp..." style="flex:1;resize:none">${esc(draftText)}</textarea>
         <button class="btn btn-primary" id="waSendBtn" onclick="sendWhatsAppNotice()" style="flex-shrink:0">Hantar</button>
       </div>
-      <div style="font-size:11px;color:var(--text3);margin-top:6px">📣 Notis ni akan appear terus di WhatsApp channel/community berkenaan (semua member akan nampak).</div>`}
+      <div style="font-size:11px;color:var(--text3);margin-top:6px">📣 Notis ni akan appear terus di WhatsApp guna nombor anda sendiri (semua member akan nampak).</div>`}
     </div>
   </div>`);
   const list=document.getElementById('waMsgList');
