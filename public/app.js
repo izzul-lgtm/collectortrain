@@ -3631,7 +3631,11 @@ const WA_LINK_STATUS_LABEL={
   connected:{text:'🟢 WhatsApp anda connected',color:'var(--green)'},
   disconnected:{text:'🔴 Terputus (auto-reconnect)',color:'var(--red)'},
   logged_out:{text:'⚫ Logged out — perlu link semula',color:'var(--text3)'},
+  logout_requested:{text:'⏳ Sedang logout...',color:'var(--amber)'},
 };
+// Status yang ada "sesuatu untuk di-logout" — tunjuk butang Logout.
+// not_linked/logout_requested tak perlu (tiada session, atau tengah proses).
+const WA_LOGOUT_ELIGIBLE=new Set(['requested','qr','connected','disconnected','logged_out']);
 async function renderWhatsApp(){
   clearInterval(_waPollTimer);
   clearInterval(_waLinkPollTimer);
@@ -3670,7 +3674,10 @@ function _renderWaLinkBox(data){
         ${status==='connected'&&data.phoneNumber?`<div style="font-size:11px;color:var(--text3)">Nombor: ${esc(data.phoneNumber)}</div>`:''}
         ${status==='not_linked'?`<div style="font-size:11px;color:var(--text3)">Link WhatsApp anda supaya boleh hantar notis guna nombor sendiri (bukan share dengan orang lain)</div>`:''}
       </div>
-      ${status==='not_linked'||status==='logged_out'?`<button class="btn btn-primary" onclick="requestWhatsAppLink()">Link WhatsApp Saya</button>`:''}
+      <div style="display:flex;gap:8px;flex-shrink:0">
+        ${status==='not_linked'||status==='logged_out'?`<button class="btn btn-primary" onclick="requestWhatsAppLink()">Link WhatsApp Saya</button>`:''}
+        ${WA_LOGOUT_ELIGIBLE.has(status)?`<button class="btn btn-secondary" onclick="logoutWhatsApp()">Logout WhatsApp</button>`:''}
+      </div>
     </div>
     ${status==='qr'&&data.qrData?`<div style="text-align:center;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
       <img src="${esc(data.qrData)}" style="width:220px;height:220px;border:1px solid var(--border);padding:8px;border-radius:8px" />
@@ -3686,17 +3693,42 @@ async function requestWhatsAppLink(){
     await _loadWhatsAppLinkStatus();
   }catch(e){alert('Gagal: '+e.message);}
 }
+async function logoutWhatsApp(){
+  if(!confirm('Logout WhatsApp anda? Anda perlu scan QR semula untuk link balik, dan group/channel content akan disembunyikan sehingga scan semula.'))return;
+  try{
+    const res=await fetch('/api/whatsapp/logout',{method:'POST',headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Gagal logout.');
+    await _loadWhatsAppLinkStatus();
+    await _loadWhatsAppView();
+  }catch(e){alert('Gagal logout: '+e.message);}
+}
 async function _loadWhatsAppView(silent){
-  let messages,status,channels;
+  let messages,status,channels,locked;
   try{
     const res=await fetch('/api/whatsapp/messages',{headers:authHeaders()});
     const data=await res.json();
     if(!res.ok)throw new Error(data.error||'Failed to load WhatsApp channel.');
+    locked=!!data.locked;
     messages=data.messages||[];
     status=data.status||'unknown';
     channels=data.channels||[];
   }catch(e){
     if(!silent)setContent(`<div class="page-header"><div class="page-title">WhatsApp Channel</div></div><div class="card">⚠ ${esc(e.message)}</div>`);
+    return;
+  }
+  if(locked){
+    setContent(`
+    <div class="page-header">
+      <div class="page-title">🟢 WhatsApp Channel</div>
+      <div class="page-sub">Setiap orang link akaun WhatsApp sendiri — notis yang dihantar akan muncul guna nombor anda sendiri</div>
+    </div>
+    ${_renderWaLinkBox(_waLinkData)}
+    <div class="card" style="text-align:center;padding:40px 20px">
+      <div style="font-size:32px;margin-bottom:8px">🔒</div>
+      <div style="font-weight:700;font-size:14px;margin-bottom:4px">Group/channel content disembunyikan</div>
+      <div style="font-size:12px;color:var(--text3)">Link WhatsApp anda dan scan QR (atas) dahulu — lepas connected, mesej group akan nampak di sini.</div>
+    </div>`);
     return;
   }
   // Elak reset textarea composer yang tengah ditaip masa auto-poll (6s)
