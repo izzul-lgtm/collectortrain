@@ -3636,6 +3636,14 @@ const WA_LINK_STATUS_LABEL={
 // Status yang ada "sesuatu untuk di-logout" — tunjuk butang Logout.
 // not_linked/logout_requested tak perlu (tiada session, atau tengah proses).
 const WA_LOGOUT_ELIGIBLE=new Set(['requested','qr','connected','disconnected','logged_out']);
+// Fallback bila sender_name takde (row lama sebelum backend hantar fallback
+// nombor sekali, atau kes tepi yang backend tetap tak dapat pushName) — lebih
+// baik tunjuk nombor telefon (macam WhatsApp app sendiri buat) drpd blank.
+function _waPhoneFromJid(jid){
+  if(!jid)return null;
+  const digits=jid.split('@')[0].split(':')[0];
+  return /^\d{6,}$/.test(digits)?`+${digits}`:null;
+}
 async function renderWhatsApp(){
   clearInterval(_waPollTimer);
   clearInterval(_waLinkPollTimer);
@@ -3756,7 +3764,7 @@ async function _loadWhatsAppView(silent){
       messages.map(m=>`
         <div style="align-self:${m.from_me?'flex-end':'flex-start'};max-width:75%;background:${m.from_me?'#DCF8C6':'#fff'};border-radius:8px;padding:6px 9px;box-shadow:0 1px 1px rgba(0,0,0,0.1)">
           ${showChannelTag?`<div style="font-size:10px;font-weight:700;color:var(--brand);margin-bottom:2px">${esc(m.channel_label||m.jid)}</div>`:''}
-          ${m.sender_name?`<div style="font-size:11px;font-weight:700;color:#075E54">${esc(m.sender_name)}</div>`:''}
+          ${(m.sender_name||m.sender_jid)?`<div style="font-size:11px;font-weight:700;color:#075E54">${esc(m.sender_name||_waPhoneFromJid(m.sender_jid)||m.sender_jid)}</div>`:''}
           <div style="font-size:13px;color:#111;white-space:pre-wrap;word-break:break-word">${esc(m.text||'')}</div>
           <div style="font-size:10px;color:#8a8a8a;text-align:right;margin-top:2px">${fmtDateTime(m.wa_timestamp)}</div>
         </div>`).join('')}
