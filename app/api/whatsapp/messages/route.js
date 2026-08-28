@@ -2,18 +2,34 @@
 // ─────────────────────────────────────────────────────────────────────────
 // READ-ONLY dengan sengaja — cuma export GET, tiada POST/DELETE. Mesej
 // masuk ke jadual whatsapp_messages melalui whatsapp-service (Railway,
-// Baileys) sahaja, bukan melalui app ni. Semua role authenticated boleh
-// baca (macam announcements) — ni untuk viewing channel/community sahaja,
-// tiada keupayaan reply/hantar.
+// Baileys) sahaja, bukan melalui app ni.
+//
+// GATE: sengaja tak terus bagi semua orang authenticated tengok isi group/
+// channel. Content (mesej + nama group) cuma didedahkan lepas user tu
+// SENDIRI dah link & scan QR (status='connected') — sebelum tu, pulangkan
+// { locked:true } tanpa messages/channels langsung. Ni bukan sekadar UI
+// hide; kalau tak link, data memang tak keluar dari route ni pun.
 import { supabaseAdmin } from '../../../../lib/supabaseAdmin';
 import { requireAuthWithUser } from '../../../../lib/requireAuth';
 
 export async function GET(request) {
-  const { authError } = await requireAuthWithUser(request);
+  const { authError, authUser } = await requireAuthWithUser(request);
   if (authError) return authError;
 
   try {
     const sb = supabaseAdmin();
+
+    const { data: myLink, error: myLinkErr } = await sb
+      .from('whatsapp_user_links')
+      .select('status')
+      .eq('user_id', authUser.id)
+      .maybeSingle();
+    if (myLinkErr) throw myLinkErr;
+
+    const myStatus = (myLink && myLink.status) || 'not_linked';
+    if (myStatus !== 'connected') {
+      return Response.json({ locked: true, myStatus, messages: [], status: 'unknown', channels: [] });
+    }
 
     const { data: messages, error: msgErr } = await sb
       .from('whatsapp_messages')
@@ -36,6 +52,7 @@ export async function GET(request) {
     if (chErr) throw chErr;
 
     return Response.json({
+      locked: false,
       messages: messages || [],
       status: (meta && meta.status) || 'unknown',
       channels: channels || [],
