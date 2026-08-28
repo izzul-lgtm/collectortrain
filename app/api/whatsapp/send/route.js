@@ -40,9 +40,28 @@ export async function POST(request) {
       return Response.json({ error: 'Channel/community tidak dikenali atau tidak dibenarkan.' }, { status: 400 });
     }
 
+    // Setiap user hantar guna akaun WhatsApp SENDIRI (bukan akaun shared)
+    // — kena dah link & connected dulu sebelum boleh compose.
+    const { data: link, error: linkErr } = await sb
+      .from('whatsapp_user_links')
+      .select('status')
+      .eq('user_id', authUser.id)
+      .maybeSingle();
+    if (linkErr) throw linkErr;
+    if (!link || link.status !== 'connected') {
+      return Response.json({ error: 'WhatsApp anda belum di-link. Sila link WhatsApp anda dahulu di bahagian atas page ini.' }, { status: 400 });
+    }
+
+    const { data: userRow, error: userErr } = await sb
+      .from('users')
+      .select('name')
+      .eq('id', authUser.id)
+      .maybeSingle();
+    if (userErr) throw userErr;
+
     const { data, error } = await sb
       .from('whatsapp_outbox')
-      .insert({ jid, text, posted_by: authUser.id, status: 'pending' })
+      .insert({ jid, text, posted_by: authUser.id, posted_by_name: (userRow && userRow.name) || authUser.id, status: 'pending' })
       .select()
       .single();
     if (error) throw error;
