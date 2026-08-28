@@ -1101,6 +1101,7 @@ function buildNav(){
     {page:'announcements',icon:'📢',label:'Announcements'},
     {page:'discussion',icon:'💬',label:'Discussion'},
     {page:'messages',icon:'✉️',label:'Messages'},
+    {page:'whatsapp',icon:'🟢',label:'WhatsApp Channel'},
     {page:'learning',icon:'📘',label:'Learning'},
     {page:'quizzes',icon:'📝',label:'Quizzes'},
     {page:'scenarios',icon:'🎭',label:'Manage Scenarios'},
@@ -1115,6 +1116,7 @@ function buildNav(){
       {page:'announcements',icon:'📢',label:'Announcements'},
       {page:'discussion',icon:'💬',label:'Discussion'},
       {page:'messages',icon:'✉️',label:'Messages'},
+      {page:'whatsapp',icon:'🟢',label:'WhatsApp Channel'},
       {page:'learning',icon:'📘',label:'Learning'},
       {page:'quizzes',icon:'📝',label:'Quizzes'},
     ],
@@ -1152,6 +1154,7 @@ function navigate(page){
     'announcements':renderAnnouncements,
     'discussion':renderDiscussion,
     'messages':renderMessages,
+    'whatsapp':renderWhatsApp,
     'learning':renderLearning,
     'quizzes':renderQuizzes,
   };
@@ -3605,6 +3608,101 @@ async function deleteAnnouncement(id){
     if(!res.ok)throw new Error(data.error||'Failed to delete.');
     renderAnnouncements();
   }catch(e){alert('Gagal padam: '+e.message);}
+}
+
+// ═══════════ WHATSAPP CHANNEL (read-only — bridge dari Baileys service) ═══
+// Papar mesej dari channel/community WhatsApp yang di-whitelist sahaja
+// (tapisan sebenar berlaku di whatsapp-service, bukan di sini — ni cuma
+// display). View-only sengaja: tiada input box untuk hantar balik.
+let _waPollTimer=null;
+const WA_STATUS_LABEL={
+  connected:{text:'🟢 Connected',color:'var(--green)'},
+  qr:{text:'🟡 Menunggu scan QR',color:'var(--amber)'},
+  disconnected:{text:'🔴 Terputus (auto-reconnect)',color:'var(--red)'},
+  logged_out:{text:'⚫ Logged out — perlu scan QR baru',color:'var(--text3)'},
+  starting:{text:'⏳ Memulakan...',color:'var(--text3)'},
+  unknown:{text:'⚪ Status tidak diketahui',color:'var(--text3)'},
+};
+async function renderWhatsApp(){
+  clearInterval(_waPollTimer);
+  setContent('<div class="page-header"><div class="page-title">WhatsApp Channel</div></div><div class="card">Loading...</div>');
+  await _loadWhatsAppView();
+  _waPollTimer=setInterval(()=>{ if(currentPage==='whatsapp')_loadWhatsAppView(true); else clearInterval(_waPollTimer); },6000);
+}
+async function _loadWhatsAppView(silent){
+  let messages,status,channels;
+  try{
+    const res=await fetch('/api/whatsapp/messages',{headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load WhatsApp channel.');
+    messages=data.messages||[];
+    status=data.status||'unknown';
+    channels=data.channels||[];
+  }catch(e){
+    if(!silent)setContent(`<div class="page-header"><div class="page-title">WhatsApp Channel</div></div><div class="card">⚠ ${esc(e.message)}</div>`);
+    return;
+  }
+  // Elak reset textarea composer yang tengah ditaip masa auto-poll (6s)
+  const composerEl=document.getElementById('waComposeText');
+  const draftText=composerEl?composerEl.value:'';
+  const draftJid=(document.getElementById('waComposeJid')||{}).value||'';
+
+  const st=WA_STATUS_LABEL[status]||WA_STATUS_LABEL.unknown;
+  const distinctChannels=[...new Set(messages.map(m=>m.channel_label||m.jid))];
+  const showChannelTag=distinctChannels.length>1;
+  setContent(`
+  <div class="page-header">
+    <div class="page-title">🟢 WhatsApp Channel</div>
+    <div class="page-sub">Dipaparkan dari channel/community yang dibenarkan sahaja — notis yang dihantar dari sini akan muncul di WhatsApp sebenar</div>
+  </div>
+  <div class="card" style="padding:0;overflow:hidden">
+    <div style="padding:12px 16px;background:#075E54;color:#fff;display:flex;justify-content:space-between;align-items:center">
+      <div style="font-weight:700;font-size:14px">${distinctChannels.length?esc(distinctChannels.join(', ')):'Menunggu mesej pertama...'}</div>
+      <div style="font-size:12px;font-weight:600;color:${st.color==='var(--green)'?'#D1FAE5':'#fff'}">${st.text}</div>
+    </div>
+    <div id="waMsgList" style="background:#ECE5DD;padding:16px;min-height:300px;max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px">
+      ${messages.length===0?`<div class="empty-state" style="background:transparent"><div class="es-icon">🟢</div><p style="color:#3a3a3a">Tiada mesej lagi. Mesej dari channel/community yang dibenarkan akan muncul di sini secara automatik.</p></div>`:
+      messages.map(m=>`
+        <div style="align-self:${m.from_me?'flex-end':'flex-start'};max-width:75%;background:${m.from_me?'#DCF8C6':'#fff'};border-radius:8px;padding:6px 9px;box-shadow:0 1px 1px rgba(0,0,0,0.1)">
+          ${showChannelTag?`<div style="font-size:10px;font-weight:700;color:var(--brand);margin-bottom:2px">${esc(m.channel_label||m.jid)}</div>`:''}
+          ${!m.from_me&&m.sender_name?`<div style="font-size:11px;font-weight:700;color:#075E54">${esc(m.sender_name)}</div>`:''}
+          <div style="font-size:13px;color:#111;white-space:pre-wrap;word-break:break-word">${esc(m.text||'')}</div>
+          <div style="font-size:10px;color:#8a8a8a;text-align:right;margin-top:2px">${fmtDateTime(m.wa_timestamp)}</div>
+        </div>`).join('')}
+    </div>
+    <div style="padding:12px 16px;background:var(--surface2);border-top:1px solid var(--border)">
+      ${channels.length===0?`<div style="font-size:12px;color:var(--text3);text-align:center">Belum ada channel/community di-setup lagi.</div>`:`
+      <div style="display:flex;gap:8px;align-items:flex-end">
+        ${channels.length>1?`
+        <select id="waComposeJid" style="flex-shrink:0;max-width:150px">
+          ${channels.map(c=>`<option value="${esc(c.jid)}" ${draftJid===c.jid?'selected':''}>${esc(c.label)}</option>`).join('')}
+        </select>`:`<input type="hidden" id="waComposeJid" value="${esc(channels[0].jid)}" />`}
+        <textarea id="waComposeText" rows="2" placeholder="Taip notis untuk dihantar ke WhatsApp..." style="flex:1;resize:none">${esc(draftText)}</textarea>
+        <button class="btn btn-primary" id="waSendBtn" onclick="sendWhatsAppNotice()" style="flex-shrink:0">Hantar</button>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px">📣 Notis ni akan appear terus di WhatsApp channel/community berkenaan (semua member akan nampak).</div>`}
+    </div>
+  </div>`);
+  const list=document.getElementById('waMsgList');
+  if(list)list.scrollTop=list.scrollHeight;
+}
+async function sendWhatsAppNotice(){
+  const jid=(document.getElementById('waComposeJid')||{}).value||'';
+  const text=(document.getElementById('waComposeText')||{}).value||'';
+  if(!jid||!text.trim()){alert('Sila pilih channel dan taip notis.');return;}
+  const btn=document.getElementById('waSendBtn');
+  if(btn){btn.disabled=true;btn.textContent='Menghantar...';}
+  try{
+    const res=await fetch('/api/whatsapp/send',{method:'POST',headers:authHeaders(),body:JSON.stringify({jid,text:text.trim()})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Gagal hantar notis.');
+    const ta=document.getElementById('waComposeText');
+    if(ta)ta.value='';
+    await _loadWhatsAppView();
+  }catch(e){
+    alert('Gagal hantar: '+e.message);
+    if(btn){btn.disabled=false;btn.textContent='Hantar';}
+  }
 }
 
 // ═══════════ DISCUSSION (dua-hala — semua boleh post & reply) ═══════════
