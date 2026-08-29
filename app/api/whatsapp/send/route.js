@@ -52,6 +52,20 @@ export async function POST(request) {
       return Response.json({ error: 'WhatsApp anda belum di-link. Sila link WhatsApp anda dahulu di bahagian atas page ini.' }, { status: 400 });
     }
 
+    // Confirm nombor dia betul-betul AHLI group/channel ni — kalau tak,
+    // WhatsApp akan reject "forbidden" lambat kemudian (bila outbox
+    // diproses), so lebih baik gagal cepat & terang di sini terus.
+    const { data: membership, error: memErr } = await sb
+      .from('whatsapp_user_channels')
+      .select('is_member')
+      .eq('user_id', authUser.id)
+      .eq('jid', jid)
+      .maybeSingle();
+    if (memErr) throw memErr;
+    if (membership && membership.is_member === false) {
+      return Response.json({ error: 'Nombor WhatsApp anda bukan ahli group/channel ini. Sila minta admin tambah anda ke group tersebut dahulu.' }, { status: 400 });
+    }
+
     const { data: userRow, error: userErr } = await sb
       .from('users')
       .select('name')
