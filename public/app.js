@@ -3749,9 +3749,14 @@ async function _loadWhatsAppView(silent){
   // (draftJid), atau channel pertama kalau baru load. Guna ni untuk
   // TAPIS mesej yang dipaparkan, bukan cuma untuk tentukan destinasi hantar.
   const activeJid=draftJid||(channels[0]&&channels[0].jid)||'';
-  const visibleMessages=channels.length>1&&activeJid
-    ?messages.filter(m=>m.jid===activeJid)
-    :messages;
+  // PENTING: filter ikut activeJid SENTIASA (bukan cuma bila channels.length>1)
+  // — lepas kita tapis dropdown ikut keahlian per-user, "1 channel dalam
+  // dropdown" tak lagi bermaksud "cuma 1 group je dalam seluruh sistem".
+  // `messages` yang di-fetch tu tetap SEMUA mesej dari SEMUA group (server
+  // tak tapis benda tu, cuma tapis senarai `channels`), so kalau kita skip
+  // filter bila channels.length<=1, staff yang ahli 1 group je akan nampak
+  // campur-aduk mesej group lain juga — tu punca "conversation clash".
+  const visibleMessages=activeJid?messages.filter(m=>m.jid===activeJid):[];
 
   const st=WA_STATUS_LABEL[status]||WA_STATUS_LABEL.unknown;
   const activeChannelLabel=(channels.find(c=>c.jid===activeJid)||{}).label;
