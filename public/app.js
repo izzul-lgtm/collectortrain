@@ -3745,10 +3745,18 @@ async function _loadWhatsAppView(silent){
   const draftText=composerEl?composerEl.value:'';
   const draftJid=(document.getElementById('waComposeJid')||{}).value||'';
   const myLinked=_waMyLinkStatus==='connected';
+  // Tab/group yang tengah aktif — default ke pilihan dropdown sebelum ni
+  // (draftJid), atau channel pertama kalau baru load. Guna ni untuk
+  // TAPIS mesej yang dipaparkan, bukan cuma untuk tentukan destinasi hantar.
+  const activeJid=draftJid||(channels[0]&&channels[0].jid)||'';
+  const visibleMessages=channels.length>1&&activeJid
+    ?messages.filter(m=>m.jid===activeJid)
+    :messages;
 
   const st=WA_STATUS_LABEL[status]||WA_STATUS_LABEL.unknown;
-  const distinctChannels=[...new Set(messages.map(m=>m.channel_label||m.jid))];
-  const showChannelTag=distinctChannels.length>1;
+  const activeChannelLabel=(channels.find(c=>c.jid===activeJid)||{}).label;
+  const distinctChannels=[...new Set(visibleMessages.map(m=>m.channel_label||m.jid))];
+  const showChannelTag=false;
   // "Hijau/kanan" patut bermaksud "ni betul2 AKU (viewer semasa) yang
   // hantar" — BUKAN "mana2 member team kita yang hantar" (m.from_me global
   // dari sudut WhatsApp/service, true untuk SEMUA notis outgoing team kita
@@ -3764,12 +3772,12 @@ async function _loadWhatsAppView(silent){
   ${_renderWaLinkBox(_waLinkData)}
   <div class="card" style="padding:0;overflow:hidden">
     <div style="padding:12px 16px;background:#075E54;color:#fff;display:flex;justify-content:space-between;align-items:center">
-      <div style="font-weight:700;font-size:14px">${distinctChannels.length?esc(distinctChannels.join(', ')):'Menunggu mesej pertama...'}</div>
+      <div style="font-weight:700;font-size:14px">${esc(activeChannelLabel||distinctChannels.join(', ')||'Menunggu mesej pertama...')}</div>
       <div style="font-size:12px;font-weight:600;color:${st.color==='var(--green)'?'#D1FAE5':'#fff'}">${st.text}</div>
     </div>
     <div id="waMsgList" style="background:#ECE5DD;padding:16px;min-height:300px;max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px">
-      ${messages.length===0?`<div class="empty-state" style="background:transparent"><div class="es-icon">🟢</div><p style="color:#3a3a3a">Tiada mesej lagi. Mesej dari channel/community yang dibenarkan akan muncul di sini secara automatik.</p></div>`:
-      messages.map(m=>{
+      ${visibleMessages.length===0?`<div class="empty-state" style="background:transparent"><div class="es-icon">🟢</div><p style="color:#3a3a3a">Tiada mesej lagi. Mesej dari channel/community yang dibenarkan akan muncul di sini secara automatik.</p></div>`:
+      visibleMessages.map(m=>{
         const mine=isMine(m);
         return `
         <div style="align-self:${mine?'flex-end':'flex-start'};max-width:75%;background:${mine?'#DCF8C6':'#fff'};border-radius:8px;padding:6px 9px;box-shadow:0 1px 1px rgba(0,0,0,0.1)">
@@ -3784,8 +3792,8 @@ async function _loadWhatsAppView(silent){
       channels.length===0?`<div style="font-size:12px;color:var(--text3);text-align:center">Belum ada channel/community di-setup lagi.</div>`:`
       <div style="display:flex;gap:8px;align-items:flex-end">
         ${channels.length>1?`
-        <select id="waComposeJid" style="flex-shrink:0;max-width:150px">
-          ${channels.map(c=>`<option value="${esc(c.jid)}" ${draftJid===c.jid?'selected':''}>${esc(c.label)}</option>`).join('')}
+        <select id="waComposeJid" onchange="_loadWhatsAppView(true)" style="flex-shrink:0;max-width:150px">
+          ${channels.map(c=>`<option value="${esc(c.jid)}" ${activeJid===c.jid?'selected':''}>${esc(c.label)}</option>`).join('')}
         </select>`:`<input type="hidden" id="waComposeJid" value="${esc(channels[0].jid)}" />`}
         <textarea id="waComposeText" rows="2" placeholder="Taip notis untuk dihantar ke WhatsApp..." style="flex:1;resize:none">${esc(draftText)}</textarea>
         <button class="btn btn-primary" id="waSendBtn" onclick="sendWhatsAppNotice()" style="flex-shrink:0">Hantar</button>
