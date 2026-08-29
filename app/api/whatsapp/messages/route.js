@@ -21,7 +21,7 @@ export async function GET(request) {
 
     const { data: myLink, error: myLinkErr } = await sb
       .from('whatsapp_user_links')
-      .select('status')
+      .select('status, phone_number')
       .eq('user_id', authUser.id)
       .maybeSingle();
     if (myLinkErr) throw myLinkErr;
@@ -53,6 +53,11 @@ export async function GET(request) {
 
     return Response.json({
       locked: false,
+      // Nombor kita SENDIRI (viewer semasa) — frontend banding dengan
+      // m.sender_jid setiap mesej untuk tentukan "ni betul2 AKU hantar"
+      // (hijau/kanan) vs "member lain dalam team hantar guna nombor DIA"
+      // (putih/kiri, walaupun m.from_me=true dari sudut WhatsApp global).
+      myPhone: myLink?.phone_number || null,
       messages: messages || [],
       status: (meta && meta.status) || 'unknown',
       channels: channels || [],
