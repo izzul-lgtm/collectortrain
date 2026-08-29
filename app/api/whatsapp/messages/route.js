@@ -51,6 +51,22 @@ export async function GET(request) {
       .order('label', { ascending: true });
     if (chErr) throw chErr;
 
+    // Tapis dropdown compose ikut keahlian SEBENAR user ni — tanpa ni,
+    // dia boleh pilih & cuba hantar ke group yang nombor dia bukan ahli,
+    // dan WhatsApp akan reject "forbidden" (gagal senyap dari sudut UI).
+    // Kalau belum ada row keahlian langsung utk user ni (sync belum
+    // sempat jalan lepas connect), fallback tunjuk semua supaya tak
+    // sekat compose selama-lamanya — whatsapp-service sync tu cepat
+    // (lepas connect terus), so ni patut jarang berlaku.
+    const { data: memberships, error: memErr } = await sb
+      .from('whatsapp_user_channels')
+      .select('jid, is_member')
+      .eq('user_id', authUser.id);
+    if (memErr) throw memErr;
+    const composeChannels = (memberships && memberships.length > 0)
+      ? channels.filter(c => memberships.some(m => m.jid === c.jid && m.is_member))
+      : (channels || []);
+
     return Response.json({
       locked: false,
       // Nombor kita SENDIRI (viewer semasa) — frontend banding dengan
@@ -60,7 +76,7 @@ export async function GET(request) {
       myPhone: myLink?.phone_number || null,
       messages: messages || [],
       status: (meta && meta.status) || 'unknown',
-      channels: channels || [],
+      channels: composeChannels,
     });
   } catch (e) {
     return Response.json({ error: e.message || 'Failed to load WhatsApp channel.' }, { status: 500 });
