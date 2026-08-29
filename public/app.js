@@ -3712,7 +3712,7 @@ async function logoutWhatsApp(){
   }catch(e){alert('Gagal logout: '+e.message);}
 }
 async function _loadWhatsAppView(silent){
-  let messages,status,channels,locked;
+  let messages,status,channels,locked,myPhone;
   try{
     const res=await fetch('/api/whatsapp/messages',{headers:authHeaders()});
     const data=await res.json();
@@ -3721,6 +3721,7 @@ async function _loadWhatsAppView(silent){
     messages=data.messages||[];
     status=data.status||'unknown';
     channels=data.channels||[];
+    myPhone=data.myPhone||null;
   }catch(e){
     if(!silent)setContent(`<div class="page-header"><div class="page-title">WhatsApp Channel</div></div><div class="card">⚠ ${esc(e.message)}</div>`);
     return;
@@ -3748,6 +3749,13 @@ async function _loadWhatsAppView(silent){
   const st=WA_STATUS_LABEL[status]||WA_STATUS_LABEL.unknown;
   const distinctChannels=[...new Set(messages.map(m=>m.channel_label||m.jid))];
   const showChannelTag=distinctChannels.length>1;
+  // "Hijau/kanan" patut bermaksud "ni betul2 AKU (viewer semasa) yang
+  // hantar" — BUKAN "mana2 member team kita yang hantar" (m.from_me global
+  // dari sudut WhatsApp/service, true untuk SEMUA notis outgoing team kita
+  // tak kira siapa hantar). Kalau tak, mesej member lain (contoh IJAH) yang
+  // link WhatsApp dia sendiri pun akan nampak macam "aku yang reply".
+  // Banding nombor sendiri (myPhone) dengan sender_jid setiap mesej.
+  const isMine=m=>m.from_me&&myPhone&&m.sender_jid&&_waPhoneFromJid(m.sender_jid)===`+${myPhone}`;
   setContent(`
   <div class="page-header">
     <div class="page-title">🟢 WhatsApp Channel</div>
@@ -3761,13 +3769,15 @@ async function _loadWhatsAppView(silent){
     </div>
     <div id="waMsgList" style="background:#ECE5DD;padding:16px;min-height:300px;max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px">
       ${messages.length===0?`<div class="empty-state" style="background:transparent"><div class="es-icon">🟢</div><p style="color:#3a3a3a">Tiada mesej lagi. Mesej dari channel/community yang dibenarkan akan muncul di sini secara automatik.</p></div>`:
-      messages.map(m=>`
-        <div style="align-self:${m.from_me?'flex-end':'flex-start'};max-width:75%;background:${m.from_me?'#DCF8C6':'#fff'};border-radius:8px;padding:6px 9px;box-shadow:0 1px 1px rgba(0,0,0,0.1)">
+      messages.map(m=>{
+        const mine=isMine(m);
+        return `
+        <div style="align-self:${mine?'flex-end':'flex-start'};max-width:75%;background:${mine?'#DCF8C6':'#fff'};border-radius:8px;padding:6px 9px;box-shadow:0 1px 1px rgba(0,0,0,0.1)">
           ${showChannelTag?`<div style="font-size:10px;font-weight:700;color:var(--brand);margin-bottom:2px">${esc(m.channel_label||m.jid)}</div>`:''}
-          ${(m.sender_name||(!m.from_me&&m.sender_jid))?`<div style="font-size:11px;font-weight:700;color:#075E54">${esc(m.sender_name||_waPhoneFromJid(m.sender_jid)||m.sender_jid)}</div>`:''}
+          ${(m.sender_name||(!mine&&m.sender_jid))?`<div style="font-size:11px;font-weight:700;color:#075E54">${esc(m.sender_name||_waPhoneFromJid(m.sender_jid)||m.sender_jid)}</div>`:''}
           <div style="font-size:13px;color:#111;white-space:pre-wrap;word-break:break-word">${esc(m.text||'')}</div>
           <div style="font-size:10px;color:#8a8a8a;text-align:right;margin-top:2px">${fmtDateTime(m.wa_timestamp)}</div>
-        </div>`).join('')}
+        </div>`;}).join('')}
     </div>
     <div style="padding:12px 16px;background:var(--surface2);border-top:1px solid var(--border)">
       ${!myLinked?`<div style="font-size:12px;color:var(--text3);text-align:center">🔒 Link WhatsApp anda dahulu (atas) untuk boleh hantar notis.</div>`:
