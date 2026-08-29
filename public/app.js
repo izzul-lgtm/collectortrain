@@ -3816,9 +3816,33 @@ async function sendWhatsAppNotice(){
     if(!res.ok)throw new Error(data.error||'Gagal hantar notis.');
     const ta=document.getElementById('waComposeText');
     if(ta)ta.value='';
+    // Insert ke outbox berjaya — TAPI tu belum bermaksud dah sampai ke
+    // WhatsApp sebenar (whatsapp-service Railway yang proses queue ni
+    // secara async). Check balik status sebenar row ni supaya kalau gagal
+    // senyap (contoh: WhatsApp anda tak connected), collector tahu terus
+    // dan bukan ingat dah terhantar padahal tidak.
+    if(btn)btn.textContent='Menyemak...';
+    const outboxId=data.outbox&&data.outbox.id;
+    let finalStatus='pending',finalError=null;
+    if(outboxId){
+      for(let i=0;i<6;i++){
+        await new Promise(r=>setTimeout(r,1500));
+        try{
+          const sRes=await fetch('/api/whatsapp/outbox-status?id='+encodeURIComponent(outboxId),{headers:authHeaders()});
+          const sData=await sRes.json();
+          if(sRes.ok&&sData.status&&sData.status!=='pending'){finalStatus=sData.status;finalError=sData.error;break;}
+        }catch(_e){/* skip satu try, cuba lagi */}
+      }
+    }
     await _loadWhatsAppView();
+    if(finalStatus==='failed'){
+      alert('⚠ Notis GAGAL dihantar ke WhatsApp: '+(finalError||'Sebab tidak diketahui.')+'\n\nSila semak status WhatsApp anda (link/connected) di bahagian atas page.');
+    }else if(finalStatus==='pending'){
+      alert('Notis masih diproses — semak semula sekejap lagi untuk pastikan betul-betul sampai.');
+    }
   }catch(e){
     alert('Gagal hantar: '+e.message);
+  }finally{
     if(btn){btn.disabled=false;btn.textContent='Hantar';}
   }
 }
