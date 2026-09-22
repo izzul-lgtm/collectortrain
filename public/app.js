@@ -4048,6 +4048,7 @@ async function renderMessageThread(userId){
   pollUnreadMessages(); // badge patut turun lepas baca thread ni (server dah mark read)
   const thread=data.thread||[];
   const otherName=data.otherUser?data.otherUser.name:userId;
+  const canModerate=currentUser.role==='admin'||currentUser.role==='manager';
   setContent(`
   <div class="page-header">
     <a href="#" onclick="event.preventDefault();closeMessageThread()" style="font-size:12px;color:var(--purple);font-weight:600">← Back to Messages</a>
@@ -4058,9 +4059,10 @@ async function renderMessageThread(userId){
       ${thread.length===0?`<div style="font-size:13px;color:var(--text3);text-align:center;padding:20px 0">Belum ada mesej. Mulakan perbualan!</div>`:
       thread.map(m=>{
         const isMe=m.senderId===currentUser.id;
+        const canDelete=isMe||canModerate;
         return`<div style="align-self:${isMe?'flex-end':'flex-start'};max-width:70%">
           <div style="padding:8px 12px;border-radius:10px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word;background:${isMe?'var(--purple-light)':'var(--bg)'};color:${isMe?'var(--purple)':'var(--text)'}">${esc(m.body)}${attachmentHTML(m)}</div>
-          <div style="font-size:10px;color:var(--text3);margin-top:2px;text-align:${isMe?'right':'left'}">${fmtDateTime(m.createdAt)}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:2px;text-align:${isMe?'right':'left'}">${fmtDateTime(m.createdAt)}${canDelete?` · <a href="#" onclick="event.preventDefault();deleteMessageInThread('${m.id}','${userId}')" style="color:var(--red);font-weight:600">Delete</a>`:''}</div>
         </div>`;
       }).join('')}
     </div>
@@ -4095,6 +4097,16 @@ async function sendMessageInThread(userId){
     if(input)input.value='';
     renderMessageThread(userId);
   }catch(e){alert('Gagal hantar: '+e.message);}
+}
+
+async function deleteMessageInThread(id,userId){
+  if(!confirm('Padam mesej ini?'))return;
+  try{
+    const res=await fetch('/api/messages',{method:'DELETE',headers:authHeaders(),body:JSON.stringify({id})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to delete.');
+    renderMessageThread(userId);
+  }catch(e){alert('Gagal padam: '+e.message);}
 }
 
 async function openNewMessagePicker(){
@@ -4177,10 +4189,11 @@ async function renderGroupThread(groupId){
       ${thread.length===0?`<div style="font-size:13px;color:var(--text3);text-align:center;padding:20px 0">Belum ada mesej. Mulakan perbualan!</div>`:
       thread.map(m=>{
         const isMe=m.senderId===currentUser.id;
+        const canDelete=isMe||canManage;
         return`<div style="align-self:${isMe?'flex-end':'flex-start'};max-width:70%">
           ${!isMe?`<div style="font-size:11px;color:var(--text3);margin-bottom:2px;font-weight:600">${esc(m.senderName||m.senderId)}</div>`:''}
           <div style="padding:8px 12px;border-radius:10px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word;background:${isMe?'var(--purple-light)':'var(--bg)'};color:${isMe?'var(--purple)':'var(--text)'}">${esc(m.body)}${attachmentHTML(m)}</div>
-          <div style="font-size:10px;color:var(--text3);margin-top:2px;text-align:${isMe?'right':'left'}">${fmtDateTime(m.createdAt)}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:2px;text-align:${isMe?'right':'left'}">${fmtDateTime(m.createdAt)}${canDelete?` · <a href="#" onclick="event.preventDefault();deleteMessageInGroupThread('${m.id}','${groupId}')" style="color:var(--red);font-weight:600">Delete</a>`:''}</div>
         </div>`;
       }).join('')}
     </div>
@@ -4215,6 +4228,16 @@ async function sendMessageInGroupThread(groupId){
     if(input)input.value='';
     renderGroupThread(groupId);
   }catch(e){alert('Gagal hantar: '+e.message);}
+}
+
+async function deleteMessageInGroupThread(id,groupId){
+  if(!confirm('Padam mesej ini?'))return;
+  try{
+    const res=await fetch('/api/messages',{method:'DELETE',headers:authHeaders(),body:JSON.stringify({id})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to delete.');
+    renderGroupThread(groupId);
+  }catch(e){alert('Gagal padam: '+e.message);}
 }
 
 // New Group modal — admin/manager sahaja (button pun disorok utk collector,

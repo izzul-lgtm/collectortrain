@@ -27,7 +27,7 @@
 // supaya SEMUA role (termasuk collector) boleh guna messaging tanpa 403.
 import { supabaseAdmin } from '../../../lib/supabaseAdmin';
 import { requireAuthWithUser } from '../../../lib/requireAuth';
-import { withSignedUrls } from '../../../lib/attachments';
+import { withSignedUrls, ATTACHMENT_BUCKET } from '../../../lib/attachments';
 
 function toClientShape(row, nameMap) {
   return {
@@ -309,5 +309,50 @@ export async function POST(request) {
     return Response.json({ message: toClientShape(withUrl) });
   } catch (e) {
     return Response.json({ error: e.message || 'Failed to send message.' }, { status: 500 });
+  }
+}
+
+// DELETE /api/messages { id } -> padam SATU mesej (DM atau group).
+// Boleh padam mesej sendiri, ATAU admin/manager boleh padam mesej sesiapa
+// sahaja (moderation) — sama pattern macam DELETE /api/discussion.
+//
+// Sebab wujud: sebelum ni jadual `messages` TAK PERNAH kehilangan baris —
+// cron purge-attachments cuma buang lampiran lepas 48j, mesej itu sendiri
+// kekal selama-lamanya (lihat nota dalam lib/attachments.js). Lama-lama
+// jadual ni jadi paling besar/kerap ditulis dalam DB (1 baris setiap DM/
+// group message), jadi query GET /api/messages (inbox + thread, dipoll
+// kerap untuk badge unread) makin lambat — bagi user function untuk padam
+// mesej sendiri (typo, salah hantar, dsb) supaya jadual tak membesar
+// tanpa had & sistem tak jadi berat akan datang.
+export async function DELETE(request) {
+  const { authError, authUser } = await requireAuthWithUser(request);
+  if (authError) return authError;
+  try {
+    const { id } = await request.json();
+    if (!id) return Response.json({ error: 'id diperlukan.' }, { status: 400 });
+    const sb = supabaseAdmin();
+
+    const { data: msg } = await sb.from('messages').select('*').eq('id', id).maybeSingle();
+    if (!msg) return Response.json({ error: 'Mesej tidak dijumpai.' }, { status: 404 });
+
+    const isOwner = msg.sender_id === authUser.id;
+    const isModerator = authUser.role === 'admin' || authUser.role === 'manager';
+    if (!isOwner && !isModerator) {
+      return Response.json({ error: 'Anda hanya boleh padam mesej sendiri.' }, { status: 403 });
+    }
+
+    // Kalau mesej ada lampiran yang belum sempat dipurge (<48j), buang fail
+    // Storage juga di sini — kalau tidak, fail tu jadi orphan (tiada baris
+    // DB rujuk dia lagi, tapi kekal dalam Storage selama-lamanya).
+    if (msg.attachment_path) {
+      const { error: removeError } = await sb.storage.from(ATTACHMENT_BUCKET).remove([msg.attachment_path]);
+      if (removeError) console.error('[DELETE /api/messages] storage remove error:', removeError.message);
+    }
+
+    const { error } = await sb.from('messages').delete().eq('id', id);
+    if (error) throw error;
+    return Response.json({ ok: true });
+  } catch (e) {
+    return Response.json({ error: e.message || 'Failed to delete message.' }, { status: 500 });
   }
 }
