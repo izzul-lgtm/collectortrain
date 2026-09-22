@@ -4042,38 +4042,75 @@ function closeMessageThread(){
   renderMessages();
 }
 
-async function renderMessageThread(userId){
+// Cache mudah id->body mesej yang sedang dipapar — dipakai oleh Edit
+// (elak sisipkan teks mesej terus dalam onclick="" HTML string, yang
+// pecah bila body ada quote/newline). Ditulis semula setiap kali thread
+// (DM/group) dipaparkan.
+let msgBodyCache={};
+
+// State pagination untuk DM thread yang sedang dibuka (load 50 terkini
+// dulu, "Load mesej lebih awal" tarik batch lama seterusnya guna cursor
+// `before`). Elak load SEMUA history sekaligus — conversation lama jadi
+// makin berat kalau di-load penuh setiap kali dibuka.
+let dmThreadState={userId:null,otherName:'',messages:[],hasMore:false,searchQuery:null};
+
+async function renderMessageThread(userId,opts){
+  opts=opts||{};
+  const q=opts.q||null;
   setContent('<div class="page-header"><div class="page-title">Messages</div></div><div class="card">Loading...</div>');
   let data;
   try{
-    const res=await fetch('/api/messages?with='+encodeURIComponent(userId),{headers:authHeaders()});
+    const url='/api/messages?with='+encodeURIComponent(userId)+(q?'&q='+encodeURIComponent(q):'');
+    const res=await fetch(url,{headers:authHeaders()});
     data=await res.json();
     if(!res.ok)throw new Error(data.error||'Failed to load thread.');
   }catch(e){
     setContent(`<div class="page-header"><div class="page-title">Messages</div></div><div class="card">⚠ ${esc(e.message)}</div>`);
     return;
   }
-  pollUnreadMessages(); // badge patut turun lepas baca thread ni (server dah mark read)
-  const thread=data.thread||[];
   const otherName=data.otherUser?data.otherUser.name:userId;
+  if(q){
+    // Search mode: papar hasil carian sahaja. TIADA pollUnreadMessages/mark-
+    // as-read di sini — carian sepatutnya tak ganggu status "dibaca" biasa.
+    dmThreadState={userId,otherName,messages:data.searchResults||[],hasMore:false,searchQuery:q};
+    renderDmThreadHTML();
+    return;
+  }
+  pollUnreadMessages(); // badge patut turun lepas baca thread ni (server dah mark read)
+  dmThreadState={userId,otherName,messages:data.thread||[],hasMore:!!data.hasMore,searchQuery:null};
+  renderDmThreadHTML();
+}
+
+function renderDmThreadHTML(){
+  const {userId,otherName,messages,hasMore,searchQuery}=dmThreadState;
   const canModerate=currentUser.role==='admin'||currentUser.role==='manager';
+  msgBodyCache={};
+  messages.forEach(m=>{msgBodyCache[m.id]=m.body;});
   setContent(`
   <div class="page-header">
     <a href="#" onclick="event.preventDefault();closeMessageThread()" style="font-size:12px;color:var(--purple);font-weight:600">← Back to Messages</a>
     <div class="page-title" style="margin-top:4px">${esc(otherName)}</div>
   </div>
   <div class="card">
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <input id="msgSearchInput" placeholder="Cari dalam perbualan ini..." value="${searchQuery?esc(searchQuery):''}" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();searchInDmThread();}" />
+      <button class="btn btn-secondary" style="padding:8px 14px" onclick="searchInDmThread()">🔍 Cari</button>
+      ${searchQuery?`<button class="btn btn-secondary" style="padding:8px 14px" onclick="renderMessageThread('${userId}')">✕ Clear</button>`:''}
+    </div>
+    ${searchQuery?`<div style="font-size:12px;color:var(--text3);margin-bottom:8px">${messages.length} hasil untuk "${esc(searchQuery)}"</div>`:''}
     <div id="msgThreadBox" style="max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
-      ${thread.length===0?`<div style="font-size:13px;color:var(--text3);text-align:center;padding:20px 0">Belum ada mesej. Mulakan perbualan!</div>`:
-      thread.map(m=>{
+      ${!searchQuery&&hasMore?`<div style="text-align:center;padding-bottom:6px"><a href="#" onclick="event.preventDefault();loadOlderMessagesInThread()" style="font-size:12px;color:var(--purple);font-weight:600">↑ Load mesej lebih awal</a></div>`:''}
+      ${messages.length===0?`<div style="font-size:13px;color:var(--text3);text-align:center;padding:20px 0">${searchQuery?'Tiada mesej sepadan.':'Belum ada mesej. Mulakan perbualan!'}</div>`:
+      messages.map(m=>{
         const isMe=m.senderId===currentUser.id;
         const canDelete=isMe||canModerate;
         return`<div style="align-self:${isMe?'flex-end':'flex-start'};max-width:70%">
           <div style="padding:8px 12px;border-radius:10px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word;background:${isMe?'var(--purple-light)':'var(--bg)'};color:${isMe?'var(--purple)':'var(--text)'}">${esc(m.body)}${attachmentHTML(m)}</div>
-          <div style="font-size:10px;color:var(--text3);margin-top:2px;text-align:${isMe?'right':'left'}">${fmtDateTime(m.createdAt)}${canDelete?` · <a href="#" onclick="event.preventDefault();deleteMessageInThread('${m.id}','${userId}')" style="color:var(--red);font-weight:600">Delete</a>`:''}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:2px;text-align:${isMe?'right':'left'}">${fmtDateTime(m.createdAt)}${m.editedAt?' · (disunting)':''}${isMe&&m.readAt?' · ✓ Dibaca':''}${isMe?` · <a href="#" onclick="event.preventDefault();editMessageInThread('${m.id}','${userId}')" style="color:var(--purple);font-weight:600">Edit</a>`:''}${canDelete?` · <a href="#" onclick="event.preventDefault();deleteMessageInThread('${m.id}','${userId}')" style="color:var(--red);font-weight:600">Delete</a>`:''}</div>
         </div>`;
       }).join('')}
     </div>
+    ${searchQuery?'':`
     <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:10px">
       <div style="display:flex;gap:8px">
         <textarea id="msgThreadInput" placeholder="Tulis mesej..." rows="1" style="flex:1;resize:none;overflow-y:hidden;max-height:140px;line-height:1.4" oninput="this.rows=1;const r=Math.min(6,Math.ceil(this.scrollHeight/20));this.rows=r;" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessageInThread('${userId}');}"></textarea>
@@ -4082,12 +4119,40 @@ async function renderMessageThread(userId){
         <button class="btn btn-primary" style="padding:8px 16px" onclick="sendMessageInThread('${userId}')">Send</button>
       </div>
       ${attachPreviewHTML('msgThreadInput')}
-    </div>
+    </div>`}
   </div>`);
   const box=document.getElementById('msgThreadBox');
   if(box)box.scrollTop=box.scrollHeight;
   const input=document.getElementById('msgThreadInput');
   if(input)input.focus();
+}
+
+async function searchInDmThread(){
+  const input=document.getElementById('msgSearchInput');
+  const q=(input||{}).value||'';
+  const userId=dmThreadState.userId;
+  if(!q.trim()){renderMessageThread(userId);return;}
+  renderMessageThread(userId,{q:q.trim()});
+}
+
+async function loadOlderMessagesInThread(){
+  if(!dmThreadState.hasMore||!dmThreadState.messages.length)return;
+  const oldest=dmThreadState.messages[0];
+  const box=document.getElementById('msgThreadBox');
+  const prevHeight=box?box.scrollHeight:0;
+  let data;
+  try{
+    const res=await fetch('/api/messages?with='+encodeURIComponent(dmThreadState.userId)+'&before='+encodeURIComponent(oldest.createdAt),{headers:authHeaders()});
+    data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load.');
+  }catch(e){alert('Gagal muat mesej lama: '+e.message);return;}
+  dmThreadState.messages=(data.thread||[]).concat(dmThreadState.messages);
+  dmThreadState.hasMore=!!data.hasMore;
+  renderDmThreadHTML();
+  // Kekalkan posisi scroll (elak "jump" ke atas bila mesej lama disisip di
+  // atas senarai — user patut tetap nampak mesej yang dia sedang baca).
+  const newBox=document.getElementById('msgThreadBox');
+  if(newBox)newBox.scrollTop=newBox.scrollHeight-prevHeight;
 }
 
 async function sendMessageInThread(userId){
@@ -4105,6 +4170,20 @@ async function sendMessageInThread(userId){
     if(input)input.value='';
     renderMessageThread(userId);
   }catch(e){alert('Gagal hantar: '+e.message);}
+}
+
+async function editMessageInThread(id,userId){
+  const current=msgBodyCache[id]||'';
+  const updated=prompt('Edit mesej:',current);
+  if(updated===null)return; // cancel
+  if(!updated.trim()){alert('Mesej tak boleh kosong.');return;}
+  if(updated.trim()===current.trim())return;
+  try{
+    const res=await fetch('/api/messages',{method:'PATCH',headers:authHeaders(),body:JSON.stringify({id,body:updated})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to edit.');
+    renderMessageThread(userId);
+  }catch(e){alert('Gagal edit: '+e.message);}
 }
 
 async function deleteMessageInThread(id,userId){
@@ -4168,21 +4247,42 @@ function openGroupThread(groupId){
   renderGroupThread(groupId);
 }
 
-async function renderGroupThread(groupId){
+// State pagination + search untuk group thread yang sedang dibuka — sama
+// konsep macam dmThreadState (lihat atas), plus simpan meta group (nama,
+// senarai ahli, canManage) supaya "Load mesej lebih awal"/search tak perlu
+// re-fetch meta tu setiap kali.
+let groupThreadState={groupId:null,group:{name:'Group',members:[]},canManage:false,messages:[],hasMore:false,searchQuery:null};
+
+async function renderGroupThread(groupId,opts){
+  opts=opts||{};
+  const q=opts.q||null;
   setContent('<div class="page-header"><div class="page-title">Messages</div></div><div class="card">Loading...</div>');
   let data;
   try{
-    const res=await fetch('/api/messages?groupId='+encodeURIComponent(groupId),{headers:authHeaders()});
+    const url='/api/messages?groupId='+encodeURIComponent(groupId)+(q?'&q='+encodeURIComponent(q):'');
+    const res=await fetch(url,{headers:authHeaders()});
     data=await res.json();
     if(!res.ok)throw new Error(data.error||'Failed to load group.');
   }catch(e){
     setContent(`<div class="page-header"><div class="page-title">Messages</div></div><div class="card">⚠ ${esc(e.message)}</div>`);
     return;
   }
-  pollUnreadMessages(); // badge patut turun lepas baca thread ni (server dah mark read)
-  const thread=data.thread||[];
-  const group=data.group||{name:'Group'};
   const canManage=currentUser.role==='admin'||currentUser.role==='manager';
+  if(q){
+    // Search mode — sama seperti DM: tiada pollUnreadMessages/mark-as-read.
+    groupThreadState={groupId,group:data.group||groupThreadState.group,canManage,messages:data.searchResults||[],hasMore:false,searchQuery:q};
+    renderGroupThreadHTML();
+    return;
+  }
+  pollUnreadMessages(); // badge patut turun lepas baca thread ni (server dah mark read)
+  groupThreadState={groupId,group:data.group||{name:'Group',members:[]},canManage,messages:data.thread||[],hasMore:!!data.hasMore,searchQuery:null};
+  renderGroupThreadHTML();
+}
+
+function renderGroupThreadHTML(){
+  const {groupId,group,canManage,messages,hasMore,searchQuery}=groupThreadState;
+  msgBodyCache={};
+  messages.forEach(m=>{msgBodyCache[m.id]=m.body;});
   setContent(`
   <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
     <div>
@@ -4193,18 +4293,29 @@ async function renderGroupThread(groupId){
     ${canManage?`<button class="btn btn-secondary" onclick="openManageGroupModal('${groupId}')">⚙️ Manage Group</button>`:''}
   </div>
   <div class="card">
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <input id="msgSearchInput" placeholder="Cari dalam group ini..." value="${searchQuery?esc(searchQuery):''}" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();searchInGroupThread();}" />
+      <button class="btn btn-secondary" style="padding:8px 14px" onclick="searchInGroupThread()">🔍 Cari</button>
+      ${searchQuery?`<button class="btn btn-secondary" style="padding:8px 14px" onclick="renderGroupThread('${groupId}')">✕ Clear</button>`:''}
+    </div>
+    ${searchQuery?`<div style="font-size:12px;color:var(--text3);margin-bottom:8px">${messages.length} hasil untuk "${esc(searchQuery)}"</div>`:''}
     <div id="msgThreadBox" style="max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-bottom:8px">
-      ${thread.length===0?`<div style="font-size:13px;color:var(--text3);text-align:center;padding:20px 0">Belum ada mesej. Mulakan perbualan!</div>`:
-      thread.map(m=>{
+      ${!searchQuery&&hasMore?`<div style="text-align:center;padding-bottom:6px"><a href="#" onclick="event.preventDefault();loadOlderMessagesInGroupThread()" style="font-size:12px;color:var(--purple);font-weight:600">↑ Load mesej lebih awal</a></div>`:''}
+      ${messages.length===0?`<div style="font-size:13px;color:var(--text3);text-align:center;padding:20px 0">${searchQuery?'Tiada mesej sepadan.':'Belum ada mesej. Mulakan perbualan!'}</div>`:
+      messages.map(m=>{
         const isMe=m.senderId===currentUser.id;
         const canDelete=isMe||canManage;
+        // "Dibaca oleh" — cuma dipapar untuk mesej SENDIRI (macam WhatsApp/
+        // Slack), dikira server-side dari last_read_at semua ahli group.
+        const readByLine=isMe&&m.readBy&&m.readBy.length?` · ✓ Dibaca: ${m.readBy.map(n=>esc(n)).join(', ')}`:'';
         return`<div style="align-self:${isMe?'flex-end':'flex-start'};max-width:70%">
           ${!isMe?`<div style="font-size:11px;color:var(--text3);margin-bottom:2px;font-weight:600">${esc(m.senderName||m.senderId)}</div>`:''}
           <div style="padding:8px 12px;border-radius:10px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word;background:${isMe?'var(--purple-light)':'var(--bg)'};color:${isMe?'var(--purple)':'var(--text)'}">${esc(m.body)}${attachmentHTML(m)}</div>
-          <div style="font-size:10px;color:var(--text3);margin-top:2px;text-align:${isMe?'right':'left'}">${fmtDateTime(m.createdAt)}${canDelete?` · <a href="#" onclick="event.preventDefault();deleteMessageInGroupThread('${m.id}','${groupId}')" style="color:var(--red);font-weight:600">Delete</a>`:''}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:2px;text-align:${isMe?'right':'left'}">${fmtDateTime(m.createdAt)}${m.editedAt?' · (disunting)':''}${readByLine}${isMe?` · <a href="#" onclick="event.preventDefault();editMessageInGroupThread('${m.id}','${groupId}')" style="color:var(--purple);font-weight:600">Edit</a>`:''}${canDelete?` · <a href="#" onclick="event.preventDefault();deleteMessageInGroupThread('${m.id}','${groupId}')" style="color:var(--red);font-weight:600">Delete</a>`:''}</div>
         </div>`;
       }).join('')}
     </div>
+    ${searchQuery?'':`
     <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:10px">
       <div style="display:flex;gap:8px">
         <textarea id="msgThreadInput" placeholder="Tulis mesej..." rows="1" style="flex:1;resize:none;overflow-y:hidden;max-height:140px;line-height:1.4" oninput="this.rows=1;const r=Math.min(6,Math.ceil(this.scrollHeight/20));this.rows=r;" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessageInGroupThread('${groupId}');}"></textarea>
@@ -4213,12 +4324,38 @@ async function renderGroupThread(groupId){
         <button class="btn btn-primary" style="padding:8px 16px" onclick="sendMessageInGroupThread('${groupId}')">Send</button>
       </div>
       ${attachPreviewHTML('msgThreadInput')}
-    </div>
+    </div>`}
   </div>`);
   const box=document.getElementById('msgThreadBox');
   if(box)box.scrollTop=box.scrollHeight;
   const input=document.getElementById('msgThreadInput');
   if(input)input.focus();
+}
+
+async function searchInGroupThread(){
+  const input=document.getElementById('msgSearchInput');
+  const q=(input||{}).value||'';
+  const groupId=groupThreadState.groupId;
+  if(!q.trim()){renderGroupThread(groupId);return;}
+  renderGroupThread(groupId,{q:q.trim()});
+}
+
+async function loadOlderMessagesInGroupThread(){
+  if(!groupThreadState.hasMore||!groupThreadState.messages.length)return;
+  const oldest=groupThreadState.messages[0];
+  const box=document.getElementById('msgThreadBox');
+  const prevHeight=box?box.scrollHeight:0;
+  let data;
+  try{
+    const res=await fetch('/api/messages?groupId='+encodeURIComponent(groupThreadState.groupId)+'&before='+encodeURIComponent(oldest.createdAt),{headers:authHeaders()});
+    data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to load.');
+  }catch(e){alert('Gagal muat mesej lama: '+e.message);return;}
+  groupThreadState.messages=(data.thread||[]).concat(groupThreadState.messages);
+  groupThreadState.hasMore=!!data.hasMore;
+  renderGroupThreadHTML();
+  const newBox=document.getElementById('msgThreadBox');
+  if(newBox)newBox.scrollTop=newBox.scrollHeight-prevHeight;
 }
 
 async function sendMessageInGroupThread(groupId){
@@ -4236,6 +4373,20 @@ async function sendMessageInGroupThread(groupId){
     if(input)input.value='';
     renderGroupThread(groupId);
   }catch(e){alert('Gagal hantar: '+e.message);}
+}
+
+async function editMessageInGroupThread(id,groupId){
+  const current=msgBodyCache[id]||'';
+  const updated=prompt('Edit mesej:',current);
+  if(updated===null)return;
+  if(!updated.trim()){alert('Mesej tak boleh kosong.');return;}
+  if(updated.trim()===current.trim())return;
+  try{
+    const res=await fetch('/api/messages',{method:'PATCH',headers:authHeaders(),body:JSON.stringify({id,body:updated})});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Failed to edit.');
+    renderGroupThread(groupId);
+  }catch(e){alert('Gagal edit: '+e.message);}
 }
 
 async function deleteMessageInGroupThread(id,groupId){
