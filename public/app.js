@@ -1133,11 +1133,19 @@ function buildNav(){
   }).join('');
 }
 
-function navigate(page){
+function setActiveNav(page){
+  // Extracted dari navigate() — sekadar tukar currentPage & highlight nav,
+  // TANPA render page (pages[page]()). Dipakai bila caller nak render
+  // sesuatu yang LEBIH SPESIFIK selepas ni sendiri (cth: buka satu thread
+  // mesej terus, bukan inbox Messages penuh) — supaya tak race dengan
+  // renderMessages() (lihat notifyNewMessage below untuk kenapa ni penting).
   currentPage=page;
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   const navEl=document.getElementById('nav-'+page);
   if(navEl)navEl.classList.add('active');
+}
+function navigate(page){
+  setActiveNav(page);
   const pages={
     'dashboard':renderDashboard,
     'training':renderTraining,
@@ -4445,7 +4453,20 @@ function notifyNewMessage(convo){
     });
     n.onclick=()=>{
       window.focus();
-      navigate('messages');
+      // BUG FIX: dulu panggil navigate('messages') (yang terus trigger
+      // renderMessages() — fetch PENUH inbox) DAN openGroupThread/
+      // openMessageThread (fetch thread spesifik) serentak — dua-dua async,
+      // race untuk setContent(). renderMessages() (lebih berat — join
+      // DM+group list) selalu siap LAMBAT dan overwrite balik thread yang
+      // baru je berjaya dipapar, collector terbaling balik ke skrin inbox
+      // umum. Sebab thread spesifik tu tak sempat "dibuka betul" (GET
+      // ?with=/?groupId= yang mark-as-read pun tak sempat settle di skrin),
+      // mesej tu tak pernah termark read → badge/notification "New Message"
+      // asyik keluar berulang walaupun collector dah cuba buka.
+      // FIX: guna setActiveNav() sahaja (just tukar highlight nav & page
+      // state, TANPA render inbox) then terus render thread spesifik —
+      // elak race sepenuhnya, thread yang buka mesti last-write.
+      setActiveNav('messages');
       if(convo.isGroup)openGroupThread(convo.userId);
       else openMessageThread(convo.userId);
       n.close();
