@@ -31,12 +31,19 @@ export async function GET(request) {
       return Response.json({ locked: true, myStatus, messages: [], status: 'unknown', channels: [] });
     }
 
-    const { data: messages, error: msgErr } = await sb
+    // PENTING: kena order DESCENDING dulu supaya LIMIT ambil 300 mesej
+    // TERKINI, baru reverse balik ke ascending untuk papar (lama→baru).
+    // BUG SEBELUM NI: order ascending + limit terus ambil 300 mesej PALING
+    // LAMA — lepas channel > 300 rekod, page ni "beku" pada 300 mesej lama
+    // yang sama selama-lamanya, mesej baru dari WhatsApp sebenar (yang
+    // sentiasa sync masuk live via whatsapp-service) tak akan muncul.
+    const { data: recentMessages, error: msgErr } = await sb
       .from('whatsapp_messages')
       .select('*')
-      .order('wa_timestamp', { ascending: true })
+      .order('wa_timestamp', { ascending: false })
       .limit(300);
     if (msgErr) throw msgErr;
+    const messages = (recentMessages || []).slice().reverse();
 
     const { data: meta, error: metaErr } = await sb
       .from('whatsapp_channel_meta')
