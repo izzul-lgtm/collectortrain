@@ -9,12 +9,28 @@
 // SENDIRI dah link & scan QR (status='connected') — sebelum tu, pulangkan
 // { locked:true } tanpa messages/channels langsung. Ni bukan sekadar UI
 // hide; kalau tak link, data memang tak keluar dari route ni pun.
+//
+// GET ?jid=<channelJid>&limit=&before=  -> mesej PER-CHANNEL (default 200
+// TERKINI, max 300), guna `before=<wa_timestamp>` untuk load batch lama
+// seterusnya. Tanpa `jid`, server pilih channel PERTAMA yang user ni ahli
+// (activeJid dipulangkan dalam response) supaya first-load tak perlu
+// round-trip tambahan sekadar untuk tahu jid apa nak guna.
+//
+// Sebab tukar dari fetch GLOBAL (semua channel sekali, cap 300 shared): satu
+// channel yang sibuk boleh "makan" kesemua 300 slot, channel lain jadi
+// kosong walaupun sebenarnya ada history — sekarang setiap channel dapat
+// had sendiri.
 import { supabaseAdmin } from '../../../../lib/supabaseAdmin';
 import { requireAuthWithUser } from '../../../../lib/requireAuth';
 
 export async function GET(request) {
   const { authError, authUser } = await requireAuthWithUser(request);
   if (authError) return authError;
+
+  const { searchParams } = new URL(request.url);
+  const requestedJid = searchParams.get('jid');
+  const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '200', 10) || 200, 1), 300);
+  const before = searchParams.get('before');
 
   try {
     const sb = supabaseAdmin();
@@ -28,22 +44,8 @@ export async function GET(request) {
 
     const myStatus = (myLink && myLink.status) || 'not_linked';
     if (myStatus !== 'connected') {
-      return Response.json({ locked: true, myStatus, messages: [], status: 'unknown', channels: [] });
+      return Response.json({ locked: true, myStatus, messages: [], activeJid: null, hasMore: false, status: 'unknown', channels: [] });
     }
-
-    // PENTING: kena order DESCENDING dulu supaya LIMIT ambil 300 mesej
-    // TERKINI, baru reverse balik ke ascending untuk papar (lama→baru).
-    // BUG SEBELUM NI: order ascending + limit terus ambil 300 mesej PALING
-    // LAMA — lepas channel > 300 rekod, page ni "beku" pada 300 mesej lama
-    // yang sama selama-lamanya, mesej baru dari WhatsApp sebenar (yang
-    // sentiasa sync masuk live via whatsapp-service) tak akan muncul.
-    const { data: recentMessages, error: msgErr } = await sb
-      .from('whatsapp_messages')
-      .select('*')
-      .order('wa_timestamp', { ascending: false })
-      .limit(300);
-    if (msgErr) throw msgErr;
-    const messages = (recentMessages || []).slice().reverse();
 
     const { data: meta, error: metaErr } = await sb
       .from('whatsapp_channel_meta')
@@ -74,6 +76,29 @@ export async function GET(request) {
       ? channels.filter(c => memberships.some(m => m.jid === c.jid && m.is_member))
       : (channels || []);
 
+    // ── Tentukan jid AKTIF: guna yang diminta client (kalau sah/dibenarkan),
+    // atau default channel PERTAMA yang user ni ahli. ──
+    const candidateList = composeChannels.length ? composeChannels : (channels || []);
+    const allowedJids = new Set(candidateList.map(c => c.jid));
+    const activeJid = (requestedJid && allowedJids.has(requestedJid))
+      ? requestedJid
+      : (candidateList[0] ? candidateList[0].jid : null);
+
+    let messages = [];
+    let hasMore = false;
+    if (activeJid) {
+      // Order DESCENDING dulu supaya LIMIT ambil mesej TERKINI, baru
+      // reverse balik ke ascending untuk papar (lama→baru). (Bug lama:
+      // order ascending + limit terus ambil mesej PALING LAMA — lepas
+      // channel > cap, page "beku" pada mesej lama selama-lamanya.)
+      let msgQuery = sb.from('whatsapp_messages').select('*').eq('jid', activeJid).order('wa_timestamp', { ascending: false }).limit(limit);
+      if (before) msgQuery = msgQuery.lt('wa_timestamp', before);
+      const { data: page, error: msgErr } = await msgQuery;
+      if (msgErr) throw msgErr;
+      messages = (page || []).slice().reverse();
+      hasMore = (page || []).length === limit;
+    }
+
     return Response.json({
       locked: false,
       // Nombor kita SENDIRI (viewer semasa) — frontend banding dengan
@@ -81,7 +106,9 @@ export async function GET(request) {
       // (hijau/kanan) vs "member lain dalam team hantar guna nombor DIA"
       // (putih/kiri, walaupun m.from_me=true dari sudut WhatsApp global).
       myPhone: myLink?.phone_number || null,
-      messages: messages || [],
+      messages,
+      activeJid,
+      hasMore,
       status: (meta && meta.status) || 'unknown',
       channels: composeChannels,
     });
