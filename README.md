@@ -13,8 +13,8 @@ Dibina dengan **Next.js 14 (App Router)** · Deploy di **Vercel** · Database **
 | Frontend | Next.js / vanilla JS (`public/app.js`) | UI single-page |
 | Auth + DB | Supabase (Postgres) | Users, sessions, scenarios, assignments |
 | AI Roleplay + Eval | Anthropic Claude (`claude-sonnet-4-6`) | Debtor roleplay + marking collector |
-| TTS (suara debtor) | Google Gemini Flash TTS | Text-to-speech PCM → WAV |
-| STT (suara collector) | Groq Whisper | Speech-to-text, support BM |
+| TTS (suara debtor) | Soniox TTS | Text-to-speech, output MP3 terus |
+| STT (suara collector) | Soniox STT (async) | Speech-to-text, support BM + code-switch EN |
 | Hosting | Vercel (region: `sin1` Singapore) | API routes + static |
 
 ---
@@ -29,8 +29,7 @@ Salin `.env.local.example` → `.env.local` dan isi nilai sebenar:
 SUPABASE_URL
 SUPABASE_SERVICE_ROLE_KEY
 ANTHROPIC_API_KEY
-GEMINI_API_KEY
-GROQ_API_KEY
+SONIOX_API_KEY
 CRON_SECRET
 ```
 
@@ -115,8 +114,8 @@ PATCH  /api/scenarios               — Edit senario
 DELETE /api/scenarios               — Padam senario
 
 POST   /api/claude                  — Roleplay debtor AI + eval scoring
-POST   /api/tts                     — Text-to-speech (Gemini)
-POST   /api/stt                     — Speech-to-text (Groq Whisper)
+POST   /api/tts                     — Text-to-speech (Soniox)
+POST   /api/stt                     — Speech-to-text (Soniox, async)
 
 GET    /api/sessions                — Rekod sesi latihan
 POST   /api/sessions                — Simpan sesi baru

@@ -999,7 +999,7 @@ function perfMark(label){
   console.log(`%c[PERF] ${label}: +${ms}ms`,'color:#0a8;font-weight:bold');
 }
 // ─── TTS TOGGLE ────────────────────────────────────────────────────────────────
-// Set ke `true` bila budget ada dan Gemini TTS key aktif semula.
+// Set ke `true` bila budget ada dan Soniox TTS key aktif semula.
 // Bila `false`: suara AI dimatikan, teks tetap muncul, latihan jalan seperti biasa.
 const TTS_ENABLED = false;
 // ───────────────────────────────────────────────────────────────────────────────
@@ -5322,12 +5322,12 @@ async function submitTakeQuiz(){
 // ElevenLabs (Voice Library → cari loghat yang sesuai → copy Voice ID).
 // Pool 20 suara dari ElevenLabs — dibahagi male/female
 // Bila start call baru, sistem random pilih satu suara yang belum pernah
-// Gemini 3.1 Flash TTS voices
-// Male:   Orus (dalam/serius), Fenrir (kasar/tegas), Charon (neutral), Puck (muda/ekspresif)
-// Female: Kore (serius/tegang), Aoede (warm/natural), Leda (muda/casual), Zephyr (lembut)
+// SWITCH KE SONIOX TTS (gantikan Gemini 3.1 Flash TTS) — 12 suara Soniox,
+// sama set suara dipakai untuk semua 60+ bahasa (termasuk BM), jadi tak perlu
+// tukar suara ikut bahasa. Lihat soniox.com/docs/tts/concepts/voices.
 const VOICE_POOL = {
-  male:   ['Orus','Fenrir','Charon','Puck'],
-  female: ['Kore','Aoede','Leda','Zephyr']
+  male:   ['Daniel','Noah','Jack','Adrian','Owen','Kenji'],
+  female: ['Maya','Nina','Emma','Claire','Grace','Mina']
 };
 
 // PUNCA BUG "scenario gagal simpan / training tak match scenario yang
@@ -5368,18 +5368,18 @@ function getVoiceId(){
 }
 
 
-// Pilih Gemini voice — konsisten dalam satu sesi (activeVoiceId)
+// Pilih Soniox voice — konsisten dalam satu sesi (activeVoiceId)
 // Voice dipilih masa call mula, sama sampai call tamat
-function getGeminiVoice(){
+function getTtsVoice(){
   if(activeVoiceId) return activeVoiceId;
-  if(!scenario) return 'Charon';
+  if(!scenario) return 'Adrian';
   const gender=scenario.gender||'male';
   activeVoiceId=pickVoice(gender);
   return activeVoiceId;
 }
-// Convert emotion dari debtor AI reply → Gemini audio tags
-// Audio tags inject TERUS dalam text sebelum hantar ke TTS
-// Gemini akan cakap ikut tag tu — jauh lagi natural dari ElevenLabs numbers
+// Convert emotion dari debtor AI reply → audio tags/instruction
+// Audio tags inject TERUS dalam text sebelum hantar ke TTS supaya suara
+// dijana ikut emosi — lebih natural dari ElevenLabs numbers
 function getAudioTagInstruction(text){
   if(!text) return text;
   const t=text.toLowerCase();
@@ -5410,17 +5410,24 @@ function getAudioTagInstruction(text){
   const top=Object.entries(scores).sort((a,b)=>b[1]-a[1])[0];
   const intense=top[1]>=5;
 
-  // Map emosi → Gemini audio tags
-  // Tags inject di awal text supaya affect keseluruhan delivery
+  // Map emosi → Soniox audio tags (soniox.com/docs/tts/concepts/emotion-and-tone)
+  // Tags inject di awal text supaya affect keseluruhan delivery. Soniox
+  // dokumen rasmi senarai tag emosi: happy/sad/angry/excited/nervous/
+  // fearful/surprised/annoyed/relieved/disappointed/curious/delighted/calm,
+  // dan tone: warm/stern/serious/playful/sarcastic/flirty/deadpan/
+  // sincerely/reassuringly/dramatically/mockingly. Kita utamakan tag dalam
+  // senarai rasmi tu — tag lain (cth "[confused]") Soniox kata "may work"
+  // tapi tak dijamin, so kekal sebagai percubaan je untuk emosi yang tiada
+  // padanan rasmi.
   if(top[1]===0) return text; // default — no tag, natural tone
 
   const tagMap={
-    marah:  intense ? '[angry] [frustrated] ' : '[irritated] ',
-    sedih:  intense ? '[sad] [soft] '         : '[melancholic] ',
-    keliru: '[confused] ',
-    susah:  intense ? '[sad] [worried] '      : '[concerned] ',
-    santai: '[casual] [relaxed] ',
-    kasar:  intense ? '[hostile] [dismissive] ': '[defensive] '
+    marah:  intense ? '[angry] [annoyed] '     : '[annoyed] ',
+    sedih:  intense ? '[sad] [disappointed] '  : '[sad] ',
+    keliru: '[confused] ', // tiada padanan rasmi — percubaan (lihat nota atas)
+    susah:  intense ? '[sad] [nervous] '       : '[nervous] ',
+    santai: '[calm] [playful] ',
+    kasar:  intense ? '[stern] [annoyed] '     : '[stern] '
   };
 
   const tag = tagMap[top[0]] || '';
@@ -5633,13 +5640,11 @@ async function endCall(){
   }
 }
 
-// UPDATE (Ogos 2026): Gemini 3.1 Flash TTS kini support streaming betul2
-// (streamGenerateContent, lihat note dalam app/api/tts/route.js — Google
-// tambah support ni 17 Jun 2026). Server proxy stream tu terus sbg MP3
-// bytes progresif. Sebab audio dah "streaming" secara natural sekarang,
-// TAK PERLU lagi trick pecah reply ke ayat pendek + prefetch chunk
-// seterusnya (cara lama) — satu turn = satu request, main progresif guna
-// MediaSource Extensions (MSE) sebaik byte pertama sampai.
+// SWITCH KE SONIOX TTS (lihat note dalam app/api/tts/route.js): Soniox TTS
+// REST API output MP3 bytes progresif terus (`audio_format: 'mp3'`), server
+// proxy stream tu apa adanya — tiada encoding tambahan server-side. Satu
+// turn = satu request, main progresif guna MediaSource Extensions (MSE)
+// sebaik byte pertama sampai (sama macam sebelum ni, tak berubah di client).
 async function speakEl(text){
   if(!TTS_ENABLED){
     // TTS dimatikan — skip terus ke state sedia terima input
@@ -5699,7 +5704,7 @@ function streamAndPlay(text,isFirstChunk){
       try{
         const res=await fetch('/api/tts',{
           method:'POST',headers:authHeaders(),
-          body:JSON.stringify({text,gender:scenario?.gender||'male',geminiVoice:getGeminiVoice()})
+          body:JSON.stringify({text,gender:scenario?.gender||'male',sonioxVoice:getTtsVoice()})
         });
         if(!res.ok)throw new Error('TTS HTTP '+res.status);
         const buf=await res.arrayBuffer();
@@ -5753,7 +5758,7 @@ function streamAndPlay(text,isFirstChunk){
       try{
         const res=await fetch('/api/tts',{
           method:'POST',headers:authHeaders(),signal:_ttsAbortController.signal,
-          body:JSON.stringify({text,gender:scenario?.gender||'male',geminiVoice:getGeminiVoice()})
+          body:JSON.stringify({text,gender:scenario?.gender||'male',sonioxVoice:getTtsVoice()})
         });
         if(!res.ok||!res.body)throw new Error('TTS HTTP '+res.status);
         const reader=res.body.getReader();
@@ -5794,14 +5799,18 @@ function addBubble(role,text){
 }
 
 
-// ═══════════ STT — DEEPGRAM (gantikan Web Speech API) ═══════════
-// KENAPA DEEPGRAM: Web Speech API (webkitSpeechRecognition) bergantung pada
+// ═══════════ STT — SONIOX (gantikan Web Speech API) ═══════════
+// KENAPA BUKAN Web Speech API: webkitSpeechRecognition bergantung pada
 // Google STT cloud melalui Chrome — latency tinggi, bahasa rojak BM+English
-// selalu drop/salah, dan tiada kawalan. Deepgram Nova-2 jauh lebih accurate
-// untuk sebutan Malaysia, latency lebih rendah, dan kita kawalan penuh.
-// FLOW BARU: push-to-talk — tekan mic → MediaRecorder rakam audio →
+// selalu drop/salah, dan tiada kawalan.
+// SWITCH KE SONIOX (lihat note dalam app/api/stt/route.js untuk sejarah
+// Deepgram → Groq Whisper → Soniox): Soniox first-class speech company,
+// support code-switch BM+English dgn baik via language_hints, dan sama
+// provider dgn TTS kita sekarang — satu API key untuk voice pipeline penuh.
+// FLOW: push-to-talk — tekan mic → MediaRecorder rakam audio →
 // lepas mic (atau auto-detect senyap) → hantar audio ke /api/stt →
-// Deepgram transcribe → processSpeech() seperti biasa.
+// Soniox transcribe (async: upload → create job → poll → transcript) →
+// processSpeech() seperti biasa.
 
 let mediaRecorder = null;
 let audioChunks = [];
@@ -5815,8 +5824,9 @@ function toggleMic() {
 }
 
 // ═══════════ NOMBOR BM → DIGIT ═══════════
-// Deepgram language=ms tidak support smart_format Numerals — "dua ribu dua puluh enam"
-// kekal sebagai perkataan, bukan "2026". Kita convert sendiri, lebih predictable.
+// STT provider (Deepgram dulu, Groq Whisper, kini Soniox) tak konsisten
+// auto-convert nombor verbal BM — "dua ribu dua puluh enam" kadang kekal
+// sebagai perkataan, bukan "2026". Kita convert sendiri, lebih predictable.
 // Dijalankan SELEPAS STT, SEBELUM STT_CORRECTIONS dan hantar ke AI.
 // Hanya convert nombor yang dikenali — perkataan lain kekal tidak berubah.
 function convertBMNumbers(text) {
@@ -5980,7 +5990,7 @@ function convertBMNumbers(text) {
   return t;
 }
 
-// Kamus pembetulan STT — masih dipakai untuk betulkan output Deepgram
+// Kamus pembetulan STT — safety-net untuk betulkan output STT (Deepgram/Groq/Soniox)
 const STT_CORRECTIONS = [
   // ── Telco / brand names ──
   [/\bpr\s*one\b/gi, 'RedOne'], [/\bred\s*one\b/gi, 'RedOne'],
@@ -5996,7 +6006,7 @@ const STT_CORRECTIONS = [
   [/\bnew\s*vest\b/gi, 'Newvest'], [/\bnew\s*face\b/gi, 'New Face'],
   [/\bdc\s*a\b/gi, 'DCA'], [/\bde\s*ce\s*a\b/gi, 'DCA'],
   [/\bwhat\s*sapp\b/gi, 'WhatsApp'], [/\bwhat\s*app\b/gi, 'WhatsApp'],
-  // ── BM perkataan hutang — Deepgram selalu silap ──
+  // ── BM perkataan hutang — STT selalu silap dengar ──
   [/\bbuyer\b/gi, 'bayar'],            // "bayar" → "buyer"
   [/\bbuy her\b/gi, 'bayar'],
   [/\bgood\s*time\b/gi, 'hutang'],    // "hutang" → "good time"
@@ -6155,7 +6165,7 @@ async function startRec() {
   // FIX: track boleh "mati" senyap-senyap (cth: tab kena freeze, OS cabut akses
   // mic sekejap, headset bertukar device) — bila ni jadi, getUserMedia call asal
   // still ada object micStream tapi track dah 'ended', so MediaRecorder akan
-  // rakam diam je → Deepgram balas transcript kosong → rasa macam "tak detect".
+  // rakam diam je → STT balas transcript kosong → rasa macam "tak detect".
   // Check track.readyState dan re-acquire kalau dah mati.
   const trackDead = micStream && micStream.getAudioTracks().some(t => t.readyState === 'ended');
   if (trackDead) { stopMicLevelMeter(); micStream = null; }
@@ -6205,13 +6215,13 @@ async function startRec() {
       return;
     }
 
-    // FIX (elak hantar clip "kosong" ke Deepgram): kalau peak volume sepanjang
+    // FIX (elak hantar clip "kosong" ke Soniox): kalau peak volume sepanjang
     // recording tak pernah naik jauh atas ambient floor, kemungkinan besar collector
     // tak sempat cakap (cth: tersilap tekan, atau cakap terlalu jauh dari mic) — bukan
-    // Deepgram yang silap. Bagi feedback terus kat sini, jangan hantar API call yang
-    // memang akan balik kosong (jimat masa + jimat duit Deepgram credit jugak).
+    // Soniox yang silap. Bagi feedback terus kat sini, jangan hantar API call yang
+    // memang akan balik kosong (jimat masa + jimat duit Soniox credit jugak).
     if (micPeakSinceStart < lastSilenceThreshold * 1.4) {
-      console.warn('[STT debug] peak terlalu rendah berbanding ambient — skip hantar ke Deepgram');
+      console.warn('[STT debug] peak terlalu rendah berbanding ambient — skip hantar ke Soniox');
       audioChunks = [];
       setStatus('', '⚠ No voice detected. Try speaking closer to or louder into the mic.');
       resetMicBtn();
@@ -6221,8 +6231,8 @@ async function startRec() {
     const audioBlob = new Blob(audioChunks, { type: mimeType || 'audio/webm' });
     audioChunks = [];
 
-    // Hantar ke /api/stt (Deepgram) — retry SEKALI bila network blip (bukan bila
-    // Deepgram sendiri reject request), sebab tanpa retry, satu request gagal =
+    // Hantar ke /api/stt (Soniox) — retry SEKALI bila network blip (bukan bila
+    // Soniox sendiri reject request), sebab tanpa retry, satu request gagal =
     // collector kena ulang cakap balik dari awal = rasa "tak smooth".
     perfStart(); // turn start: mic released, audio blob siap, pergi ke STT
     async function callSTT() {
@@ -6253,7 +6263,7 @@ async function startRec() {
 
       const transcript = (data.transcript || '').trim();
       if (!transcript) {
-        // Tiada teks — audio ada dihantar (peak check dah lepas), tapi Deepgram balas
+        // Tiada teks — audio ada dihantar (peak check dah lepas), tapi Soniox balas
         // kosong. Ini BUKAN "tiada suara" — kemungkinan isu format/encoding/upstream.
         // Console log di atas akan tunjuk blob size sebenar untuk debug lanjut.
         setStatus('', '⚠ Could not transcribe — please try speaking again.');
