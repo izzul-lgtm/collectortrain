@@ -582,3 +582,99 @@ drop policy if exists "quiz_questions_read_all" on quiz_questions;
 create policy "quiz_questions_read_all" on quiz_questions for select using (true);
 drop policy if exists "quiz_attempts_read_all" on quiz_attempts;
 create policy "quiz_attempts_read_all" on quiz_attempts for select using (true);
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Fix: missing `score_reasons` column
+-- ═══════════════════════════════════════════════════════════════════
+-- PUNCA: app/api/sessions/route.js (toDbShape/toClientShape) dan app.js
+-- (sessionData.scoreReasons) dah lama baca/tulis column `score_reasons`
+-- (rationale 1-2 ayat per kategori skor, dari evalCall()) tapi column ni
+-- TAK PERNAH wujud dalam schema — kalau live Supabase memang tiada
+-- column ni, SETIAP insert sessions gagal senyap kat field ni (masuk
+-- retry → pending queue, tak pernah simpan terus ke DB pusat). Tambah
+-- sekarang, idempotent (`if not exists`), backward compatible (default
+-- '{}' untuk sesi lama).
+alter table sessions add column if not exists score_reasons jsonb not null default '{}'::jsonb;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Structured disclosure/critical-item verification trail
+-- ═══════════════════════════════════════════════════════════════════
+-- PUNCA: sebelum ni evalCall() cuma putuskan "missed" secara holistik dalam
+-- satu pandangan — pada panggilan panjang (transcript sampai 8000 aksara),
+-- ni buka ruang silap terlepas pandang item wajib yang SEBENARNYA disebut,
+-- atau sebaliknya. Column ni simpan hasil semakan SATU-SATU (item demi
+-- item, dengan quote) yang evalCall() (app.js) buat SEBELUM tentukan
+-- "missed" — bukan cuma kesimpulan akhir, supaya manager boleh audit trail
+-- penuh (item mana disebut/tak, bila perlu semak balik ketepatan AI QA).
+-- Shape: [{"item":"...","mentioned":true|false,"quote":"..."}] (disclosure_check)
+--        [{"item":"...","done":true|false,"quote":"..."}] (critical_check)
+-- '[]' = sesi lama sebelum fix ni / senario tiada disclosure/critical item.
+alter table sessions add column if not exists disclosure_check jsonb not null default '[]'::jsonb;
+alter table sessions add column if not exists critical_check jsonb not null default '[]'::jsonb;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Structured PTP (Promise to Pay) outcome capture
+-- ═══════════════════════════════════════════════════════════════════
+-- PUNCA: outcome PTP (berjaya dapat/tidak, jumlah, tarikh) sebelum ni cuma
+-- wujud sebagai ayat bebas dalam scoreReasons/missed — manager tak boleh
+-- query/tally "berapa % training call berjaya dapat PTP jelas" atau
+-- bandingkan ketepatan simulasi ni dengan conversion rate sebenar. Column
+-- ni simpan outcome berstruktur yang di-extract oleh evalCall() (app.js)
+-- terus daripada transcript, guna tarikh sebenar hari eval dijalankan untuk
+-- resolve tarikh relatif ("hujung bulan", dsb) ke tarikh kalendar sebenar.
+-- Shape: {"obtained":true|false,"amount":"RM1,234.50"|null,"date":"YYYY-MM-DD"|null,"confidence":"firm"|"soft"|"none"}
+-- null = sesi lama sebelum fix ni (backward compatible — app.js treat null macam "tiada data").
+alter table sessions add column if not exists ptp_outcome jsonb;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Third-party / privacy-verification call scenarios
+-- ═══════════════════════════════════════════════════════════════════
+-- PUNCA: semua senario sedia ada assume collector terus bercakap dengan
+-- PENGHUTANG SEBENAR. Real risk pematuhan yang tak pernah di-latih:
+-- bila orang lain (isteri/anak/rakan sekerja) yang angkat panggilan —
+-- SOP/PDPA perlukan collector SAHKAN identiti dahulu sebelum dedah apa-apa
+-- butiran akaun/hutang. call_type='third_party' tukar watak roleplay
+-- (getSysPrompt() dalam app.js) daripada penghutang kepada orang lain yang
+-- angkat panggilan bagi pihak penghutang, dan evalCall() akan check secara
+-- kritikal sama ada collector dedah butiran sebelum verify identiti.
+alter table scenarios add column if not exists call_type text not null default 'debtor'
+  check (call_type in ('debtor','third_party'));
+alter table scenarios add column if not exists third_party_relation text not null default '';
+
+-- `sessions` simpan salinan (denormalized) — sama pattern & sebab macam
+-- customer_type/objection_type di atas: rekod sejarah sesi kekal tepat
+-- walaupun scenario diedit/dipadam lepas sesi tu berlaku.
+alter table sessions add column if not exists call_type text not null default 'debtor';
+
+-- Flag berasingan daripada harassment_risk sebab ni isu PEMATUHAN DATA
+-- (dedah maklumat akaun kepada bukan pemilik akaun), bukan isu nada/etika.
+-- Shape note (privacy_note) sama pattern macam harassment_note.
+alter table sessions add column if not exists privacy_breach boolean not null default false;
+alter table sessions add column if not exists privacy_note text not null default '';
+
+-- ── 2 seed scenario contoh — supaya manager boleh terus cuba call_type
+--    baru ni tanpa perlu bina sendiri dari kosong dulu ──────────────────
+-- NOTA: `name` KEKAL nama PENGHUTANG SEBENAR (sama makna macam scenario lain
+-- — dipakai untuk fakta akaun/checklist/{name} placeholder). Orang yang
+-- SEBENARNYA bercakap (isteri/rakan sekerja) diterangkan dalam `prompt` +
+-- `third_party_relation`, bukan pada column `name`.
+insert into scenarios (id, emoji, name, gender, accent, voice_id, title, description, amount, days, level, balance_tier, prompt, checklist, call_type, third_party_relation, client, ic_number, acc_number, service_no, acc_type, registration_date, termination_date, customer_type, objection_type)
+values
+  ('s5','🙍‍♀️','Encik Zulkifli bin Rahman','female','melayu','EXAVITQu4vr4xnSDxMaL','Isteri Penghutang Angkat Panggilan','Bukan penghutang — isteri penghutang angkat telefon, tak tahu ada hutang.','RM4,500',50,'med','high',
+   'Anda berlakon sebagai ISTERI kepada penghutang {name} — BUKAN {name} itu sendiri. Anda angkat telefon suami anda tanpa sedar dia ada hutang {amount}. Anda ingin tahu/risau kenapa dia ditelefon, dan cuba tanya soalan untuk dapatkan lebih info daripada collector (cth "kenapa ye? ada masalah ke dia?", "boleh saya tolong sampaikan?"). Anda TIDAK tahu/ingat nombor IC atau akaun suami anda kalau diminta sahkan. Bahasa Malaysia natural. Jawab 1-3 ayat.',
+   '[
+     {"cat":"action","text":"WAJIB sahkan dahulu sama ada anda bercakap dengan penghutang sendiri SEBELUM sebut apa-apa butiran akaun/jumlah/hutang.","critical":true},
+     {"cat":"tone","text":"Kekal sopan dan profesional walaupun orang yang angkat bukan penghutang, jangan tergesa-gesa nak \"selesaikan\" panggilan."},
+     {"cat":"action","text":"Jika disahkan bukan penghutang, minta sahaja penghutang hubungi balik syarikat — JANGAN tinggalkan sebarang mesej berkaitan jumlah/hutang."}
+   ]'::jsonb,
+   'third_party','Isteri','Celcom','901231-10-1234','1234567890','012-3456789','Active','2023-01-15','2026-08-01','other','cooperative'),
+
+  ('s6','🧑‍💼','Encik Tan Wei Ming','male','cina','pNInz6obpgDQGcFmaJgB','Rakan Sekerja Angkat Panggilan Pejabat','Bukan penghutang — rakan sekerja angkat panggilan di talian pejabat penghutang.','RM7,000',75,'med','high',
+   'Anda berlakon sebagai RAKAN SEKERJA kepada penghutang {name} — BUKAN {name} itu sendiri. Anda angkat panggilan di talian pejabat kerana {name} tiada di meja. Anda agak curious dan mungkin tawar untuk "sampaikan mesej" supaya boleh tahu isu apa (cth "eh dia takde kat meja lah, boleh saya bagitau apa pasal?"). Anda TIDAK tahu langsung butiran akaun/hutang penghutang ni. Manglish santai. Jawab 1-3 ayat.',
+   '[
+     {"cat":"action","text":"WAJIB sahkan dahulu sama ada anda bercakap dengan penghutang sendiri SEBELUM sebut apa-apa butiran akaun/jumlah/hutang.","critical":true},
+     {"cat":"tone","text":"Kekal profesional — jangan sebut nama syarikat pemulihan hutang/tujuan panggilan secara eksplisit di talian pejabat sehingga pasti bercakap dengan penghutang sendiri (risiko dedah status kewangan kepada majikan)."},
+     {"cat":"action","text":"Minta sahaja penghutang call balik secara peribadi — JANGAN tinggalkan mesej yang boleh dedahkan sifat panggilan (debt collection) kepada rakan sekerja."}
+   ]'::jsonb,
+   'third_party','Rakan Sekerja','Digi','880522-14-5678','9988776655','019-2233445','NPL','2022-11-01','2026-06-20','other','cooperative')
+on conflict (id) do nothing;

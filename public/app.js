@@ -610,6 +610,44 @@ function harassmentBadge(risk){
   const m=map[risk]||{label:risk,cls:'chip-red'};
   return `<span class="chip ${m.cls}" style="margin-left:6px">⚠ Harassment: ${m.label}</span>`;
 }
+// Badge outcome PTP berstruktur — undefined/null (sesi lama sebelum fix ni) = tak papar apa-apa.
+function ptpBadge(ptp){
+  if(!ptp)return '';
+  if(!ptp.obtained)return `<span class="chip chip-red" style="margin-left:6px">❌ No PTP</span>`;
+  const confMap={firm:{label:'Firm',cls:'chip-green'},soft:{label:'Soft',cls:'chip-amber'}};
+  const c=confMap[ptp.confidence]||{label:ptp.confidence||'-',cls:'chip-amber'};
+  const dateStr=ptp.date?new Date(ptp.date+'T00:00:00').toLocaleDateString('en-MY'):'no date';
+  return `<span class="chip ${c.cls}" style="margin-left:6px">🤝 PTP ${ptp.amount?esc(ptp.amount):''} · ${dateStr} · ${c.label}</span>`;
+}
+function privacyBadge(breach){
+  if(!breach)return '';
+  return `<span class="chip chip-red" style="margin-left:6px">🔒 Privacy Breach</span>`;
+}
+// Papar trail semakan disclosure/critical item satu-satu (dari evalCall()) —
+// supaya manager boleh audit terus item mana disebut/tak, dengan quote,
+// bukan cuma percaya kesimpulan "missed" akhir sahaja. Kosong = tak papar
+// apa-apa (sesi lama sebelum fix ni, atau senario tiada disclosure/critical item).
+function verificationTrailHTML(s){
+  const dc=Array.isArray(s.disclosureCheck)?s.disclosureCheck:[];
+  const cc=Array.isArray(s.criticalCheck)?s.criticalCheck:[];
+  if(!dc.length&&!cc.length)return '';
+  const row=(label,ok,quote)=>`
+    <div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+      <span style="flex-shrink:0">${ok?'✅':'❌'}</span>
+      <div style="flex:1">
+        <div style="font-size:12px;color:var(--text2)">${esc(label)}</div>
+        ${quote?`<div style="font-size:11px;color:var(--text3);font-style:italic">"${esc(quote)}"</div>`:''}
+      </div>
+    </div>`;
+  return `
+  <div style="margin-bottom:1rem">
+    <div style="font-size:12px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:0.03em;margin-bottom:4px">Disclosure/Critical Item Check</div>
+    <div style="background:var(--bg);border-radius:6px;padding:4px 12px">
+      ${dc.map(d=>row(d.item,d.mentioned,d.quote)).join('')}
+      ${cc.map(c=>row(c.item,c.done,c.quote)).join('')}
+    </div>
+  </div>`;
+}
 // Kira aspek mana paling kerap tersilap, daripada senarai sesi (tally s.missed[].category)
 function tallyWeakness(sessions){
   const tally={};
@@ -1956,9 +1994,10 @@ function renderScoreScreen(){
         <div style="font-size:16px;font-weight:600;color:${s.totalScore>=70?'var(--green)':s.totalScore>=50?'var(--amber)':'var(--red)'}">
           ${s.totalScore>=70?'Excellent! 🏆':s.totalScore>=50?'Good! Keep it up 💪':'Needs More Practice 📚'}
         </div>
-        ${harassmentBadge(s.harassmentRisk)}
+        ${harassmentBadge(s.harassmentRisk)}${privacyBadge(s.privacyBreach)}${ptpBadge(s.ptp)}
       </div>
       ${s.harassmentRisk&&s.harassmentRisk!=='none'?`<div class="alert alert-err" style="display:block;margin-top:0">⚠ <strong>Compliance/Harassment Issue:</strong> ${s.harassmentNote||'Risky tone or wording was detected in this call.'}</div>`:''}
+      ${s.privacyBreach?`<div class="alert alert-err" style="display:block;margin-top:0">🔒 <strong>Privacy/Verification Issue:</strong> ${s.privacyNote||'Account/debt details were disclosed before the caller\'s identity was confirmed.'}</div>`:''}
       <div class="score-rows">
         ${scoreRows(s).map(([l,v,m,cat,reason])=>`
         <div class="score-row" style="flex-direction:column;align-items:stretch;gap:4px">
@@ -2022,14 +2061,18 @@ function copyScoreSummary(){
   const strengthLines=(s.strengths||[]).map(t=>`  ✅ ${t}`).join('\n');
   const missedLines=(s.missed||[]).map(m=>`  ⚠ ${m.issue||''} → ${m.suggestion||''}`).join('\n');
   const harassment=s.harassmentRisk&&s.harassmentRisk!=='none'?`\n⚠ Compliance Issue (${s.harassmentRisk}): ${s.harassmentNote||''}\n`:'';
+  const privacy=s.privacyBreach?`\n🔒 Privacy/Verification Issue: ${s.privacyNote||''}\n`:'';
+  const ptpLine=s.ptp?`PTP Outcome: ${s.ptp.obtained?`${s.ptp.amount||'(no amount stated)'} by ${s.ptp.date?new Date(s.ptp.date+'T00:00:00').toLocaleDateString('en-MY'):'(no date stated)'} — ${s.ptp.confidence}`:'Not obtained'}`:'';
   const text=[
     `📊 CollectorTrain Training Results`,
     `Scenario: ${s.scenarioName||'-'} · Duration: ${s.duration||'-'}`,
     `Overall Score: ${s.totalScore}/100`,
+    ptpLine,
     ``,
     `Score Breakdown:`,
     scoreLines,
     harassment,
+    privacy,
     strengthLines?`Strengths:\n${strengthLines}`:'',
     missedLines?`Needs Improvement:\n${missedLines}`:'',
     s.priorityFocus?`\n🎯 Next Focus (${catLabels[s.priorityFocus.category]||s.priorityFocus.category}):\n  ${s.priorityFocus.tip||''}`:'',
@@ -2336,6 +2379,9 @@ function sessionDetailHTML(s,u,transcriptState){
     <div><div style="font-size:12px;color:var(--text3)">Score</div><span class="score-pill ${s.totalScore>=70?'score-high':s.totalScore>=50?'score-mid':'score-low'}">${s.totalScore}/100</span></div>
   </div>
   ${s.harassmentRisk&&s.harassmentRisk!=='none'?`<div class="alert alert-err" style="display:block">⚠ <strong>Isu Pematuhan/Harassment (${s.harassmentRisk}):</strong> ${esc(s.harassmentNote)}</div>`:''}
+  ${s.privacyBreach?`<div class="alert alert-err" style="display:block">🔒 <strong>Isu Privasi/Verifikasi Identiti:</strong> ${esc(s.privacyNote)}</div>`:''}
+  ${s.ptp?`<div style="margin-bottom:1rem">${ptpBadge(s.ptp)}</div>`:''}
+  ${verificationTrailHTML(s)}
   <hr class="divider"/>
   <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:1rem">
     ${scoreRows(s).map(([l,v,m,cat,reason])=>`
@@ -2425,7 +2471,7 @@ async function renderScenarios(){
       <tr><th>Emoji</th><th>Name</th><th>Client</th><th>Title</th><th>Objection</th><th>Customer Type</th><th>Debt</th><th>Balance</th><th>Level</th><th>Checklist</th><th>Actions</th></tr>
       ${scenarios.map(s=>`<tr>
         <td style="font-size:20px">${s.emoji}</td>
-        <td><div style="font-weight:500">${esc(s.name)}</div></td>
+        <td><div style="font-weight:500">${esc(s.name)}${s.callType==='third_party'?`<span class="chip chip-purple" style="font-size:10px;margin-left:6px" title="${esc(s.thirdPartyRelation||'Pihak Ketiga')} angkat panggilan, bukan penghutang">📞 ${esc(s.thirdPartyRelation||'3rd Party')}</span>`:''}</div></td>
         <td>${s.client?`<span class="chip chip-purple">${esc(s.client)}</span>`:'<span style="color:var(--text3);font-size:12px">-</span>'}</td>
         <td>${esc(s.title)}</td>
         <td><span class="chip chip-amber" style="font-size:11px">${objectionTypeIcon(s.objectionType)} ${objectionTypeLabel(s.objectionType)}</span></td>
@@ -2463,6 +2509,8 @@ function readScenarioFormDraft(){
     days:(document.getElementById('scDays')||{}).value||'30',
     level:(document.getElementById('scLevel')||{}).value||'med',
     balanceTier:(document.getElementById('scBalanceTier')||{}).value||'high',
+    callType:(document.getElementById('scCallType')||{}).value||'debtor',
+    thirdPartyRelation:(document.getElementById('scThirdPartyRelation')||{}).value||'',
     customerType:(document.getElementById('scCustomerType')||{}).value||'other',
     objectionType:(document.getElementById('scObjectionType')||{}).value||'cooperative',
     prompt:(document.getElementById('scPrompt')||{}).value||'',
@@ -2880,7 +2928,19 @@ async function openAddScenario(existingId,presetObjectionType){
       </div>
     </div>
   </div>
-  <div class="form-row"><label>Debtor Name</label><input id="scName" value="${s?s.name:''}" placeholder="Ahmad bin Hassan" /></div>
+  <div class="form-row"><label>Debtor Name <span style="font-weight:400;color:var(--text3)">(the actual account holder — even for a "Third Party" call below, this stays the debtor's name, not the caller's)</span></label><input id="scName" value="${s?s.name:''}" placeholder="Ahmad bin Hassan" /></div>
+  <div class="two-col">
+    <div class="form-row"><label>Call Type <span style="font-weight:400;color:var(--text3)">(who actually answers the phone)</span></label>
+      <select id="scCallType" onchange="toggleThirdPartyRelation()">
+        <option value="debtor" ${!s||s.callType!=='third_party'?'selected':''}>Debtor (normal)</option>
+        <option value="third_party" ${s&&s.callType==='third_party'?'selected':''}>Third Party (spouse/colleague/etc. answers — tests identity verification)</option>
+      </select>
+    </div>
+    <div class="form-row" id="scThirdPartyRelationRow" style="display:${s&&s.callType==='third_party'?'block':'none'}">
+      <label>Relationship To Debtor</label>
+      <input id="scThirdPartyRelation" value="${s?(s.thirdPartyRelation||''):''}" placeholder="e.g. Isteri, Rakan Sekerja, Anak" />
+    </div>
+  </div>
   <div class="two-col">
     <div class="form-row"><label>Gender (for correct AI voice)</label>
       <select id="scGender"><option value="male" ${!s||s.gender==='male'?'selected':''}>Male</option><option value="female" ${s&&s.gender==='female'?'selected':''}>Female</option></select>
@@ -3046,6 +3106,12 @@ function cancelScenarioForm(){
 // Tunjuk/sembunyi input bebas "nama client lain" bila pilihan "Lain-lain"
 // dipilih dalam dropdown Client — supaya manager boleh taip mana-mana
 // nama client (bukan terhad ke RedOne/Celcom/Digi sahaja).
+function toggleThirdPartyRelation(){
+  const sel=document.getElementById('scCallType');
+  const row=document.getElementById('scThirdPartyRelationRow');
+  if(!sel||!row)return;
+  row.style.display=sel.value==='third_party'?'block':'none';
+}
 function toggleClientOther(){
   const sel=document.getElementById('scClient');
   const other=document.getElementById('scClientOther');
@@ -3153,6 +3219,8 @@ async function saveScenario(existingId){
     days:parseInt(document.getElementById('scDays').value)||30,
     level:document.getElementById('scLevel').value,
     balanceTier:document.getElementById('scBalanceTier').value,
+    callType:document.getElementById('scCallType').value,
+    thirdPartyRelation:document.getElementById('scThirdPartyRelation').value.trim(),
     objectionType:document.getElementById('scObjectionType').value,
     customerType:document.getElementById('scCustomerType').value,
     prompt:document.getElementById('scPrompt').value.trim(),
@@ -3168,6 +3236,7 @@ async function saveScenario(existingId){
     terminationDate:document.getElementById('scTermDate').value
   };
   if(!data.name||!data.title||!data.prompt){alert('Please fill in all required fields.');return;}
+  if(data.callType==='third_party'&&!data.thirdPartyRelation){alert('Please state the third party\'s relationship to the debtor (e.g. Isteri, Rakan Sekerja).');return;}
   // WAJIB: Maklumat Akaun Pelanggan kena lengkap dulu sebelum boleh simpan —
   // kalau tak, panel rujukan kat skrin panggilan collector akan separuh kosong.
   if(!data.client||!data.icNumber||!data.accNumber||!data.serviceNo||!data.accType||!data.registrationDate||!data.terminationDate){
@@ -5526,9 +5595,18 @@ Cakap macam manusia sebenar dalam panggilan telefon — bukan watak komedi atau 
   }[scenario.level||'med'];
 
   const naturalBlock=`\n\nCARA BERCAKAP (WAJIB IKUT):\n- Jawab PENDEK dan NATURAL — 1 hingga 3 ayat sahaja setiap giliran, macam orang bercakap telefon sebenar\n- JANGAN tulis ayat panjang berjela atau formal macam surat\n- Sebut nombor dan wang secara lisan: RM${scenario.amount} sebut sebagai "${spokenAmount}", no telefon sebut digit demi digit\n- Boleh guna bunyi natural: "hmm", "ha?", "eh", "ok ok", "ha ye", "ala..." mengikut situasi\n- Kadang-kadang boleh potong cakap, tanya balik, atau tergantung ayat kalau rasa keliru\n- Reaksi MESTI sesuai dengan watak dan situasi — kalau penghutang kata sibuk, dia tak bagi masa panjang\n\nARAS KESUKARAN SENARIO INI: ${levelBehaviour}`;
+  // PIHAK KETIGA — bila call_type='third_party', orang yang angkat telefon
+  // BUKAN penghutang sendiri (isteri/rakan sekerja/dll). Ini test SOP/PDPA
+  // sebenar: collector WAJIB sahkan identiti sebelum dedah apa-apa butiran
+  // akaun/hutang. Watak ni tak self-flag isu pematuhan (itu kerja evalCall());
+  // dia cuma bertindak realistik ikut apa collector buat.
+  const isThirdParty=scenario.callType==='third_party';
+  const thirdPartyBlock=isThirdParty?`\n\nWATAK PIHAK KETIGA (WAJIB IKUT — keutamaan tinggi, override anggapan biasa "anda ialah penghutang"):\n- Anda BUKAN ${scenario.name||'penghutang'} (penghutang sebenar). Anda ialah ${scenario.thirdPartyRelation||'orang lain'} kepada penghutang tersebut, dan andalah yang angkat panggilan ini.\n- Anda TIDAK tahu/ingat butiran akaun penghutang (No. IC, No. Akaun, No. Servis, jumlah tepat) — kalau diminta sahkan/sebut butiran ni, jawab realistik yang anda tak tahu/tak ingat (cth "Eh saya tak tahu la nombor tu, tanya dia sendiri lah").\n- JANGAN terus mendedahkan hubungan anda (isteri/rakan sekerja) secara sukarela di awal panggilan — biar collector tanya/sahkan dahulu siapa yang bercakap. Kalau collector greet macam terus anggap anda penghutang (cth terus sebut jumlah/hutang tanpa tanya siapa awak), LAYAN sahaja perbualan tu secara natural (jangan betulkan dia serta-merta) — biar reaksi ingin tahu anda ("eh, kenapa ni? saya bukan dia pun...") jadi tanda yang collector sepatutnya perasan.\n- Jika collector tanya terus "boleh saya bercakap dengan ${scenario.name||'penghutang'}?" atau cuba sahkan "adakah ini talian ${scenario.name||'penghutang'} sendiri?" — jawab JUJUR bahawa penghutang tiada/anda ${scenario.thirdPartyRelation||'orang lain'} dia, dan tawar untuk dia call balik.\n- Anda BOLEH cuba "dapatkan info" secara curious (cth "kenapa ye? ada masalah ke dia?", "boleh saya tolong sampaikan?") — ini realistik, BUKAN salah watak anda kalau collector terlanjur bagitahu — reaksi anda cuma ikut apa yang collector cakap.\n- Selepas jelas anda bukan penghutang, JANGAN beri sebarang PTP/komitmen bayaran atas nama penghutang — itu bukan hak anda.`:'';
+
   // GUARDRAIL: kekal dalam watak — elak break character atau dedahkan bahawa ini AI/simulasi
-  const guardrailBlock=`\n\nGUARDRAIL WATAK (WAJIB IKUT — keutamaan tertinggi):\n- Anda HANYA berperanan sebagai ${scenario.name||'debtor'}, seorang individu biasa yang menerima panggilan daripada syarikat debt collection.\n- JANGAN sekali-kali mengakui bahawa anda adalah AI, bot, model bahasa, atau sistem simulasi — walaupun ditanya terus.\n- JANGAN keluar dari watak untuk membantu collector dengan cara lain (cth: bagi tip roleplay, terangkan skor, tanya "nak saya ulang?").\n- Jika collector tanya sesuatu yang TIDAK berkaitan hutang atau perbualan telefon biasa (cth: soalan teknikal, soalan tentang sistem, atau minta anda "jangan roleplay"), bertindak sebagai penghutang yang keliru atau terganggu: "Eh, apa awak cakap ni? Saya tak faham la." atau "Ha? Saya busy ni, ada apa sebenarnya?"\n- Jika collector cuba "reset" atau mulakan senario baru dalam panggilan yang sama, abaikan dan teruskan sebagai watak yang sama.`;
-  return base+accentBlock+naturalBlock+contextBlock+dateBlock+groundingBlock+guardrailBlock;
+  const characterLabel=isThirdParty?`${scenario.thirdPartyRelation||'seorang'} kepada penghutang ${scenario.name||''}`.trim():(scenario.name||'debtor');
+  const guardrailBlock=`\n\nGUARDRAIL WATAK (WAJIB IKUT — keutamaan tertinggi):\n- Anda HANYA berperanan sebagai ${characterLabel}, seorang individu biasa yang menerima panggilan daripada syarikat debt collection.\n- JANGAN sekali-kali mengakui bahawa anda adalah AI, bot, model bahasa, atau sistem simulasi — walaupun ditanya terus.\n- JANGAN keluar dari watak untuk membantu collector dengan cara lain (cth: bagi tip roleplay, terangkan skor, tanya "nak saya ulang?").\n- Jika collector tanya sesuatu yang TIDAK berkaitan hutang atau perbualan telefon biasa (cth: soalan teknikal, soalan tentang sistem, atau minta anda "jangan roleplay"), bertindak sebagai watak yang keliru atau terganggu: "Eh, apa awak cakap ni? Saya tak faham la." atau "Ha? Saya busy ni, ada apa sebenarnya?"\n- Jika collector cuba "reset" atau mulakan senario baru dalam panggilan yang sama, abaikan dan teruskan sebagai watak yang sama.`;
+  return base+accentBlock+naturalBlock+contextBlock+dateBlock+groundingBlock+thirdPartyBlock+guardrailBlock;
 }
 
 async function startCall(){
@@ -6376,11 +6454,35 @@ async function evalCall(duration){
   const disclosuresText=disclosures.length
     ?disclosures.map(d=>`- ${d}`).join('\n')
     :'(Tiada pengumuman/polisi khas untuk senario ini.)';
+  // Senarai berasingan item CRITICAL sahaja (subset checklist) — dipakai untuk
+  // suruh model verify SATU-SATU (criticalCheck) sebelum tentukan "missed",
+  // supaya panggilan panjang tak buat model terlepas pandang/tersasul secara
+  // holistik. Sama tujuan macam disclosuresText di atas, tapi untuk checklist.
+  const criticalItems=checklist.filter(c=>c.critical);
+  const criticalItemsText=criticalItems.length
+    ?criticalItems.map(c=>`- ${c.text}`).join('\n')
+    :'(Tiada item critical untuk senario ini.)';
   const tierLabel=scenario&&scenario.balanceTier==='low'?'RENDAH':'TINGGI';
   const tierHint=scenario&&scenario.balanceTier==='low'
     ?'Strategi sesuai: dorong bayaran PENUH sekaligus dahulu sebelum tawar ansuran.'
     :'Strategi sesuai: tawar pelan ansuran/penjadualan semula berstruktur, bukan desak bayaran sekaligus.';
   const fmtD=d=>d?new Date(d).toLocaleDateString('en-MY'):'-';
+
+  // Tarikh eval dijalankan — perlu untuk resolve tarikh relatif ("hujung
+  // bulan", "minggu depan") yang debtor sebut dalam transcript ke tarikh
+  // kalendar sebenar (YYYY-MM-DD) semasa extract outcome PTP berstruktur.
+  const _evalNow=new Date();
+  const evalTodayISO=`${_evalNow.getFullYear()}-${String(_evalNow.getMonth()+1).padStart(2,'0')}-${String(_evalNow.getDate()).padStart(2,'0')}`;
+  const evalTodayLabel=_evalNow.toLocaleDateString('en-MY',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+
+  // PIHAK KETIGA — bila senario ni call_type='third_party', tambah SATU
+  // check pematuhan KRITIKAL yang WAJIB dinilai (sama taraf macam disclosures)
+  // supaya AI QA tak boleh terlepas pandang isu dedah maklumat kepada bukan
+  // pemilik akaun — ini root cause kenapa isu ni tak pernah ditangkap sebelum
+  // ni (tiada scenario type & tiada arahan khusus untuk check perkara ni).
+  const isThirdParty=scenario&&scenario.callType==='third_party';
+  const thirdPartyCheckBlock=isThirdParty?`\n\nSEMAKAN PEMATUHAN KRITIKAL — PANGGILAN INI DIJAWAB OLEH PIHAK KETIGA (${scenario.thirdPartyRelation||'bukan penghutang'}), BUKAN PENGHUTANG SEBENAR:
+Ini scenario ujian verifikasi identiti/privasi (PDPA). WAJIB semak baris demi baris: adakah collector sahkan/pastikan dia bercakap dengan PENGHUTANG SENDIRI (${scenario.name}) SEBELUM sebut apa-apa butiran akaun/jumlah/sebab panggilan kepada orang yang angkat telefon? Isi field "privacyBreach" & "privacyNote" di bawah — TANDAKAN true jika collector dedah (secara eksplisit ATAU secara tersirat/boleh disimpulkan) jumlah hutang, nombor akaun, sebab sebenar panggilan (debt collection), atau apa-apa butiran akaun sensitif LAIN kepada orang tersebut SEBELUM identiti disahkan. Ini isu pematuhan SERIUS setanding harassment — jika breach berlaku, markah aspek action MESTI ≤8/20 walaupun aspek lain baik.`:'';
 
   // Hadkan transcript kepada 8000 aksara untuk elak context overflow pada panggilan sangat panjang
   // Potong dari depan (bahagian awal kurang kritikal untuk QA) — kekal bahagian akhir panggilan
@@ -6402,10 +6504,15 @@ ${checklistText}
 PENGUMUMAN / POLISI WAJIB YANG COLLECTOR MESTI MAKLUMKAN KEPADA PENGHUTANG DALAM PANGGILAN INI (maklumat/dasar BARU syarikat — collector WAJIB menyebutnya secara EKSPLISIT dalam perbualan; gagal berbuat demikian walaupun SATU item adalah isu pematuhan SERIUS, bukan sekadar gaya rundingan):
 ${disclosuresText}
 
+ITEM CRITICAL SENARIO INI (checklist bertanda ⚠️ CRITICAL di atas, jika ada) — SENARAI UNTUK RUJUKAN SEMASA ISI "criticalCheck" DI BAWAH:
+${criticalItemsText}
+
 PERBUALAN PENUH (Collector vs Penghutang):
 ${trimmedTranscript}
 
 Masa Panggilan: ${duration}
+Tarikh Eval Dijalankan (HARI INI — guna ini untuk resolve tarikh relatif macam "hujung bulan"/"minggu depan" yang disebut dalam transcript ke tarikh kalendar sebenar): ${evalTodayLabel} (${evalTodayISO})
+${thirdPartyCheckBlock}
 
 PENTING: Jika transcript amat pendek (kurang 5 giliran perbualan), tetap beri markah ADIL berdasarkan apa yang ADA — jangan bagi 2/20 secara default. Walaupun singkat, analisis nada, cara sebut nama, cara bagi salam/perkenalan, dan sama ada collector terus ke tujuan panggilan dengan betul.
 
@@ -6420,22 +6527,35 @@ TUGAS ANDA — analisis transcript di atas baris demi baris, kemudian:
    - action: Tindakan & pematuhan — ikut checklist di atas + SOP umum (pengesahan identiti/akaun, nyatakan tujuan panggilan, dapatkan PTP yang jelas & spesifik, dokumentasi). Selitkan juga: (a) Dispute Handling — jika penghutang bangkitkan bantahan/dispute (dakwa sudah bayar, jumlah tak tepat, dsb), adakah collector tangani dengan betul (semak, jelaskan, jangan abaikan/tolak bantahan secara sambil lewa)? (b) Ketepatan Notes — adakah maklumat yang disebut/disahkan collector (jumlah, tarikh, tempoh, No. IC, Acc Number, Service No., Acc Type, Client, dsb) tepat dan konsisten dengan SENARIO & Maklumat Akaun Pelanggan di atas, atau adakah collector tersilap nyatakan maklumat akaun? (c) Pengumuman Wajib — adakah collector menyebut SECARA EKSPLISIT setiap item dalam senarai "PENGUMUMAN/POLISI WAJIB" di atas (jika senarai tu tak kosong)? Jika ada satu sahaja yang tertinggal, markah aspek action MESTI rendah. (d) Memaklumkan Tindakan/Akibat — BEZAKAN DENGAN JELAS antara "memaklumkan" dan "mengugut": collector menyebut akibat/tindakan lanjutan yang SAH & releven kepada akaun ini (cth: rujuk CTOS, tindakan guaman, penamatan perkhidmatan, senarai hitam) secara TENANG dan FAKTUAL — sebagai sebahagian daripada tujuan panggilan atau amaran SOP — ADALAH POSITIF dan patut disebut dalam "strengths" jika dibuat dengan baik, BUKAN kesalahan, walaupun penghutang bertindak balas defensif/emosi atau kata ia "ugutan". Tandakan sebagai isu (dan rendahkan markah) HANYA jika collector: nada tinggi/agresif/kasar semasa menyampaikannya, mendesak/ulang secara melampau sebagai tekanan, menyebut tindakan yang TIDAK sah/tiada asas/tidak releven (cth ugut penjara, ugut sita harta tanpa proses undang-undang), atau guna sebagai paksaan/malu-malukan (cth ugut dedah kepada keluarga/majikan/rakan). Jangan salah anggap penyampaian SOP yang tenang sebagai "mengugut" semata-mata sebab kandungannya tidak menyenangkan penghutang.
    - balance: Strategi mengikut tahap baki hutang (${tierLabel} — ${tierHint})
 
-2. strengths: 1-4 perkara yang collector BETUL-BETUL buat dengan baik (spesifik, bukan umum).
+2. disclosureCheck & criticalCheck — WAJIB buat langkah ni SEBELUM tulis "missed" (item 4), supaya keputusan "missed" konsisten dan tak silap pada panggilan panjang:
+   - disclosureCheck: SATU entry untuk SETIAP item dalam "PENGUMUMAN/POLISI WAJIB" di atas (kosongkan array kalau senarai tu "(Tiada pengumuman/polisi khas...)"). Semak transcript BARIS DEMI BARIS untuk item tu — {"item":"<teks item, ringkaskan jika panjang>","mentioned":true|false,"quote":"<petikan ≤15 patah perkataan drpd Collector yang sebut item ni, atau \"\" jika mentioned false>"}.
+   - criticalCheck: SATU entry untuk SETIAP item dalam "ITEM CRITICAL SENARIO INI" di atas (kosongkan array kalau senarai tu "(Tiada item critical...)"). Sama format: {"item":"<teks item>","done":true|false,"quote":"<petikan berkaitan atau \"\">"}.
+   - Buat semakan ni SATU-SATU, jangan holistik/agak-agak — ini rujukan TUNGGAL untuk tentukan item action/disclosure mana yang masuk "missed" di bawah, supaya tak ada percanggahan antara dua bahagian jawapan.
 
-3. missed: WAJIB 3-5 perkara checklist/SOP yang PATUT dilakukan collector TAPI TIDAK dilakukan, atau dilakukan dengan salah/lemah (MAKSIMUM 5 — pilih yang PALING penting/kritikal sahaja, walaupun panggilan panjang/banyak isu). Ini bahagian PALING PENTING dalam latihan ini — JANGAN biarkan kosong walaupun panggilan nampak baik; setiap panggilan ADA ruang penambahbaikan, cari ia walaupun kecil. PENTING: jika mana-mana item dalam "PENGUMUMAN/POLISI WAJIB" di atas TIDAK disebut langsung oleh collector sepanjang transcript, WAJIB masukkan sebagai SATU item 'missed' (category: action, issue mulakan dengan "Pengumuman wajib tidak disampaikan: ...") — beri keutamaan tertinggi kepada isu jenis ni berbanding isu gaya/SOP umum yang lain, sebab ia kegagalan pematuhan, bukan sekadar kelemahan rundingan. Untuk SETIAP item beri (kekalkan ringkas, 1 ayat setiap field):
+3. strengths: 1-4 perkara yang collector BETUL-BETUL buat dengan baik (spesifik, bukan umum).
+
+4. missed: WAJIB 3-5 perkara checklist/SOP yang PATUT dilakukan collector TAPI TIDAK dilakukan, atau dilakukan dengan salah/lemah (MAKSIMUM 5 — pilih yang PALING penting/kritikal sahaja, walaupun panggilan panjang/banyak isu). Ini bahagian PALING PENTING dalam latihan ini — JANGAN biarkan kosong walaupun panggilan nampak baik; setiap panggilan ADA ruang penambahbaikan, cari ia walaupun kecil. GUNA disclosureCheck & criticalCheck di atas sebagai SUMBER RUJUKAN — mana-mana entry dengan "mentioned":false atau "done":false WAJIB masukkan sebagai SATU item 'missed' (category: action, issue mulakan dengan "Pengumuman wajib tidak disampaikan: ..." untuk disclosure, atau "Item critical terlepas: ..." untuk checklist critical) — beri keutamaan tertinggi kepada isu jenis ni berbanding isu gaya/SOP umum yang lain, sebab ia kegagalan pematuhan, bukan sekadar kelemahan rundingan. Untuk SETIAP item beri (kekalkan ringkas, 1 ayat setiap field):
    - category: salah satu dari tone/delivery/counter/action/balance
    - issue: apa yang tak dibuat/salah (spesifik kepada perbualan ini, bukan teori umum)
    - suggestion: ayat atau tindakan SPESIFIK (boleh terus dipakai/dihafal) yang patut collector guna sebagai gantinya
    - quote: petikan ringkas (≤15 patah perkataan) dari ayat collector dalam transcript yang berkaitan isu ini, atau "" jika tiada ayat spesifik berkaitan
 
-4. harassmentRisk: "none" jika tiada isu langsung, "low"/"medium"/"high" HANYA jika collector menggunakan nada mengugut TIDAK SAH/memaksa/mendesak melampau, malu-malukan, atau melanggar etika debt collection. PENTING — JANGAN keliru antara "memaklumkan akibat yang sah" dengan "mengugut": collector yang memaklumkan akibat SAH & releven (cth: rujukan CTOS, tindakan guaman, penamatan perkhidmatan, senarai hitam — terutama yang disenaraikan dalam PENGUMUMAN/POLISI WAJIB di atas) secara tenang dan profesional BUKAN harassment, walaupun penghutang bertindak balas dengan defensif, marah, atau menuduhnya "ugutan" — itu reaksi watak penghutang (AI simulation), bukan penanda collector bersalah. Hanya naikkan harassmentRisk jika ADA unsur sebenar: nada agresif/kasar/menaikkan suara, tekanan berulang yang melampau, ugutan yang tiada asas/tidak sah (cth ugut penjara, ugut dedah kepada keluarga/majikan), atau paksaan/malu-malukan. Jika bukan "none", isi harassmentNote (1 ayat ringkas dalam Bahasa Malaysia — hurai TINDAKAN collector yang bermasalah, JANGAN translate atau petik dialog debtor secara literal, fokus kepada APA yang collector buat yang melanggar etika) — ini akan dipaparkan kepada manager untuk semakan pematuhan.
+5. harassmentRisk: "none" jika tiada isu langsung, "low"/"medium"/"high" HANYA jika collector menggunakan nada mengugut TIDAK SAH/memaksa/mendesak melampau, malu-malukan, atau melanggar etika debt collection. PENTING — JANGAN keliru antara "memaklumkan akibat yang sah" dengan "mengugut": collector yang memaklumkan akibat SAH & releven (cth: rujukan CTOS, tindakan guaman, penamatan perkhidmatan, senarai hitam — terutama yang disenaraikan dalam PENGUMUMAN/POLISI WAJIB di atas) secara tenang dan profesional BUKAN harassment, walaupun penghutang bertindak balas dengan defensif, marah, atau menuduhnya "ugutan" — itu reaksi watak penghutang (AI simulation), bukan penanda collector bersalah. Hanya naikkan harassmentRisk jika ADA unsur sebenar: nada agresif/kasar/menaikkan suara, tekanan berulang yang melampau, ugutan yang tiada asas/tidak sah (cth ugut penjara, ugut dedah kepada keluarga/majikan), atau paksaan/malu-malukan. Jika bukan "none", isi harassmentNote (1 ayat ringkas dalam Bahasa Malaysia — hurai TINDAKAN collector yang bermasalah, JANGAN translate atau petik dialog debtor secara literal, fokus kepada APA yang collector buat yang melanggar etika). PENTING (konteks, BUKAN alasan): kalau collector punya nada tinggi/tergelincir berlaku SELEPAS penghutang provoke teruk (cth berulang kali mengugut/menjerit/menghina), sertakan konteks tu SECARA RINGKAS dalam harassmentNote (cth "...selepas penghutang berulang kali mengugut collector") — supaya manager review dengan konteks yang adil, TAPI ini tidak mengurangkan status harassmentRisk itu sendiri; collector tetap bertanggungjawab jaga profesionalisme walau apa jua provokasi. Note ni akan dipaparkan kepada manager untuk semakan pematuhan.
 
-5. priorityFocus: SATU aspek (category sama macam atas) yang PALING perlu collector fokus dalam sesi latihan SETERUSNYA (biasanya aspek dengan markah terendah atau isu paling kritikal), dengan "tip" ringkas 1 ayat — spesifik & boleh terus diamalkan, bukan nasihat umum.
+6. priorityFocus: SATU aspek (category sama macam atas) yang PALING perlu collector fokus dalam sesi latihan SETERUSNYA (biasanya aspek dengan markah terendah atau isu paling kritikal), dengan "tip" ringkas 1 ayat — spesifik & boleh terus diamalkan, bukan nasihat umum.
 
-6. feedback: ringkasan keseluruhan 2-3 ayat dalam Bahasa Malaysia, nada membina (constructive coaching), bukan menghukum. WAJIB spesifik kepada panggilan ini (rujuk isu/kekuatan sebenar dari transcript, bukan ayat generik macam "secara keseluruhan baik"), dan tutup dengan 1 ayat galakan/arah tindakan konkrit untuk sesi latihan akan datang — bukan sekadar pujian kosong.
+7. feedback: ringkasan keseluruhan 2-3 ayat dalam Bahasa Malaysia, nada membina (constructive coaching), bukan menghukum. WAJIB spesifik kepada panggilan ini (rujuk isu/kekuatan sebenar dari transcript, bukan ayat generik macam "secara keseluruhan baik"), dan tutup dengan 1 ayat galakan/arah tindakan konkrit untuk sesi latihan akan datang — bukan sekadar pujian kosong.
+
+8. ptp (outcome PTP berstruktur — extract SETEPAT mungkin daripada transcript, guna Tarikh Eval Dijalankan di atas untuk resolve tarikh relatif):
+   - obtained: true HANYA jika penghutang secara jelas bersetuju untuk bayar (walaupun sebahagian/ansuran pertama) DAN sebut/akur pada satu tempoh/tarikh — false jika penghutang menolak, mengelak terus, atau tiada komitmen langsung disebut.
+   - amount: jumlah yang dipersetujui, format "RM" diikuti nombor (cth "RM500" atau "RM3,200" untuk bayaran penuh) — null jika tiada jumlah spesifik disebut walaupun obtained true (cth penghutang cuma kata "saya bayar lah nanti" tanpa nombor).
+   - date: tarikh KALENDAR SEBENAR (format YYYY-MM-DD) hasil resolve daripada apa yang disebut dalam transcript (cth "hujung bulan" → kira tarikh akhir bulan berdasarkan Tarikh Eval Dijalankan di atas; "Jumaat ni" → kira tarikh Jumaat akan datang) — null jika tiada tarikh/tempoh spesifik disebut.
+   - confidence: "firm" jika kedua-dua jumlah DAN tarikh jelas & spesifik disebut & disahkan collector, "soft" jika ada komitmen tapi vague/tak spesifik (cth "nanti saya usahakan", tiada tarikh tegas), "none" jika obtained false.
+
+9. privacyBreach & privacyNote: ${isThirdParty?'Senario ini WAJIB dinilai — rujuk "SEMAKAN PEMATUHAN KRITIKAL" di atas. Set privacyBreach true/false ikut arahan tu, dan privacyNote 1 ayat Bahasa Malaysia menghurai ATAU collector dedah maklumat sebelum verify (jika true) ATAU bagaimana collector betul verify dahulu (jika false, ringkas sahaja).':'Senario ini BUKAN panggilan pihak ketiga — set privacyBreach: false, privacyNote: "".'}
 
 Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
-{"totalScore":<0-100>,"scores":{"tone":<0-20>,"delivery":<0-20>,"counter":<0-20>,"action":<0-20>,"balance":<0-20>},"scoreReasons":{"tone":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","delivery":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","counter":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","action":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","balance":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript"},"strengths":["..."],"missed":[{"category":"tone|delivery|counter|action|balance","issue":"...","suggestion":"...","quote":"..."}],"harassmentRisk":"none|low|medium|high","harassmentNote":"","priorityFocus":{"category":"tone|delivery|counter|action|balance","tip":"..."},"feedback":"..."}`;
+{"totalScore":<0-100>,"scores":{"tone":<0-20>,"delivery":<0-20>,"counter":<0-20>,"action":<0-20>,"balance":<0-20>},"scoreReasons":{"tone":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","delivery":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","counter":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","action":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript","balance":"1-2 ayat kenapa dapat markah ini — sebut contoh spesifik dari transcript"},"disclosureCheck":[{"item":"...","mentioned":true|false,"quote":"..."}],"criticalCheck":[{"item":"...","done":true|false,"quote":"..."}],"strengths":["..."],"missed":[{"category":"tone|delivery|counter|action|balance","issue":"...","suggestion":"...","quote":"..."}],"harassmentRisk":"none|low|medium|high","harassmentNote":"","priorityFocus":{"category":"tone|delivery|counter|action|balance","tip":"..."},"feedback":"...","ptp":{"obtained":true|false,"amount":"RM..."|null,"date":"YYYY-MM-DD"|null,"confidence":"firm|soft|none"},"privacyBreach":true|false,"privacyNote":""}`;
 
   try{
     const res=await fetch('/api/claude',{method:'POST',headers:authHeaders(),
@@ -6475,18 +6595,46 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
     // (gagal senyap, cuma masuk console.error). Clamp dulu sebelum hantar.
     const VALID_HARASSMENT=['none','low','medium','high'];
     const harassmentRisk=VALID_HARASSMENT.includes(r.harassmentRisk)?r.harassmentRisk:'none';
+    // Sama pattern macam harassmentRisk di atas — sanitize sebelum hantar ke
+    // DB (jadual sessions ada CHECK constraint kalau nanti ditambah; buat masa
+    // ni jsonb bebas tapi tetap clamp untuk elak nilai luar jangka rosakkan UI).
+    const rawPtp=r.ptp||{};
+    const VALID_PTP_CONF=['firm','soft','none'];
+    const ptpDateValid=typeof rawPtp.date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(rawPtp.date)?rawPtp.date:null;
+    const ptpOutcome={
+      obtained:!!rawPtp.obtained,
+      amount:(typeof rawPtp.amount==='string'&&rawPtp.amount.trim())?rawPtp.amount.trim():null,
+      date:ptpDateValid,
+      confidence:VALID_PTP_CONF.includes(rawPtp.confidence)?rawPtp.confidence:(rawPtp.obtained?'soft':'none')
+    };
+    const privacyBreach=!!r.privacyBreach;
+    // Sanitize disclosureCheck/criticalCheck — array of {item/text, mentioned/done, quote}.
+    // Ni hasil semakan satu-satu Claude buat SEBELUM tentukan "missed" (lihat prompt
+    // di atas) — simpan berasingan supaya manager boleh nampak trail penuh (item mana
+    // disebut/tak, dengan quote) bukan cuma kesimpulan "missed" akhir sahaja.
+    const disclosureCheck=Array.isArray(r.disclosureCheck)?r.disclosureCheck
+      .filter(d=>d&&typeof d.item==='string')
+      .map(d=>({item:d.item,mentioned:!!d.mentioned,quote:typeof d.quote==='string'?d.quote:''})):[];
+    const criticalCheck=Array.isArray(r.criticalCheck)?r.criticalCheck
+      .filter(c=>c&&typeof c.item==='string')
+      .map(c=>({item:c.item,done:!!c.done,quote:typeof c.quote==='string'?c.quote:''})):[];
     const sessionData={
       id:'sess_'+Date.now()+'_'+Math.random().toString(36).slice(2,8),
       collectorId:currentUser.id,scenarioId:scenario?scenario.id:'',
       scenarioName:scenario?scenario.title:'',duration,date:new Date().toISOString(),
       customerType:scenario?scenario.customerType||'':'',
       objectionType:scenario?scenario.objectionType||'':'',
+      callType:scenario?scenario.callType||'debtor':'debtor',
       totalScore,scores,scoreMax,
       strengths:Array.isArray(r.strengths)?r.strengths:[],
       scoreReasons:r.scoreReasons||{},
       missed,priorityFocus,
+      disclosureCheck,criticalCheck,
       harassmentRisk,
       harassmentNote:r.harassmentNote||'',
+      privacyBreach,
+      privacyNote:r.privacyNote||'',
+      ptp:ptpOutcome,
       feedback:r.feedback||'',transcript:callFullTranscript
     };
     // Simpan ke Supabase dalam try/catch BERASINGAN dari parsing AI di atas —
@@ -6515,6 +6663,7 @@ Jawab JSON SAHAJA tanpa markdown/code-fence, ikut struktur tepat ini:
     window._lastScore={
       totalScore:0,scores:{tone:0,delivery:0,counter:0,action:0,balance:0},
       strengths:[],missed:[],priorityFocus:null,harassmentRisk:'none',harassmentNote:'',
+      disclosureCheck:[],criticalCheck:[],
       feedback:'Tidak dapat menganalisis sesi ini — sila cuba sekali lagi.',
       scenarioName:scenario?scenario.title:'',duration,transcript:callFullTranscript
     };

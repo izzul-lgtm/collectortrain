@@ -31,6 +31,8 @@ function toClientShape(row) {
     registrationDate: row.registration_date || '',
     customerType: row.customer_type || 'other',
     objectionType: row.objection_type || 'cooperative',
+    callType: row.call_type || 'debtor',
+    thirdPartyRelation: row.third_party_relation || '',
   };
 }
 
@@ -61,6 +63,8 @@ function toDbShape(data) {
     registration_date: data.registrationDate || null,
     customer_type: data.customerType || 'other',
     objection_type: data.objectionType || 'cooperative',
+    call_type: data.callType || 'debtor',
+    third_party_relation: data.thirdPartyRelation || '',
   };
 }
 
@@ -100,6 +104,12 @@ export async function POST(req) {
     const VALID_OBJECTION = ['cooperative', 'denial', 'hardship', 'aggressive', 'avoidance'];
     if (!VALID_OBJECTION.includes(body.objectionType)) {
       return Response.json({ error: 'Sila pilih Objection Type (Cooperative/Denial/Hardship/Aggressive/Avoidance) sebelum simpan.' }, { status: 400 });
+    }
+    // Third-party call scenarios (isteri/rakan sekerja angkat panggilan) WAJIB
+    // nyatakan hubungan orang tu — tanpa ni getSysPrompt()/evalCall() (app.js)
+    // takde cara terangkan watak/semak pematuhan verifikasi identiti dengan betul.
+    if (body.callType === 'third_party' && !String(body.thirdPartyRelation || '').trim()) {
+      return Response.json({ error: 'Sila nyatakan hubungan pihak ketiga (cth: Isteri, Rakan Sekerja) untuk senario jenis "Third Party Call".' }, { status: 400 });
     }
     const sb = supabaseAdmin();
     const { data, error } = await sb

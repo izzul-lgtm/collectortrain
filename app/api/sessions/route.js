@@ -21,6 +21,12 @@ function toClientShape(row, { includeTranscript = true } = {}) {
     date: row.created_at,
     customerType: row.customer_type || '',
     objectionType: row.objection_type || '',
+    callType: row.call_type || 'debtor',
+    privacyBreach: row.privacy_breach || false,
+    privacyNote: row.privacy_note || '',
+    ptp: row.ptp_outcome || null,
+    disclosureCheck: row.disclosure_check || [],
+    criticalCheck: row.critical_check || [],
   };
   // PERFORMANCE: `transcript` boleh jadi besar (perbualan penuh setiap sesi).
   // List view (dashboard, table sessions) tak perlukan ni langsung — cuma
@@ -51,6 +57,12 @@ function toDbShape(data) {
     transcript: data.transcript || [],
     customer_type: data.customerType || '',
     objection_type: data.objectionType || '',
+    call_type: data.callType || 'debtor',
+    privacy_breach: data.privacyBreach || false,
+    privacy_note: data.privacyNote || '',
+    ptp_outcome: data.ptp || null,
+    disclosure_check: data.disclosureCheck || [],
+    critical_check: data.criticalCheck || [],
   };
 }
 
