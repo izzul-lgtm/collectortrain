@@ -264,12 +264,7 @@ export async function GET(request) {
     }
 
     // ── Senarai perbualan DM (inbox) ──
-    const { data: all, error } = await sb
-      .from('messages')
-      .select('*')
-      .or(`sender_id.eq.${authUser.id},recipient_id.eq.${authUser.id}`)
-      .is('group_id', null)
-      .order('created_at', { ascending: false });
+    const { data: inbox, error } = await sb.rpc('ct_dm_inbox', { p_user: authUser.id });
     if (error) throw error;
 
     const { data: users } = await sb.from('users').select('id, name');
@@ -277,20 +272,14 @@ export async function GET(request) {
     (users || []).forEach(u => { nameMap[u.id] = u.name; });
 
     const convMap = new Map();
-    (all || []).forEach(m => {
-      const otherId = m.sender_id === authUser.id ? m.recipient_id : m.sender_id;
-      if (!convMap.has(otherId)) {
-        convMap.set(otherId, {
-          userId: otherId,
-          userName: nameMap[otherId] || otherId,
-          lastMessage: m.body,
-          lastAt: m.created_at,
-          unreadCount: 0,
-        });
-      }
-      if (m.recipient_id === authUser.id && !m.read_at) {
-        convMap.get(otherId).unreadCount++;
-      }
+    (inbox || []).forEach(r => {
+      convMap.set(r.other_id, {
+        userId: r.other_id,
+        userName: nameMap[r.other_id] || r.other_id,
+        lastMessage: r.last_body,
+        lastAt: r.last_at,
+        unreadCount: r.unread,
+      });
     });
     const conversations = Array.from(convMap.values()).sort((a, b) => new Date(b.lastAt) - new Date(a.lastAt));
 
@@ -298,33 +287,22 @@ export async function GET(request) {
     const groupIds = await myGroupIds();
     let groups = [];
     if (groupIds.length) {
-      const { data: groupRows } = await sb.from('message_groups').select('*').in('id', groupIds);
+      const { data: groupRows } = await sb.from('message_groups').select('id, name, created_at').in('id', groupIds);
       const { data: memberRows } = await sb.from('message_group_members').select('group_id, user_id').in('group_id', groupIds);
       const memberCountByGroup = {};
       (memberRows || []).forEach(r => { memberCountByGroup[r.group_id] = (memberCountByGroup[r.group_id] || 0) + 1; });
 
-      const { data: reads } = await sb.from('message_group_reads').select('group_id, last_read_at').eq('user_id', authUser.id).in('group_id', groupIds);
-      const readMap = {};
-      (reads || []).forEach(r => { readMap[r.group_id] = r.last_read_at; });
-
-      const { data: lastMsgs } = await sb.from('messages').select('*').in('group_id', groupIds).order('created_at', { ascending: false });
-      const lastByGroup = {};
-      const unreadByGroup = {};
-      (lastMsgs || []).forEach(m => {
-        if (!lastByGroup[m.group_id]) lastByGroup[m.group_id] = m;
-        const lastRead = readMap[m.group_id];
-        if (m.sender_id !== authUser.id && (!lastRead || new Date(m.created_at) > new Date(lastRead))) {
-          unreadByGroup[m.group_id] = (unreadByGroup[m.group_id] || 0) + 1;
-        }
-      });
+      const { data: sums } = await sb.rpc('ct_group_summaries', { p_user: authUser.id });
+      const sumByGroup = {};
+      (sums || []).forEach(r => { sumByGroup[r.group_id] = r; });
 
       groups = (groupRows || []).map(g => ({
         id: g.id,
         name: g.name,
         memberCount: memberCountByGroup[g.id] || 0,
-        lastMessage: lastByGroup[g.id] ? lastByGroup[g.id].body : null,
-        lastAt: lastByGroup[g.id] ? lastByGroup[g.id].created_at : g.created_at,
-        unreadCount: unreadByGroup[g.id] || 0,
+        lastMessage: sumByGroup[g.id] ? sumByGroup[g.id].last_body : null,
+        lastAt: (sumByGroup[g.id] && sumByGroup[g.id].last_at) || g.created_at,
+        unreadCount: sumByGroup[g.id] ? sumByGroup[g.id].unread : 0,
       })).sort((a, b) => new Date(b.lastAt) - new Date(a.lastAt));
     }
 
@@ -339,21 +317,9 @@ export async function GET(request) {
 // Kira jumlah mesej belum dibaca merentasi SEMUA group user ni jadi ahli —
 // dipakai oleh unreadCountOnly=1 (dipoll setiap 5 saat, kena ringan).
 async function countGroupUnread(sb, userId) {
-  const { data: memberRows } = await sb.from('message_group_members').select('group_id').eq('user_id', userId);
-  const groupIds = (memberRows || []).map(r => r.group_id);
-  if (!groupIds.length) return 0;
-
-  const { data: reads } = await sb.from('message_group_reads').select('group_id, last_read_at').eq('user_id', userId).in('group_id', groupIds);
-  const readMap = {};
-  (reads || []).forEach(r => { readMap[r.group_id] = r.last_read_at; });
-
-  const { data: msgs } = await sb.from('messages').select('group_id, sender_id, created_at').in('group_id', groupIds).neq('sender_id', userId);
-  let total = 0;
-  (msgs || []).forEach(m => {
-    const lastRead = readMap[m.group_id];
-    if (!lastRead || new Date(m.created_at) > new Date(lastRead)) total++;
-  });
-  return total;
+  const { data, error } = await sb.rpc('ct_group_unread_count', { p_user: userId });
+  if (error) throw error;
+  return data || 0;
 }
 
 export async function POST(request) {
