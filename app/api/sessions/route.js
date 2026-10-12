@@ -94,7 +94,7 @@ export async function GET(request) {
     // & table sessions untuk agregat/senarai, bukan untuk baca perbualan).
     let query = sb
       .from('sessions')
-      .select('*')
+      .select('id, collector_id, scenario_id, scenario_name, duration, total_score, scores, score_max, score_reasons, strengths, missed, priority_focus, harassment_risk, harassment_note, feedback, created_at, customer_type, objection_type, call_type, privacy_breach, privacy_note, ptp_outcome, disclosure_check, critical_check')
       .order('created_at', { ascending: true });
 
     // FIX KESELAMATAN: Collector hanya boleh nampak sesi sendiri.
