@@ -57,17 +57,35 @@ export async function GET(request) {
       return Response.json({ unreadTotal: count || 0 });
     }
 
-    const { data, error } = await sb
+    // PAGINATION: ambil N thread (post peringkat atas) TERBARU sahaja + semua
+    // reply bagi thread tu, bukan seluruh papan. Client boleh naikkan ?limit=.
+    const limit = Math.min(Math.max(parseInt(searchParams.get('limit'), 10) || 30, 1), 200);
+    const { data: tops, error: topErr } = await sb
       .from('discussion_posts')
       .select('*')
-      .order('created_at', { ascending: true });
-    if (error) throw error;
-    const withUrls = await withSignedUrls(data || []);
+      .is('parent_id', null)
+      .order('created_at', { ascending: false })
+      .limit(limit + 1);
+    if (topErr) throw topErr;
+    const hasMore = (tops || []).length > limit;
+    const topPage = (tops || []).slice(0, limit);
+    let replies = [];
+    if (topPage.length) {
+      const { data: rep, error: repErr } = await sb
+        .from('discussion_posts')
+        .select('*')
+        .in('parent_id', topPage.map(t => t.id))
+        .order('created_at', { ascending: true });
+      if (repErr) throw repErr;
+      replies = rep || [];
+    }
+    const data = [...topPage, ...replies].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const withUrls = await withSignedUrls(data);
     // Buka page Discussion (senarai penuh dimuatkan) = anggap semua post
     // setakat ni dah dibaca -> upsert last_read_at supaya badge/notification
     // clear lepas ni.
     await sb.from('discussion_reads').upsert({ user_id: authUser.id, last_read_at: new Date().toISOString() });
-    return Response.json({ posts: withUrls.map(toClientShape) });
+    return Response.json({ posts: withUrls.map(toClientShape), hasMore });
   } catch (e) {
     return Response.json({ error: e.message || 'Failed to load discussion.' }, { status: 500 });
   }
