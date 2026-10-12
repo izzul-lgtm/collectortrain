@@ -4737,12 +4737,10 @@ function notifyNewMessage(convo){
   }catch(e){/* silent */}
 }
 
-// Poll setiap 5 saat untuk kemaskini badge notification dalam nav — pattern
-// sama macam pending session retry sedia ada (setInterval global).
-// (Asalnya 20s — ditukar ke 5s supaya mesej baru/notification nampak lebih
-// pantas. Query ni murah — cuma COUNT(*) head-only, so 4x lebih kerap okay.)
+// Poll once a minute and skip hidden tabs to reduce database traffic.
+const NOTIFICATION_POLL_INTERVAL_MS=60000;
 async function pollUnreadMessages(){
-  if(!currentUser)return; // belum login — jangan poll
+  if(!currentUser || document.hidden)return; // skip signed-out and hidden tabs
   try{
     const res=await fetch('/api/messages?unreadCountOnly=1',{headers:authHeaders()});
     const data=await res.json();
@@ -4775,7 +4773,7 @@ async function pollUnreadMessages(){
     lastNotifiedUnreadTotal=data.unreadTotal;
   }catch(e){/* silent — bukan critical, cuba lagi next poll */}
 }
-setInterval(pollUnreadMessages,5000);
+setInterval(pollUnreadMessages,NOTIFICATION_POLL_INTERVAL_MS);
 
 // Sama pattern macam pollUnreadMessages() di atas, tapi untuk Discussion
 // board (baca komen di app/api/discussion/route.js — unread dikira guna
@@ -4801,7 +4799,7 @@ function notifyNewDiscussionPost(count){
 }
 
 async function pollUnreadDiscussion(){
-  if(!currentUser)return; // belum login — jangan poll
+  if(!currentUser || document.hidden)return; // skip signed-out and hidden tabs
   try{
     const res=await fetch('/api/discussion?unreadCountOnly=1',{headers:authHeaders()});
     const data=await res.json();
@@ -4826,7 +4824,7 @@ async function pollUnreadDiscussion(){
     lastNotifiedDiscUnreadTotal=data.unreadTotal;
   }catch(e){/* silent — bukan critical, cuba lagi next poll */}
 }
-setInterval(pollUnreadDiscussion,5000);
+setInterval(pollUnreadDiscussion,NOTIFICATION_POLL_INTERVAL_MS);
 
 // ═══════════ LEARNING MODULES (kandungan onboarding berstep) ═══════════
 async function renderLearning(){
