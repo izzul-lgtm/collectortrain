@@ -3973,13 +3973,15 @@ async function sendWhatsAppNotice(){
 }
 
 // ═══════════ DISCUSSION (dua-hala — semua boleh post & reply) ═══════════
+let _discLimit=30;
 async function renderDiscussion(){
   setContent('<div class="page-header"><div class="page-title">Discussion</div></div><div class="card">Loading...</div>');
-  let posts;
+  let posts,hasMoreDisc=false;
   try{
-    const postsRes=await fetch('/api/discussion',{headers:authHeaders()}).then(r=>r.json());
+    const postsRes=await fetch('/api/discussion?limit='+_discLimit,{headers:authHeaders()}).then(r=>r.json());
     if(postsRes.error)throw new Error(postsRes.error);
     posts=postsRes.posts||[];
+    hasMoreDisc=!!postsRes.hasMore;
   }catch(e){
     setContent(`<div class="page-header"><div class="page-title">Discussion</div></div><div class="card">⚠ ${esc(e.message)}</div>`);
     return;
@@ -4034,6 +4036,7 @@ async function renderDiscussion(){
   <div class="card">
     ${topLevel.length===0?`<div class="empty-state"><div class="es-icon">💬</div><p>Belum ada perbincangan lagi. Mulakan yang pertama!</p></div>`:
     topLevel.slice().reverse().map(p=>postHTML(p,false)).join('')}
+    ${hasMoreDisc?`<div style="text-align:center;margin:12px 0"><button class="btn btn-secondary" onclick="_discLimit+=30;renderDiscussion()">Muat perbincangan lebih lama</button></div>`:''}
   </div>`);
 }
 // Topik dengan banyak balasan (comment) jadi terlalu panjang untuk scroll —
@@ -4742,7 +4745,7 @@ function notifyNewMessage(convo){
 // (Asalnya 20s — ditukar ke 5s supaya mesej baru/notification nampak lebih
 // pantas. Query ni murah — cuma COUNT(*) head-only, so 4x lebih kerap okay.)
 async function pollUnreadMessages(){
-  if(!currentUser)return; // belum login — jangan poll
+  if(!currentUser||document.hidden)return; // belum login — jangan poll
   try{
     const res=await fetch('/api/messages?unreadCountOnly=1',{headers:authHeaders()});
     const data=await res.json();
@@ -4775,7 +4778,8 @@ async function pollUnreadMessages(){
     lastNotifiedUnreadTotal=data.unreadTotal;
   }catch(e){/* silent — bukan critical, cuba lagi next poll */}
 }
-setInterval(pollUnreadMessages,5000);
+setInterval(pollUnreadMessages,30000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){pollUnreadMessages();pollUnreadDiscussion();}});
 
 // Sama pattern macam pollUnreadMessages() di atas, tapi untuk Discussion
 // board (baca komen di app/api/discussion/route.js — unread dikira guna
@@ -4801,7 +4805,7 @@ function notifyNewDiscussionPost(count){
 }
 
 async function pollUnreadDiscussion(){
-  if(!currentUser)return; // belum login — jangan poll
+  if(!currentUser||document.hidden)return; // belum login — jangan poll
   try{
     const res=await fetch('/api/discussion?unreadCountOnly=1',{headers:authHeaders()});
     const data=await res.json();
@@ -4826,7 +4830,7 @@ async function pollUnreadDiscussion(){
     lastNotifiedDiscUnreadTotal=data.unreadTotal;
   }catch(e){/* silent — bukan critical, cuba lagi next poll */}
 }
-setInterval(pollUnreadDiscussion,5000);
+setInterval(pollUnreadDiscussion,30000);
 
 // ═══════════ LEARNING MODULES (kandungan onboarding berstep) ═══════════
 async function renderLearning(){
